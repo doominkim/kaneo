@@ -14,6 +14,7 @@ import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import activity from "./activity";
+import agentEntry from "./agent-entry";
 import { auth } from "./auth";
 import { organizationRoutes } from "./auth-openapi";
 import billing from "./billing";
@@ -576,6 +577,7 @@ export function createApp() {
   const taskApi = api.route("/task", task);
   const columnApi = api.route("/column", column);
   const activityApi = api.route("/activity", activity);
+  const agentEntryApi = api.route("/agent-entry", agentEntry);
   const commentApi = api.route("/comment", comment);
   const timeEntryApi = api.route("/time-entry", timeEntry);
   const labelApi = api.route("/label", label);
@@ -749,6 +751,7 @@ export function createApp() {
     api,
     injectWebSocket,
     activityApi,
+    agentEntryApi,
     billingApi,
     columnApi,
     commentApi,
@@ -877,6 +880,7 @@ const {
   app,
   injectWebSocket,
   activityApi,
+  agentEntryApi,
   billingApi,
   columnApi,
   commentApi,
@@ -922,6 +926,7 @@ export type AppType =
   | typeof taskApi
   | typeof columnApi
   | typeof activityApi
+  | typeof agentEntryApi
   | typeof commentApi
   | typeof timeEntryApi
   | typeof labelApi

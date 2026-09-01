@@ -1,0 +1,62 @@
+import { responseTimestamp, z } from "../openapi";
+
+const actorSchema = z
+  .object({
+    id: z.string(),
+    provider: z.string(),
+    model: z.string(),
+    onBehalfOf: z.string().nullable(),
+  })
+  .openapi("AgentActor");
+
+/**
+ * Summary shape — deliberately WITHOUT `body` and `decision`.
+ *
+ * The whole point of this layer is that a list call has a bounded cost. Upstream
+ * `list_tasks` ships every task's full description and measured 18.5KB for 20
+ * rows; a ledger listing must not repeat that mistake. Callers that need the
+ * full record fetch one entry by id.
+ */
+export const entrySummarySchema = z
+  .object({
+    id: z.string(),
+    taskId: z.string().nullable(),
+    kind: z.string(),
+    summary: z.string(),
+    hasDecision: z.boolean().openapi({
+      description:
+        "Whether a decision payload exists. Fetch the entry by id to read it.",
+    }),
+    coreChanged: z.array(z.string()).nullable(),
+    createdAt: responseTimestamp,
+    actor: actorSchema.nullable(),
+  })
+  .openapi("AgentEntrySummary");
+
+export const entryListSchema = z
+  .object({
+    entries: z.array(entrySummarySchema),
+    nextBefore: z.string().nullable().openapi({
+      description: "Cursor for the next page, or null when exhausted.",
+    }),
+  })
+  .openapi("AgentEntryList");
+
+export const entryDetailSchema = z
+  .object({
+    id: z.string(),
+    workspaceId: z.string(),
+    projectId: z.string(),
+    taskId: z.string().nullable(),
+    kind: z.string(),
+    summary: z.string(),
+    body: z.string().nullable(),
+    decision: z.unknown(),
+    refs: z.unknown(),
+    coreChanged: z.array(z.string()).nullable(),
+    compaction: z.string(),
+    sessionId: z.string().nullable(),
+    createdAt: responseTimestamp,
+    actor: actorSchema.nullable(),
+  })
+  .openapi("AgentEntryDetail");
