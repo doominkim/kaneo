@@ -15,6 +15,7 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import activity from "./activity";
 import agentEntry from "./agent-entry";
+import agentTerm from "./agent-term";
 import { auth } from "./auth";
 import { organizationRoutes } from "./auth-openapi";
 import billing from "./billing";
@@ -578,6 +579,7 @@ export function createApp() {
   const columnApi = api.route("/column", column);
   const activityApi = api.route("/activity", activity);
   const agentEntryApi = api.route("/agent-entry", agentEntry);
+  const agentTermApi = api.route("/agent-term", agentTerm);
   const commentApi = api.route("/comment", comment);
   const timeEntryApi = api.route("/time-entry", timeEntry);
   const labelApi = api.route("/label", label);
@@ -752,6 +754,7 @@ export function createApp() {
     injectWebSocket,
     activityApi,
     agentEntryApi,
+    agentTermApi,
     billingApi,
     columnApi,
     commentApi,
@@ -881,6 +884,7 @@ const {
   injectWebSocket,
   activityApi,
   agentEntryApi,
+  agentTermApi,
   billingApi,
   columnApi,
   commentApi,
@@ -927,6 +931,7 @@ export type AppType =
   | typeof columnApi
   | typeof activityApi
   | typeof agentEntryApi
+  | typeof agentTermApi
   | typeof commentApi
   | typeof timeEntryApi
   | typeof labelApi
