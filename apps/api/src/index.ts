@@ -798,6 +798,16 @@ export async function runStartupTasks() {
         migrationsFolder: `${currentDir}/../drizzle`,
       });
       console.log("✅ Database migrated successfully!");
+
+      // Agent Layer (fork) — separate folder AND separate tracking table so
+      // upstream's journal and __drizzle_migrations are never touched.
+      // See docs/agent-layer/DESIGN.md.
+      console.log("🔄 Migrating agent layer...");
+      await migrate(getDatabase(), {
+        migrationsFolder: `${currentDir}/../drizzle-agent`,
+        migrationsTable: "__drizzle_migrations_agent",
+      });
+      console.log("✅ Agent layer migrated successfully!");
     },
   });
 
