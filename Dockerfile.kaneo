@@ -52,6 +52,7 @@ RUN sed -i 's/"prepare": "husky"/"prepare": ""/g' package.json && \
 
 COPY --from=api-builder /app/apps/api/dist ./apps/api/dist
 COPY --from=api-builder /app/apps/api/drizzle ./apps/api/drizzle
+COPY --from=api-builder /app/apps/api/drizzle-agent ./apps/api/drizzle-agent
 COPY --from=api-builder /app/packages/email ./packages/email
 COPY --from=api-builder /app/packages/permissions ./packages/permissions
 
