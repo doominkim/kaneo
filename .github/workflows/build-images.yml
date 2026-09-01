@@ -61,7 +61,10 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GH_PACKAGE_TOKEN }}
+          # Fall back to the automatic GITHUB_TOKEN when GH_PACKAGE_TOKEN is absent.
+          # Forks do not inherit organisation secrets, and the job already declares
+          # `packages: write`, so the built-in token can push to the fork's own GHCR.
+          password: ${{ secrets.GH_PACKAGE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata
         id: meta
