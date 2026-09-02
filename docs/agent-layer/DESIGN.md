@@ -173,6 +173,15 @@ Task 본문은 고정 크기를 유지하고, 증가는 전부 `entry`로 나간
 
 ### 4.3 entry가 담는 것
 
+`kind`는 네 값 중 하나다 (`apps/api/src/agent-entry/schema.ts`의 enum이 정본, 기본값 `work`).
+
+| kind | 뜻 |
+|---|---|
+| `work` | 실제로 무언가를 바꾼 작업 단위. 커밋·파일 변경이 따라오는 것이 보통이다 |
+| `investigation` | 조사·분석. 코드는 바뀌지 않았고 알아낸 사실만 남긴다. task 없이도 기록한다 |
+| `decision` | 방향 선택. `decision.why`·`rejected`를 채우는 것이 목적이며 코드 변경 여부와 무관하다 |
+| `handoff` | 세션 종료 시 다음 세션에게 넘기는 상태 요약. 개요 탭 콜아웃이 최신 handoff를 집는다(§6) |
+
 git이 이미 갖고 있는 것은 **참조만** 한다 (commit sha, PR 번호). 복제하면 썩는다.
 
 ```
