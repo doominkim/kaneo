@@ -4,17 +4,17 @@
 >
 > [DESIGN.md](./DESIGN.md)는 구현 전 설계 snapshot일 수 있다. 현재 운영 상태의 정본은 이 문서의 실측과 Git/Argo 런타임 확인이다.
 
-## 현재 상태 — Agent Layer 결함 수정(`agent.6`)까지 운영 반영 완료
+## 현재 상태 — MCP 등록 수정(`agent.7`)까지 운영 반영 완료, Linear → Kaneo 전환 시작
 
 Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-prod`는 해당 이미지와 S3 첨부 스토리지를 사용 중이다. 첨부 UI의 실제 로그인 사용자 업로드만 아직 브라우저 환경 문제로 확인하지 못했다. **다음 작업의 첫 순서는 로그인한 Kaneo에서 파일 하나를 올리고, 다운로드·삭제까지 확인하는 것**이다.
 
 | 대상 | 확정 상태 | 근거 |
 |---|---|---|
-| Kaneo 코드 | `agent-layer`의 `136f30bc` push 완료 | `git` 원격 브랜치 확인 |
-| 이미지 | `ghcr.io/doominkim/kaneo:2.22.0-agent.6` 빌드 성공 | [GitHub Actions run 33587771774](https://github.com/doominkim/kaneo/actions/runs/33587771774) |
-| GitOps manifest | platform `main`의 `566afe9` | 이미지 태그 `agent.6`, SealedSecret과 공개 S3 환경값 포함 |
+| Kaneo 코드 | `agent-layer`의 `15d66372` push 완료 | `git` 원격 브랜치 확인 |
+| 이미지 | `ghcr.io/doominkim/kaneo:2.22.0-agent.7` 빌드 성공 | [GitHub Actions run 33591650273](https://github.com/doominkim/kaneo/actions/runs/33591650273) |
+| GitOps manifest | platform `main`의 `4ac36a2` | 이미지 태그 `agent.7`, SealedSecret과 공개 S3 환경값 포함 |
 | TLS vhost | sandbox `main`의 `5dc74e2` | `files.kit.io.kr` 전용 nginx vhost |
-| Argo / Pod | `kaneo-prod` Synced, Healthy, image `agent.6`, 1/1 Ready, restart 0, 마이그레이션 로그 정상 | 운영 클러스터 실측 (2026-09-02 12:50 KST) |
+| Argo / Pod | `kaneo-prod` Synced, Healthy, image `agent.7`, 1/1 Ready, restart 0, 마이그레이션 로그 정상 | 운영 클러스터 실측 (2026-09-02 13:50 KST) |
 | MinIO HTTPS | `https://files.kit.io.kr/minio/health/live` 200 | SAN=`files.kit.io.kr`, 만료 `2026-12-01` |
 
 관련 Linear: [SAN-244 — Kaneo Agent Layer 운영 배포 및 핵심 실측](https://linear.app/c2fuzg/issue/SAN-244/kaneo-agent-layer-운영-배포-및-핵심-실측). 현재 상태는 In Progress이며, 아래 남은 실측/MCP/web 작업을 닫은 뒤 완료 처리한다.
@@ -138,6 +138,12 @@ DATABASE_URL="postgresql://dominic@localhost:5432/kaneo_test" pnpm --filter @kan
 
 배포를 다시 해야 하는 코드/manifest 변경이 생기면 사용자 승인 후 `agent-layer` 이미지 빌드 성공 → platform manifest diff와 target revision 확인 → platform `main` push → Argo Synced/Healthy와 실제 API/UI 흐름까지 순서대로 증명한다. platform `main` push는 Argo auto-sync 운영 배포이므로 사용자 승인과 diff/revision 확인 없이 수행하지 않는다. push/build 성공만으로 운영 완료라고 판단하지 않는다.
 
+## Linear → Kaneo 전환 (2026-09-02)
+
+사용자 결정으로 Linear를 종료하고 Kaneo를 plan/work-state SSOT로 쓴다. 하네스 쪽 정본은 `~/.agents/skills/using-kaneo/SKILL.md`, `~/.agents/rules/20-plan-kaneo.md`, `~/.claude/incidents/2026-09-02-linear-to-kaneo-cutover.md`다. MCP 등록: Claude는 user scope `kaneo` (`https://kaneo.kit.io.kr/api/mcp`, 브라우저 OAuth), Codex는 `[mcp_servers.kaneo]`에 `KANEO_API_KEY` bearer(사용자가 Kaneo에서 API key를 만들어 환경변수로 제공). `using-linear`·`20-plan-linear.md`·`/plan-html`·Linear MCP는 제거했다. SAN-244는 더 이상 갱신하지 않으며 남은 항목은 Kaneo task로 옮긴다.
+
+`agent.7`은 `/api/mcp/register`가 `grant_types`/`response_types` 배열을 거부하던 upstream 버그를 고친 것이다(커밋 `15d66372`). Claude Code 등은 `refresh_token`을 같이 보내므로 `agent.6` 이하에서는 동적 클라이언트 등록이 400이었다. 남은 유사 위험: `token_endpoint_auth_method`가 `none`만 허용된다.
+
 ## 운영 호스트 침해 (2026-09-02 발견)
 
 fika.ing(Mac Studio, macOS 15.6.1, k3s·PostgreSQL 17·MinIO·Redis 호스트)에서 침해 지속성 흔적을 발견했다. `/etc/ssh/sshd_config.d/cve.conf`가 모든 사용자 키 인증을 `/var/root/.ssh/authorized_keys2`로 돌렸고(정상 키 등록이 실패한 원인), `/Library/LaunchDaemons/com.apple.configdb.update.plist`가 `/var/tmp/.ssh_append`로 root `authorized_keys`에 키를 추가하도록 돼 있었다. 모두 mtime 1970. 유력 경로는 CVE-2026-65400(Screen Sharing 사전인증 root RCE, 5900 외부 노출, 패치 15.7.9 미적용).
@@ -176,7 +182,7 @@ fika.ing(Mac Studio, macOS 15.6.1, k3s·PostgreSQL 17·MinIO·Redis 호스트)�
 
 ## 오래된 정보 폐기
 
-- `2.22.0-agent.2`~`agent.5`는 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.6`이다.
-- `apps/kaneo/prod.yaml`은 미커밋/빈 `sealedEnv` 상태가 아니다. `566afe9`가 운영에 반영되었다.
+- `2.22.0-agent.2`~`agent.6`은 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.7`이다.
+- `apps/kaneo/prod.yaml`은 미커밋/빈 `sealedEnv` 상태가 아니다. `4ac36a2`가 운영에 반영되었다.
 - TLS 발급/배포는 pending이 아니다. `files.kit.io.kr`은 정상 HTTPS다.
 - 운영 DB/auth/S3 secret은 Bitwarden과 SealedSecret으로 이미 주입되어 있다. 값을 문서나 명령 출력에 적지 않는다.
