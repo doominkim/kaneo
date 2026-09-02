@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   PutObjectCommand,
   S3Client,
   type S3ClientConfig,
@@ -68,6 +69,13 @@ type AssetObject = {
   etag: string | undefined;
   lastModified: Date | undefined;
 };
+
+export class UploadedObjectValidationError extends Error {
+  constructor(readonly reason: "not-found" | "metadata-mismatch") {
+    super("Uploaded object validation failed.");
+    this.name = "UploadedObjectValidationError";
+  }
+}
 
 let clientCache:
   | {
@@ -361,6 +369,53 @@ export async function getPrivateObject(key: string): Promise<AssetObject> {
     etag: response.ETag,
     lastModified: response.LastModified,
   };
+}
+
+function isS3ObjectNotFound(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+
+  const record = error as {
+    name?: unknown;
+    Code?: unknown;
+    code?: unknown;
+  };
+
+  return [record.name, record.Code, record.code].some(
+    (code) => code === "NotFound" || code === "NoSuchKey",
+  );
+}
+
+/**
+ * Verifies the uploaded object metadata at finalize time before its asset
+ * record is saved.
+ */
+export async function assertTaskAssetUploadObjectMatches(
+  key: string,
+  contentType: string,
+  size: number,
+): Promise<void> {
+  const config = getStorageConfig();
+  const client = getClient(config);
+
+  let object: { ContentLength?: number; ContentType?: string };
+  try {
+    object = await client.send(
+      new HeadObjectCommand({
+        Bucket: config.bucket,
+        Key: key,
+      }),
+    );
+  } catch (error) {
+    if (isS3ObjectNotFound(error)) {
+      throw new UploadedObjectValidationError("not-found");
+    }
+
+    throw error;
+  }
+
+  if (object.ContentLength !== size || object.ContentType !== contentType) {
+    throw new UploadedObjectValidationError("metadata-mismatch");
+  }
 }
 
 export async function deleteS3Object(key: string): Promise<void> {

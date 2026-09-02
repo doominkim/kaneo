@@ -1,7 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const storage = vi.hoisted(() => ({
+  assertTaskAssetUploadObjectMatches: vi.fn(),
+}));
+
+vi.mock("../../apps/api/src/storage/s3", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../apps/api/src/storage/s3")>();
+
+  return {
+    ...actual,
+    assertTaskAssetUploadObjectMatches:
+      storage.assertTaskAssetUploadObjectMatches,
+  };
+});
+
 import db, { schema } from "../../apps/api/src/database";
 import { createApp } from "../../apps/api/src/index";
+import { UploadedObjectValidationError } from "../../apps/api/src/storage/s3";
 import { mockAnonymousSession, mockAuthenticatedSession } from "./helpers/auth";
 import { resetTestDatabase } from "./helpers/database";
 import {
@@ -13,6 +30,9 @@ describe("API integration: task image upload finalize", () => {
   beforeEach(async () => {
     await resetTestDatabase();
 
+    storage.assertTaskAssetUploadObjectMatches.mockReset();
+    storage.assertTaskAssetUploadObjectMatches.mockResolvedValue(undefined);
+
     process.env.S3_ENDPOINT = "https://storage.example.test";
     process.env.S3_BUCKET = "test-bucket";
     process.env.S3_ACCESS_KEY_ID = "test-access-key";
@@ -22,6 +42,111 @@ describe("API integration: task image upload finalize", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  async function createFinalizeFixture() {
+    const member = await createWorkspaceMember();
+    const { project, columns } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    const [task] = await db
+      .insert(schema.taskTable)
+      .values({
+        projectId: project.id,
+        userId: member.user.id,
+        title: "Object validation test",
+        status: "to-do",
+        columnId: columns.todo.id,
+        priority: "medium",
+        number: 1,
+        position: 1,
+      })
+      .returning();
+
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+    const key = `workspace/${member.workspace.id}/project/${project.id}/task/${task.id}/descriptions/object-validation.png`;
+
+    return { app, key, taskId: task.id };
+  }
+
+  it.each([
+    ["missing object", "not-found"],
+    ["size mismatch", "metadata-mismatch"],
+    ["content type mismatch", "metadata-mismatch"],
+  ] as const)(
+    "does not persist an asset when S3 reports a %s",
+    async (_, reason) => {
+      const { app, key, taskId } = await createFinalizeFixture();
+      storage.assertTaskAssetUploadObjectMatches.mockRejectedValueOnce(
+        new UploadedObjectValidationError(reason),
+      );
+
+      const response = await app.request(
+        `/api/task/image-upload/${taskId}/finalize`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            key,
+            filename: "object-validation.png",
+            contentType: "image/png",
+            size: 123,
+            surface: "description",
+          }),
+        },
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.text()).resolves.toBe(
+        "Uploaded file does not match the finalize request.",
+      );
+      expect(storage.assertTaskAssetUploadObjectMatches).toHaveBeenCalledWith(
+        key,
+        "image/png",
+        123,
+      );
+      await expect(
+        db.query.assetTable.findFirst({
+          where: (table, { eq }) => eq(table.objectKey, key),
+        }),
+      ).resolves.toBeUndefined();
+    },
+  );
+
+  it("does not persist an asset when S3 verification is unavailable", async () => {
+    const { app, key, taskId } = await createFinalizeFixture();
+    storage.assertTaskAssetUploadObjectMatches.mockRejectedValueOnce(
+      Object.assign(new Error("bucket not found"), {
+        name: "NoSuchBucket",
+        $metadata: { httpStatusCode: 404 },
+      }),
+    );
+
+    const response = await app.request(
+      `/api/task/image-upload/${taskId}/finalize`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          key,
+          filename: "object-validation.png",
+          contentType: "image/png",
+          size: 123,
+          surface: "description",
+        }),
+      },
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.text()).resolves.toBe(
+      "Unable to verify uploaded file.",
+    );
+    await expect(
+      db.query.assetTable.findFirst({
+        where: (table, { eq }) => eq(table.objectKey, key),
+      }),
+    ).resolves.toBeUndefined();
   });
 
   it("returns a URL using KANEO_API_URL", async () => {

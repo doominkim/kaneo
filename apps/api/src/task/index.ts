@@ -16,9 +16,11 @@ import {
   jsonResponse,
 } from "../openapi";
 import {
+  assertTaskAssetUploadObjectMatches,
   assertTaskImageKeyMatchesContext,
   createTaskImageUploadUrl,
   isImageContentType,
+  UploadedObjectValidationError,
   validateTaskAssetUploadInput,
 } from "../storage/s3";
 import { normalizeApiServerUrl } from "../utils/openapi-spec";
@@ -512,6 +514,7 @@ const finalizeTaskImageUploadRoute = createRoute({
       "No workspace access, or missing task:update permission",
     ),
     404: errorResponse("Task not found"),
+    503: errorResponse("The uploaded file could not be verified"),
   },
 });
 
@@ -846,6 +849,24 @@ const task = apiRouter<BaseVariables & { workspaceId: string }>()
     ) {
       throw new HTTPException(400, {
         message: "Image upload key does not match the task context.",
+      });
+    }
+
+    try {
+      await assertTaskAssetUploadObjectMatches(
+        normalizedKey,
+        contentType,
+        size,
+      );
+    } catch (error) {
+      if (error instanceof UploadedObjectValidationError) {
+        throw new HTTPException(400, {
+          message: "Uploaded file does not match the finalize request.",
+        });
+      }
+
+      throw new HTTPException(503, {
+        message: "Unable to verify uploaded file.",
       });
     }
 

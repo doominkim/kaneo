@@ -1,7 +1,9 @@
+import { HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyKeyPrefix,
   assertStorageConfigured,
+  assertTaskAssetUploadObjectMatches,
   assertTaskImageKeyMatchesContext,
   buildObjectKey,
   buildObjectKeyPrefix,
@@ -12,6 +14,7 @@ import {
   parsePositiveInt,
   resolveS3Credentials,
   sanitizePathSegment,
+  type UploadedObjectValidationError,
   validateTaskAssetUploadInput,
 } from "../../../apps/api/src/storage/s3";
 
@@ -247,6 +250,131 @@ describe("S3 helpers", () => {
     const searchParams = new URL(upload.uploadUrl).searchParams;
     expect(searchParams.has("x-amz-checksum-crc32")).toBe(false);
     expect(searchParams.has("x-amz-sdk-checksum-algorithm")).toBe(false);
+  });
+
+  it("accepts a finalized upload only when S3 object metadata matches", async () => {
+    process.env.S3_ENDPOINT = "https://storage.example.test";
+    process.env.S3_BUCKET = "kaneo";
+    process.env.S3_ACCESS_KEY_ID = "test-access-key";
+    process.env.S3_SECRET_ACCESS_KEY = "test-secret-key";
+    delete process.env.S3_KEY_PREFIX;
+
+    const send = vi.spyOn(S3Client.prototype, "send").mockResolvedValue({
+      ContentLength: 123,
+      ContentType: "image/png",
+    } as never);
+
+    await expect(
+      assertTaskAssetUploadObjectMatches(
+        "workspace/ws/project/project/task/task/descriptions/file.png",
+        "image/png",
+        123,
+      ),
+    ).resolves.toBeUndefined();
+
+    const headObjectCommand = send.mock.calls[0]?.[0];
+    expect(headObjectCommand).toBeInstanceOf(HeadObjectCommand);
+    if (!(headObjectCommand instanceof HeadObjectCommand)) {
+      throw new Error("Expected HeadObjectCommand");
+    }
+
+    expect(headObjectCommand.input).toEqual({
+      Bucket: "kaneo",
+      Key: "workspace/ws/project/project/task/task/descriptions/file.png",
+    });
+  });
+
+  it("rejects finalize validation when the uploaded S3 object is missing", async () => {
+    process.env.S3_ENDPOINT = "https://storage.example.test";
+    process.env.S3_BUCKET = "kaneo";
+    process.env.S3_ACCESS_KEY_ID = "test-access-key";
+    process.env.S3_SECRET_ACCESS_KEY = "test-secret-key";
+    delete process.env.S3_KEY_PREFIX;
+
+    vi.spyOn(S3Client.prototype, "send").mockRejectedValue(
+      Object.assign(new Error("not found"), {
+        name: "NotFound",
+        $metadata: { httpStatusCode: 404 },
+      }),
+    );
+
+    await expect(
+      assertTaskAssetUploadObjectMatches(
+        "workspace/ws/file.png",
+        "image/png",
+        123,
+      ),
+    ).rejects.toMatchObject<Partial<UploadedObjectValidationError>>({
+      reason: "not-found",
+    });
+  });
+
+  it("leaves a missing S3 bucket as a provider error", async () => {
+    process.env.S3_ENDPOINT = "https://storage.example.test";
+    process.env.S3_BUCKET = "kaneo";
+    process.env.S3_ACCESS_KEY_ID = "test-access-key";
+    process.env.S3_SECRET_ACCESS_KEY = "test-secret-key";
+    delete process.env.S3_KEY_PREFIX;
+
+    const noSuchBucket = Object.assign(new Error("bucket not found"), {
+      name: "NoSuchBucket",
+      $metadata: { httpStatusCode: 404 },
+    });
+    vi.spyOn(S3Client.prototype, "send").mockRejectedValue(noSuchBucket);
+
+    await expect(
+      assertTaskAssetUploadObjectMatches(
+        "workspace/ws/file.png",
+        "image/png",
+        123,
+      ),
+    ).rejects.toBe(noSuchBucket);
+  });
+
+  it("rejects finalize validation when the S3 object size differs", async () => {
+    process.env.S3_ENDPOINT = "https://storage.example.test";
+    process.env.S3_BUCKET = "kaneo";
+    process.env.S3_ACCESS_KEY_ID = "test-access-key";
+    process.env.S3_SECRET_ACCESS_KEY = "test-secret-key";
+    delete process.env.S3_KEY_PREFIX;
+
+    vi.spyOn(S3Client.prototype, "send").mockResolvedValue({
+      ContentLength: 124,
+      ContentType: "image/png",
+    } as never);
+
+    await expect(
+      assertTaskAssetUploadObjectMatches(
+        "workspace/ws/file.png",
+        "image/png",
+        123,
+      ),
+    ).rejects.toMatchObject<Partial<UploadedObjectValidationError>>({
+      reason: "metadata-mismatch",
+    });
+  });
+
+  it("rejects finalize validation when the S3 object content type differs", async () => {
+    process.env.S3_ENDPOINT = "https://storage.example.test";
+    process.env.S3_BUCKET = "kaneo";
+    process.env.S3_ACCESS_KEY_ID = "test-access-key";
+    process.env.S3_SECRET_ACCESS_KEY = "test-secret-key";
+    delete process.env.S3_KEY_PREFIX;
+
+    vi.spyOn(S3Client.prototype, "send").mockResolvedValue({
+      ContentLength: 123,
+      ContentType: "application/octet-stream",
+    } as never);
+
+    await expect(
+      assertTaskAssetUploadObjectMatches(
+        "workspace/ws/file.png",
+        "image/png",
+        123,
+      ),
+    ).rejects.toMatchObject<Partial<UploadedObjectValidationError>>({
+      reason: "metadata-mismatch",
+    });
   });
 
   it("resolveS3Credentials returns explicit credentials when both keys are set", () => {
