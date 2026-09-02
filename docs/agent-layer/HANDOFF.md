@@ -140,7 +140,7 @@ DATABASE_URL="postgresql://dominic@localhost:5432/kaneo_test" pnpm --filter @kan
 
 ## Linear → Kaneo 전환 (2026-09-02)
 
-사용자 결정으로 Linear를 종료하고 Kaneo를 plan/work-state SSOT로 쓴다. 하네스 쪽 정본은 `~/.agents/skills/using-kaneo/SKILL.md`, `~/.agents/rules/20-plan-kaneo.md`, `~/.claude/incidents/2026-09-02-linear-to-kaneo-cutover.md`다. MCP 등록: Claude는 user scope `kaneo` (`https://kaneo.kit.io.kr/api/mcp`, 브라우저 OAuth), Codex는 `[mcp_servers.kaneo]`에 `KANEO_API_KEY` bearer(사용자가 Kaneo에서 API key를 만들어 환경변수로 제공). `using-linear`·`20-plan-linear.md`·`/plan-html`·Linear MCP는 제거했다. SAN-244는 더 이상 갱신하지 않으며 남은 항목은 Kaneo task로 옮긴다.
+사용자 결정으로 Linear를 종료하고 Kaneo를 plan/work-state SSOT로 쓴다. 하네스 쪽 정본은 `~/.agents/skills/using-kaneo/SKILL.md`, `~/.agents/rules/20-plan-kaneo.md`, `~/.claude/incidents/2026-09-02-linear-to-kaneo-cutover.md`다. MCP 등록: Claude는 user scope `kaneo` (`https://kaneo.kit.io.kr/api/mcp`, 브라우저 OAuth), Codex는 `[mcp_servers.kaneo]`(`url`만)와 `codex mcp login kaneo`(브라우저 OAuth, DCR+PKCE). `using-linear`·`20-plan-linear.md`·`/plan-html`·Linear MCP는 제거했다. SAN-244는 더 이상 갱신하지 않으며 남은 항목은 Kaneo task로 옮긴다.
 
 `agent.7`은 `/api/mcp/register`가 `grant_types`/`response_types` 배열을 거부하던 upstream 버그를 고친 것이다(커밋 `15d66372`). Claude Code 등은 `refresh_token`을 같이 보내므로 `agent.6` 이하에서는 동적 클라이언트 등록이 400이었다. 남은 유사 위험: `token_endpoint_auth_method`가 `none`만 허용된다.
 
