@@ -1043,7 +1043,11 @@ export default function CommentEditor({
 
   useEffect(() => {
     if (!editor) return;
-    editor.setEditable(!readOnly && !disabled);
+    // Toggling editability must not emit an `update`: on mount this effect
+    // runs before the hydration effect below, and the default emit reported
+    // the still-empty document as `onChange("")`, which then overwrote a
+    // non-empty initial `value`.
+    editor.setEditable(!readOnly && !disabled, false);
   }, [disabled, editor, readOnly]);
 
   useEffect(() => {

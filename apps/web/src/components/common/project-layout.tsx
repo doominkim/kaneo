@@ -7,6 +7,13 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  PROJECT_VIEW_PATHS,
+  ProjectSectionTabs,
+  type ProjectView,
+  resolveProjectView,
+  sectionOfView,
+} from "@/components/agent-layer/project-view-nav";
 import MobileProjectNav from "@/components/common/header/mobile-project-nav";
 import ProjectCrumbSelect from "@/components/common/header/project-crumb-select";
 import WorkspaceCrumbSelect from "@/components/common/header/workspace-crumb-select";
@@ -32,7 +39,7 @@ type ProjectLayoutProps = {
   headerActions?: ReactNode;
   children: ReactNode;
   showViewSwitcher?: boolean;
-  activeView?: "backlog" | "board" | "calendar" | "gantt";
+  activeView?: ProjectView;
 };
 
 export default function ProjectLayout({
@@ -52,15 +59,15 @@ export default function ProjectLayout({
 
   useProjectWebSocket(projectId);
 
-  const resolvedView =
-    activeView ??
-    (location.pathname.includes("/backlog")
-      ? "backlog"
-      : location.pathname.includes("/calendar")
-        ? "calendar"
-        : location.pathname.includes("/gantt")
-          ? "gantt"
-          : "board");
+  const resolvedView = resolveProjectView(location.pathname, activeView);
+  const isTaskSection = sectionOfView(resolvedView) === "tasks";
+
+  const handleNavigateToView = (view: ProjectView) => {
+    navigate({
+      to: PROJECT_VIEW_PATHS[view],
+      params: { workspaceId, projectId },
+    });
+  };
 
   const handleNavigateToBacklog = () => {
     navigate({
@@ -92,14 +99,7 @@ export default function ProjectLayout({
 
   const handleProjectSwitch = (nextProjectId: string) => {
     navigate({
-      to:
-        resolvedView === "backlog"
-          ? "/dashboard/workspace/$workspaceId/project/$projectId/backlog"
-          : resolvedView === "calendar"
-            ? "/dashboard/workspace/$workspaceId/project/$projectId/calendar"
-            : resolvedView === "gantt"
-              ? "/dashboard/workspace/$workspaceId/project/$projectId/gantt"
-              : "/dashboard/workspace/$workspaceId/project/$projectId/board",
+      to: PROJECT_VIEW_PATHS[resolvedView],
       params: {
         workspaceId,
         projectId: nextProjectId,
@@ -150,6 +150,7 @@ export default function ProjectLayout({
                 workspaceId={workspaceId}
                 projectId={projectId}
                 activeView={resolvedView}
+                onSelectView={handleNavigateToView}
                 onSelectBacklog={handleNavigateToBacklog}
                 onSelectBoard={handleNavigateToBoard}
                 onSelectCalendar={handleNavigateToCalendar}
@@ -159,7 +160,12 @@ export default function ProjectLayout({
               />
             </div>
 
-            {showViewSwitcher && (
+            <ProjectSectionTabs
+              activeView={resolvedView}
+              onSelectView={handleNavigateToView}
+            />
+
+            {showViewSwitcher && isTaskSection && (
               <div className="hidden h-8 items-center gap-0.5 rounded-lg border border-border/80 bg-background p-0.5 sm:inline-flex">
                 <Button
                   variant={resolvedView === "backlog" ? "secondary" : "ghost"}

@@ -7,6 +7,10 @@ import {
   SquareKanban,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import {
+  MobileProjectSections,
+  type ProjectView,
+} from "@/components/agent-layer/project-view-nav";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -20,7 +24,8 @@ import { cn } from "@/lib/cn";
 type MobileProjectNavProps = {
   workspaceId: string;
   projectId: string;
-  activeView: "backlog" | "board" | "calendar" | "gantt";
+  activeView: ProjectView;
+  onSelectView: (view: ProjectView) => void;
   onSelectBoard: () => void;
   onSelectBacklog: () => void;
   onSelectCalendar: () => void;
@@ -33,6 +38,7 @@ export default function MobileProjectNav({
   workspaceId,
   projectId,
   activeView,
+  onSelectView,
   onSelectBoard,
   onSelectBacklog,
   onSelectCalendar,
@@ -58,6 +64,11 @@ export default function MobileProjectNav({
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 p-2">
         <div className="space-y-3">
+          <MobileProjectSections
+            activeView={activeView}
+            onSelectView={onSelectView}
+          />
+
           <div className="space-y-1">
             <p className="px-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
               View
