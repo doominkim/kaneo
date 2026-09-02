@@ -18,8 +18,15 @@ const decisionBody = z
       "Why this was done, and what was rejected. The reason this table exists.",
   });
 
-const refsBody = z
+export const refsBody = z
   .object({
+    repo: z.string().max(200).optional().openapi({
+      description: 'Repository the work happened in, e.g. "doominkim/kaneo".',
+    }),
+    branch: z.string().max(200).optional().openapi({
+      description:
+        "Branch the work happened on. A commit sha alone does not say where unmerged work lives, so record this whenever git was involved.",
+    }),
     commits: z.array(z.string()).optional(),
     prs: z.array(z.string()).optional(),
     files: z.array(z.string()).optional(),
@@ -27,6 +34,22 @@ const refsBody = z
   .openapi({
     description:
       "References into git. Never copies — the content already lives there and a copy rots.",
+  });
+
+export const effortEnum = z.enum(["low", "medium", "high", "xhigh", "max"]);
+
+const nonNegativeInt = z.number().int().min(0);
+
+export const usageBody = z
+  .object({
+    inputTokens: nonNegativeInt.optional(),
+    outputTokens: nonNegativeInt.optional(),
+    totalTokens: nonNegativeInt.optional(),
+    cacheReadTokens: nonNegativeInt.optional(),
+  })
+  .openapi({
+    description:
+      "Token usage for this appearance. The model does not know its own usage; the harness supplies it.",
   });
 
 export const appendEntryBody = z.object({
@@ -53,6 +76,14 @@ export const appendEntryBody = z.object({
   provider: z.string().openapi({ description: "anthropic | openai | ..." }),
   model: z.string().openapi({ description: "claude-opus-5 | gpt-5.6 | ..." }),
   sessionId: z.string().nullable().optional(),
+  effort: effortEnum.nullable().optional().openapi({
+    description:
+      "Reasoning effort this appearance ran at. Same model, different effort, different cost and result.",
+  }),
+  agentLabel: z.string().max(64).nullable().optional().openapi({
+    description: 'Harness roster name, e.g. "3setter" or "codex".',
+  }),
+  usage: usageBody.nullable().optional(),
 });
 
 export const listEntriesQuery = z.object({

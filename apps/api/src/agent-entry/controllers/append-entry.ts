@@ -1,6 +1,7 @@
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
 import { agentEntryTable } from "../../database/schema-agent-layer";
+import type { EntryRefs, EntryUsage } from "./entry-fields";
 import resolveActor from "./resolve-actor";
 
 type AppendInput = {
@@ -12,11 +13,14 @@ type AppendInput = {
   summary: string;
   body?: string | null;
   decision?: unknown;
-  refs?: unknown;
+  refs?: EntryRefs | null;
   coreChanged?: string[] | null;
   provider: string;
   model: string;
   sessionId?: string | null;
+  effort?: string | null;
+  agentLabel?: string | null;
+  usage?: EntryUsage | null;
 };
 
 /**
@@ -45,6 +49,9 @@ async function appendEntry(input: AppendInput) {
       decision: input.decision ?? null,
       refs: input.refs ?? null,
       coreChanged: input.coreChanged ?? null,
+      effort: input.effort ?? null,
+      agentLabel: input.agentLabel ?? null,
+      usage: input.usage ?? null,
     })
     .returning();
 
@@ -61,6 +68,9 @@ async function appendEntry(input: AppendInput) {
     summary: entry.summary,
     hasDecision: entry.decision != null,
     coreChanged: (entry.coreChanged as string[] | null) ?? null,
+    effort: entry.effort,
+    agentLabel: entry.agentLabel,
+    usage: (entry.usage as EntryUsage | null) ?? null,
     createdAt: entry.createdAt,
     actor: actor
       ? {

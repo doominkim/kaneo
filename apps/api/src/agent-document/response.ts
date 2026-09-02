@@ -1,0 +1,43 @@
+import { responseTimestamp, z } from "../openapi";
+
+/**
+ * Listing shape — deliberately WITHOUT `body`.
+ *
+ * Bodies are up to 200KB each; a listing that shipped them would cost more
+ * than the whole ledger. `actorId`/`updatedBy` are both present so a reader can
+ * tell at a glance whether a human or an agent wrote the current version.
+ */
+export const documentSummarySchema = z
+  .object({
+    id: z.string(),
+    slug: z.string(),
+    title: z.string(),
+    taskId: z.string().nullable(),
+    updatedBy: z.string().nullable().openapi({
+      description:
+        "User id of the human author, or null when an agent wrote it.",
+    }),
+    actorId: z.string().nullable().openapi({
+      description:
+        "agent_actor id of the agent author, or null when a human wrote it.",
+    }),
+    updatedAt: responseTimestamp,
+  })
+  .openapi("AgentDocumentSummary");
+
+export const documentListSchema = z
+  .object({ documents: z.array(documentSummarySchema) })
+  .openapi("AgentDocumentList");
+
+export const documentSchema = documentSummarySchema
+  .extend({
+    workspaceId: z.string(),
+    projectId: z.string(),
+    body: z.string(),
+    createdAt: responseTimestamp,
+  })
+  .openapi("AgentDocument");
+
+export const deleteResultSchema = z
+  .object({ id: z.string(), slug: z.string() })
+  .openapi("AgentDocumentDeleteResult");

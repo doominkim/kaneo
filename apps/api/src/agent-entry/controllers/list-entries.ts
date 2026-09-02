@@ -6,6 +6,7 @@ import {
   agentActorTable,
   agentEntryTable,
 } from "../../database/schema-agent-layer";
+import type { EntryUsage } from "./entry-fields";
 
 type ListInput = {
   projectId: string;
@@ -80,6 +81,9 @@ async function listEntries(input: ListInput) {
       summary: agentEntryTable.summary,
       hasDecision: isNotNull(agentEntryTable.decision),
       coreChanged: agentEntryTable.coreChanged,
+      effort: agentEntryTable.effort,
+      agentLabel: agentEntryTable.agentLabel,
+      usage: agentEntryTable.usage,
       createdAt: agentEntryTable.createdAt,
       actorId: agentActorTable.id,
       actorProvider: agentActorTable.provider,
@@ -99,6 +103,9 @@ async function listEntries(input: ListInput) {
     summary: r.summary,
     hasDecision: Boolean(r.hasDecision),
     coreChanged: (r.coreChanged as string[] | null) ?? null,
+    effort: r.effort,
+    agentLabel: r.agentLabel,
+    usage: (r.usage as EntryUsage | null) ?? null,
     createdAt: r.createdAt,
     actor: r.actorId
       ? {

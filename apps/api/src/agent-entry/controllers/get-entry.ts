@@ -5,6 +5,7 @@ import {
   agentActorTable,
   agentEntryTable,
 } from "../../database/schema-agent-layer";
+import type { EntryRefs, EntryUsage } from "./entry-fields";
 
 /**
  * Full record including `body` and `decision`. Fetched one at a time by design.
@@ -36,7 +37,9 @@ async function getEntry(projectId: string, entryId: string) {
 
   return {
     ...entry,
+    refs: (entry.refs as EntryRefs | null) ?? null,
     coreChanged: (entry.coreChanged as string[] | null) ?? null,
+    usage: (entry.usage as EntryUsage | null) ?? null,
     actor: actor
       ? {
           id: actor.id,

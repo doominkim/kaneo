@@ -1,4 +1,5 @@
 import { responseTimestamp, z } from "../openapi";
+import { refsBody, usageBody } from "./schema";
 
 const actorSchema = z
   .object({
@@ -28,6 +29,9 @@ export const entrySummarySchema = z
         "Whether a decision payload exists. Fetch the entry by id to read it.",
     }),
     coreChanged: z.array(z.string()).nullable(),
+    effort: z.string().nullable(),
+    agentLabel: z.string().nullable(),
+    usage: usageBody.nullable(),
     createdAt: responseTimestamp,
     actor: actorSchema.nullable(),
   })
@@ -53,8 +57,11 @@ export const entryDetailSchema = z
     summary: z.string(),
     body: z.string().nullable(),
     decision: z.unknown(),
-    refs: z.unknown(),
+    refs: refsBody.nullable(),
     coreChanged: z.array(z.string()).nullable(),
+    effort: z.string().nullable(),
+    agentLabel: z.string().nullable(),
+    usage: usageBody.nullable(),
     compaction: z.string(),
     sessionId: z.string().nullable(),
     createdAt: responseTimestamp,

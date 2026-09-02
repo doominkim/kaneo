@@ -149,6 +149,18 @@ export const agentEntryTable = pgTable(
     /** file paths that matched the project's configured core_paths */
     coreChanged: jsonb("core_changed"),
 
+    /*
+     * Cost attribution. provider/model live on `agent_actor` because they are
+     * the actor's identity; these three vary per appearance, so they live here.
+     * All nullable: rows written before 0001 stay NULL and are never backfilled.
+     */
+    /** low | medium | high | xhigh | max */
+    effort: text("effort"),
+    /** harness roster name, e.g. "3setter" | "codex" */
+    agentLabel: text("agent_label"),
+    /** { inputTokens?, outputTokens?, totalTokens?, cacheReadTokens? } — supplied by the harness, the model does not know its own usage */
+    usage: jsonb("usage"),
+
     /** full | summarized | archived — see DESIGN.md compaction tiers */
     compaction: text("compaction").notNull().default("full"),
 
@@ -302,6 +314,78 @@ export const agentTermTable = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* agent_document — human-readable deliverables                                */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A deliverable meant to be read whole by a person: session report, design
+ * packet. Too large for one ledger entry, and unlike the ledger it is
+ * overwritten in place — unbounded growth is prevented by the (project, slug)
+ * key rather than by append discipline. Version history, if ever needed, is a
+ * separate `agent_document_revision` table (DESIGN.md §10).
+ *
+ * Authorship rule (application-enforced, not a CHECK constraint): exactly one
+ * of `updatedBy` (a human, via the HTTP API) or `actorId` (an agent, via MCP)
+ * is set per write, and the other is reset to NULL. Which kind of author wrote
+ * the current body is half of how a reader judges it.
+ *
+ * `taskId` is optional and `SET NULL` on task deletion, like the ledger: a
+ * document outlives the task it was produced under.
+ */
+export const agentDocumentTable = pgTable(
+  "agent_document",
+  {
+    id: text("id")
+      .$defaultFn(() => createId())
+      .primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaceTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projectTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    taskId: text("task_id").references(() => taskTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /** ^[a-z0-9][a-z0-9-]{0,63}$ — validated at the API layer */
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    /** markdown, ≤ 200KB enforced in Zod */
+    body: text("body").notNull(),
+    /** human author of the current body; NULL when an agent wrote it */
+    updatedBy: text("updated_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /** agent author of the current body; NULL when a human wrote it */
+    actorId: text("actor_id").references(() => agentActorTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" })
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (table) => [
+    unique("agent_document_project_slug_unique").on(
+      table.projectId,
+      table.slug,
+    ),
+    index("agent_document_project_task_idx").on(table.projectId, table.taskId),
+    index("agent_document_workspaceId_idx").on(table.workspaceId),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
 
 export type AgentActor = typeof agentActorTable.$inferSelect;
 export type NewAgentActor = typeof agentActorTable.$inferInsert;
@@ -311,3 +395,5 @@ export type AgentLease = typeof agentLeaseTable.$inferSelect;
 export type NewAgentLease = typeof agentLeaseTable.$inferInsert;
 export type AgentTerm = typeof agentTermTable.$inferSelect;
 export type NewAgentTerm = typeof agentTermTable.$inferInsert;
+export type AgentDocument = typeof agentDocumentTable.$inferSelect;
+export type NewAgentDocument = typeof agentDocumentTable.$inferInsert;

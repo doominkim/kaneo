@@ -75,8 +75,30 @@ type BoardColumn = { slug?: string; name?: string; tasks?: BoardTask[] };
 type BoardResponse = {
   data?: { columns?: BoardColumn[]; name?: string };
 };
+type DocumentSummary = { slug: string; title: string; updatedAt: string };
 
 const BRIEF_TASK_CAP = 20;
+const BRIEF_DOCUMENT_CAP = 20;
+
+/**
+ * The HTTP listing is uncapped and slug-ordered; a booting session instead
+ * wants the freshest reports first, and a bounded number of them.
+ */
+function shapeDocuments(documents: DocumentSummary[]) {
+  const sorted = [...documents].sort(
+    (a, b) =>
+      b.updatedAt.localeCompare(a.updatedAt) || a.slug.localeCompare(b.slug),
+  );
+  return {
+    documents: sorted.slice(0, BRIEF_DOCUMENT_CAP).map((d) => ({
+      slug: d.slug,
+      title: d.title,
+      updatedAt: d.updatedAt,
+    })),
+    documentsTotal: documents.length,
+    documentsTruncated: documents.length > BRIEF_DOCUMENT_CAP,
+  };
+}
 
 /**
  * Flattens the board to id/number/title/status and drops everything else.
@@ -135,7 +157,7 @@ export function registerAgentTools(
     "agent_brief",
     {
       description:
-        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries, and live claims. Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
+        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries, live claims, and the 20 most recently updated document titles (slug/title/updatedAt — deliverables, not a knowledge base; judge them by author and age; documentsTotal shows what was cut). Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
       inputSchema: z.object({
         projectId: z.string(),
         entries: z.number().int().min(1).max(20).default(5),
@@ -145,7 +167,7 @@ export function registerAgentTools(
       guard(async () => {
         // Fetched in parallel, then shaped. The cost the caller pays is the
         // shaped size, not the sum of the three responses.
-        const [board, log, leases] = await Promise.all([
+        const [board, log, leases, docs] = await Promise.all([
           api
             .json<BoardResponse>(
               `/api/task/tasks/${encodeURIComponent(args.projectId)}`,
@@ -161,6 +183,11 @@ export function registerAgentTools(
               `/api/agent-lease/${encodeURIComponent(args.projectId)}`,
             )
             .catch(() => ({ leases: [] })),
+          api
+            .json<{ documents?: DocumentSummary[] }>(
+              `/api/agent-document/${encodeURIComponent(args.projectId)}`,
+            )
+            .catch(() => ({ documents: [] })),
         ]);
 
         return {
@@ -168,6 +195,9 @@ export function registerAgentTools(
           tasks: shapeBoard(board),
           recentEntries: log.entries ?? [],
           liveClaims: leases.leases ?? [],
+          // Titles only; bodies are up to 200KB each and go through doc_get
+          // (Phase 1c). `updatedAt` is there so a stale report looks stale.
+          ...shapeDocuments(docs.documents ?? []),
         };
       }),
   );
@@ -176,7 +206,7 @@ export function registerAgentTools(
     "agent_log_append",
     {
       description:
-        "Append one ledger entry. Use this instead of a task comment — comments are the human surface and an agent writing there is what makes a task page unreadable. Record `decision.why` and `decision.rejected`: code keeps only what was chosen.",
+        "Append one ledger entry. Use this instead of a task comment — comments are the human surface and an agent writing there is what makes a task page unreadable. Record `decision.why` and `decision.rejected`: code keeps only what was chosen. If git was involved, set `refs.branch` (and `refs.repo`). Pass `effort`, `agentLabel` and harness-supplied `usage` so cost is attributable per appearance.",
       inputSchema: z.object({
         projectId: z.string(),
         taskId: z.string().nullable().optional(),
@@ -196,6 +226,8 @@ export function registerAgentTools(
           .optional(),
         refs: z
           .object({
+            repo: z.string().max(200).optional(),
+            branch: z.string().max(200).optional(),
             commits: z.array(z.string()).optional(),
             prs: z.array(z.string()).optional(),
             files: z.array(z.string()).optional(),
@@ -206,6 +238,20 @@ export function registerAgentTools(
         provider: z.string(),
         model: z.string(),
         sessionId: z.string().nullable().optional(),
+        effort: z
+          .enum(["low", "medium", "high", "xhigh", "max"])
+          .nullable()
+          .optional(),
+        agentLabel: z.string().max(64).nullable().optional(),
+        usage: z
+          .object({
+            inputTokens: z.number().int().min(0).optional(),
+            outputTokens: z.number().int().min(0).optional(),
+            totalTokens: z.number().int().min(0).optional(),
+            cacheReadTokens: z.number().int().min(0).optional(),
+          })
+          .nullable()
+          .optional(),
       }),
     },
     (args) =>

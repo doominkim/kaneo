@@ -14,6 +14,13 @@ import {
   createWorkspaceMember,
 } from "./helpers/fixtures";
 
+type EntryUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cacheReadTokens?: number;
+};
+
 type EntrySummary = {
   id: string;
   taskId: string | null;
@@ -21,6 +28,9 @@ type EntrySummary = {
   summary: string;
   hasDecision: boolean;
   coreChanged: string[] | null;
+  effort: string | null;
+  agentLabel: string | null;
+  usage: EntryUsage | null;
   createdAt: string;
   actor: {
     id: string;
@@ -252,6 +262,129 @@ describe("API integration: agent entries", () => {
       .where(eq(agentActorTable.workspaceId, member.workspace.id));
 
     expect(actors).toHaveLength(2);
+  });
+
+  it("round-trips effort, agentLabel, usage and refs.repo/branch", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    const usage = {
+      inputTokens: 1200,
+      outputTokens: 300,
+      totalTokens: 1500,
+      cacheReadTokens: 900,
+    };
+    const refs = {
+      repo: "doominkim/kaneo",
+      branch: "agent-layer",
+      commits: ["abc123"],
+    };
+
+    const appended = await app.request("/api/agent-entry", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: appendBody(project.id, {
+        effort: "xhigh",
+        agentLabel: "3setter",
+        usage,
+        refs,
+      }),
+    });
+    expect(appended.status).toBe(200);
+    const summary = (await appended.json()) as EntrySummary;
+    expect(summary).toMatchObject({
+      effort: "xhigh",
+      agentLabel: "3setter",
+      usage,
+    });
+
+    const listed = (await (
+      await app.request(`/api/agent-entry/${project.id}`)
+    ).json()) as EntryList;
+    expect(listed.entries[0]).toMatchObject({
+      effort: "xhigh",
+      agentLabel: "3setter",
+      usage,
+    });
+
+    const detail = (await (
+      await app.request(`/api/agent-entry/${project.id}/${summary.id}`)
+    ).json()) as EntryDetail;
+    expect(detail).toMatchObject({
+      effort: "xhigh",
+      agentLabel: "3setter",
+      usage,
+      refs,
+    });
+
+    const [persisted] = await db
+      .select()
+      .from(agentEntryTable)
+      .where(eq(agentEntryTable.id, summary.id));
+    expect(persisted).toMatchObject({
+      effort: "xhigh",
+      agentLabel: "3setter",
+    });
+    expect(persisted?.usage).toEqual(usage);
+    expect(persisted?.refs).toEqual(refs);
+  });
+
+  it("leaves the cost fields null when omitted, for old clients", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    const response = await app.request("/api/agent-entry", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: appendBody(project.id),
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()) as EntrySummary).toMatchObject({
+      effort: null,
+      agentLabel: null,
+      usage: null,
+    });
+  });
+
+  it("rejects an effort outside the vocabulary, negative usage, and an oversized label", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    for (const overrides of [
+      { effort: "ultra" },
+      { usage: { totalTokens: -1 } },
+      { usage: { inputTokens: 1.5 } },
+      { agentLabel: "x".repeat(65) },
+      { refs: { branch: "b".repeat(201) } },
+    ]) {
+      const response = await app.request("/api/agent-entry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: appendBody(project.id, overrides),
+      });
+      expect(response.status, JSON.stringify(overrides)).toBe(400);
+    }
+
+    const persisted = await db
+      .select()
+      .from(agentEntryTable)
+      .where(eq(agentEntryTable.projectId, project.id));
+    expect(persisted).toHaveLength(0);
   });
 
   it("rejects a summary longer than the 200 character cap", async () => {
