@@ -2,6 +2,7 @@
 
 > Kaneo tracking fork 위에 얹는 **멀티 에이전트 작업 원장** 레이어.
 > 작성 2026-09-01 · 상태: 설계 확정 전 (구현 착수 전)
+> 개정 2026-09-02 — 사람 뷰 5탭, 개요=파생 이력 뷰(핸드오프 + 타임라인 트리), `agent_document`·`agent_project` 테이블, entry에 `refs.branch`·`effort`·`usage`, core_paths 서버 측 판정, MCP 툴 10개 (KAN-6)
 
 ---
 
@@ -90,7 +91,7 @@ Linear 실패의 단일 원인. AI는 append만 하고 compact를 안 한다. �
 | 층 | 방식 | 비용 |
 |---|---|---|
 | API | Hono 도메인 모듈. `api.route("/entry", entry)` | 기존 파일 1줄 |
-| Web | TanStack 파일 기반 라우팅. `project/$projectId/{board,backlog,calendar,gantt}.tsx` 옆에 파일 추가 | 파일 추가 = 새 탭 |
+| Web | TanStack 파일 기반 라우팅. `project/$projectId/{board,backlog,calendar,gantt}.tsx` 옆에 파일 추가 | 파일 추가 = 새 **라우트**. 탭 노출은 upstream 컴포넌트 2개 수정 필요 (부록 참조) |
 | DB | Drizzle. `schema.ts`에 테이블 append | 마이그레이션 생성 |
 
 **문제 — MCP 레이어**
@@ -142,11 +143,22 @@ Task 본문은 고정 크기를 유지하고, 증가는 전부 `entry`로 나간
 | 테이블 | 역할 |
 |---|---|
 | `agent_actor` | AI 행위자. `provider`, `model`, `on_behalf_of` → 기존 `user` |
-| `agent_entry` | append-only 원장. `project_id`, **`task_id` nullable**, `decision` jsonb |
+| `agent_entry` | append-only 원장. `project_id`, **`task_id` nullable**, `decision` jsonb, `effort`·`agent_label`·`usage`(§4.3) |
 | `agent_lease` | 점유. `task_id`(unique), `session_id`, `expires_at` |
 | `agent_term` | 용어사전. `canonical`, `aliases`, `not_to_confuse_with` |
+| `agent_document` | 사람이 읽는 산출물. `project_id`+`slug` unique, **`task_id` nullable**(FK task, `SET NULL`), `title`, `body`(markdown), `updated_by`(user, nullable) / `actor_id`(`agent_actor`, nullable), `updated_at` |
+| `agent_project` | 프로젝트별 설정. `project_id` PK, `core_paths` jsonb, `active_task_threshold`(기본 20), `done_archive_days`(기본 30) |
 
 **모든 테이블에 `agent_` prefix를 붙인다.** upstream이 `entry`·`term` 같은 흔한 이름을 나중에 쓸 수 있고, prefix가 있어야 마이그레이션 범위를 이름으로 가를 수 있다.
+
+`agent_document`는 **에이전트가 만든 사람용 산출물**이 1차 용도다 — 세션 리포트, 설계 패킷처럼 원장 entry 한 건에 담기엔 크고 사람이 통째로 읽어야 하는 글. 사람도 같은 면에 쓴다. §2.3의 면 분리는 원장(`agent_entry`)과 코멘트 사이의 규율이며, 산출물 저장소는 그 축이 아니다 — 여기서 막아야 할 것은 무한 append이고 그것은 slug 단위 **덮어쓰기**로 막힌다.
+
+- 저자 출처: `updated_by`(사람)와 `actor_id`(에이전트) 중 **쓰기 한 번에 정확히 하나**만 채운다. 어느 쪽이 썼는지가 문서를 읽는 판단의 절반이다.
+- 본문은 덮어쓰기(+`updated_at`)다. §2.4 append-only는 원장의 원칙이지 산출물에 적용하지 않는다. 버전 이력이 필요해지면 `agent_document_revision`을 얹는다(§10).
+- `task_id`는 선택이다. 채우면 개요 트리에서 그 task 아래 잎으로 붙고(§6), task가 지워져도 문서는 `SET NULL`로 살아남는다 — 원장과 같은 규율이다.
+- 파일·이미지 첨부는 미결이다(§10). upstream 업로드 경로가 `taskId`에 묶여 있고 이미지 MIME 허용목록만 통과시킨다.
+
+`agent_project`는 행이 없으면 기본값으로 응답한다. 여기 담기는 것은 본문이 아니라 **설정**이므로 문서와 분리한다.
 
 **ID는 `cuid2`를 쓴다** (Kaneo 관례). 설계 초안에서는 ULID를 고려했으나 일관성이 우선이며, 시간 정렬은 `created_at` 인덱스로 대체한다.
 
@@ -154,12 +166,32 @@ Task 본문은 고정 크기를 유지하고, 증가는 전부 `entry`로 나간
 
 `db.query.*`(relational API)를 쓰려면 `database/index.ts`의 `schema` 객체에 등록해야 하지만, **등록하지 않는다** — 그 객체는 upstream이 테이블을 추가할 때마다 수정되어 충돌 지점이 된다. `db.select().from(agentEntryTable)` 형태로 충분하다.
 
+`agent_entry`의 `effort`·`agent_label`·`usage`는 **nullable 컬럼 추가**이므로 `drizzle-agent/0001`에 `agent_document`와 함께 `ALTER TABLE agent_entry ADD COLUMN` 으로 들어간다. 기존 행은 그대로 두고 값은 NULL이다.
+
 - `on_behalf_of`가 기존 `user`를 참조하므로 권한·알림 체계에 그대로 얹힌다.
 - **`entry.task_id`는 nullable이어야 한다.** task 없는 작업(조사, 설계 논의, 실패한 시도)도 원장에 남아야 한다. Kaneo `activity`가 못 하는 지점.
 
 ### 4.3 entry가 담는 것
 
 git이 이미 갖고 있는 것은 **참조만** 한다 (commit sha, PR 번호). 복제하면 썩는다.
+
+```
+refs: { repo, branch, commits, prs, files }
+```
+
+`repo`(`doominkim/kaneo`)와 `branch`(`agent-layer`)는 선택 필드이고 `agent_log_append` 입력이 받는다. **git 작업이었다면 브랜치는 반드시 기록한다** — 어느 브랜치에서 한 일인지는 commit sha만으로는 세션 밖에서 복원되지 않으며, 병합 전 작업이 어디 있는지 사람이 찾는 첫 단서다.
+
+```
+effort:      low | medium | high | xhigh | max
+agent_label: "3setter" | "codex" | …          하네스 로스터 이름
+usage:       { inputTokens, outputTokens, totalTokens, cacheReadTokens? }
+```
+
+누가·얼마나 들여 한 일인지는 **모델(provider·model)만으로는 부족하다.** 같은 모델도 effort에 따라 결과와 비용이 갈린다. provider·model은 `agent_actor`에 남고, 이 셋은 entry마다 다르므로 entry에 남는다. 셋 다 선택 필드다.
+
+- `effort`·`agent_label`은 `agent_log_append` 호출자가 넘긴다.
+- **`usage`는 모델이 스스로 모른다.** 하네스가 준다. 경로 둘: (a) 매니저가 subagent 완료 알림에서 받은 값을 그대로 넘긴다, (b) Phase 1c에서 하네스 훅(Claude Code `SubagentStop`, `~/.claude/ballclub/events/`)이 자동으로 붙인다.
+- **원장은 append-only이므로 나중에 온 usage로 기존 행을 고치지 않는다.** 원 entry id를 참조하는 `kind: work` entry를 새로 쓴다. 트리·개요의 합계는 어차피 task 단위 합산이므로 어느 쪽이든 총량은 맞는다.
 
 ```
 decision: { what, why, rejected, reversible }
@@ -247,6 +279,8 @@ tools/list JSON은 **대략 15~20 KB(≈5,000~7,000 토큰)**로 추정된다(MC
 | `log_tail(n)` | 기본 n=10, 요약 라인만 |
 | 본문 전체 | 명시 요청 시에만 |
 
+`agent_log_append` 입력에 `effort`·`agentLabel`·`usage`를 더한다(모두 선택). 스칼라 셋과 정수 네 개라 **수십 바이트**이며 예산에 영향이 없다.
+
 ### 5.2 툴 표면 (기존 36개와 별도)
 
 ```
@@ -255,9 +289,14 @@ task_list / task_save
 log_append / log_tail
 lease_acquire / leases
 resolve(term)
+doc_get(project, slug)  8KB 절단 + offset 이어읽기
+doc_put(project, slug)  title + body(≤200KB) 덮어쓰기. lease 불필요
 ```
 
-**8개를 넘기지 않는다.** comment 쓰기 툴은 넣지 않는다(§4.1).
+**등록 툴은 정확히 10개이며 상한 10을 다 쓴다.** 이제부터 툴을 늘리려면 기존 툴을 지워야 한다. comment 쓰기 툴은 넣지 않는다(§4.1).
+`doc_put`은 산출물을 남기는 경로다 — 세션 리포트를 사람에게 넘기는 유일한 쓰기 면이며, 원장 entry를 부풀리는 대신 여기로 나간다. slug 단위 덮어쓰기라 무한 append가 구조적으로 불가능하고, task를 잡지 않는 조사·설계 세션도 써야 하므로 lease를 요구하지 않는다.
+`brief`에는 문서 목록(`slug`/`title`/`updatedAt`)만 싣고 본문은 `doc_get`으로만 나간다(§5.1 예산).
+**문서는 산출물이지 KB가 아니다.** §2.2의 자격 게이트는 용어사전(`term`)에 적용되는 것이고 문서에는 적용하지 않는다 — 대신 문서는 저자 종류(사람/에이전트)와 `updatedAt`을 함께 실어 낡음이 보이게 한다. 툴 설명에도 명시한다.
 
 ### 5.3 handoff는 기능이 아니라 결과다
 
@@ -273,16 +312,41 @@ resolve(term)
 
 | 탭 | 내용 |
 |---|---|
-| 개요 | 목표 / 현재 상태 / 지금 누가 무엇을 잡고 있나 |
-| 태스크 | 기존 Kaneo 뷰 (board/backlog/…) |
-| 지식 | 용어사전, 결정 목록 |
-| 메모 | 타임라인 (최근 20 + 드릴다운), 코어 변경 하이라이트 |
+| 개요 | 파생 이력 뷰 — 최신 핸드오프 콜아웃 + 태스크 타임라인 트리 + 라이브 섹션 |
+| 태스크 | 기존 Kaneo 뷰 (board/backlog/calendar/gantt). 상단 탭 아래 2단 스위처로 유지 |
+| 지식 | 용어사전(제안됨/확정/이의), 결정 목록 |
+| 메모 | 타임라인 (최근 20 + 드릴다운), 코어 변경 하이라이트, entry별 모델·effort·토큰 |
+| 문서 | 산출물 목록·본문 (`agent_document`) — 세션 리포트, 설계 패킷. 에이전트가 쓰고 사람도 쓴다 |
+
+기존 4개 URL은 건드리지 않고 형제 라우트(`overview / knowledge / notes / docs / docs.$slug`)를 더한다(`overview`는 탭 경로일 뿐 문서 slug가 아니다). **기본 랜딩 탭은 Phase 1에서 board를 유지한다** — 개요로 옮기는 것은 2줄 변경이므로 dogfooding 후에 결정한다.
+문서 쓰기는 `task:update`(member 포함), 삭제와 설정(`agent_project`)은 `project:update`. 편집기는 task description이 쓰는 기존 tiptap 에디터를 재사용하고, 파일·이미지 첨부는 업로드 경로가 `taskId`를 요구하므로 Phase 1a에서 제외한다(§10).
+
+**개요는 저장소가 아니라 파생 뷰다** (§6.3, §2.1). 여기에 사람이 따로 쓰는 본문은 없다 — 원본은 원장과 task이고 개요는 그 렌더 결과다. 담는 것은 셋이다.
+
+1. **핸드오프 콜아웃** — 프로젝트의 최신 `kind: handoff` entry를 `summary` + `body`로 펼치고 actor와 시각을 함께 보여준다. handoff가 없으면 kind 무관 최신 entry로 폴백한다. "지금 어디까지 왔나"에 대한 답이 매번 같은 자리에 있다.
+2. **태스크 타임라인 트리** — `subtask` 관계의 대상이 **아닌** task를 부모로 보고 시간 순으로 가로 배치하며, 자식은 아래로 가지를 뻗는다. 산출물은 그것을 만든 task·subtask 아래 **잎**으로 달린다.
+
+```
+---- task 1 ---------------- task 2 ------ task 3 ----
+     ㄴ task 1-1 (feat/kpa-v2)
+        ㄴ report.html   (보기 · 다운로드)
+        ㄴ bundle.zip    (다운로드)
+     ㄴ task 1-2 (feat/kpa-v2, hotfix/kpa-login)
+```
+
+   - 조립은 서버가 한다. 클라이언트가 task마다 관계·문서·첨부를 조회하면 N+1이므로 `GET /api/agent-project/{projectId}/tree`가 노드당 `id, number, title, status, isFinal, createdAt, completedAt?, branches[], actors[]{provider, model, effort, appearances}, usage{inputTokens, outputTokens, totalTokens}, documents[]{id, slug, title, authorKind, updatedAt}, attachments[]{id, name, contentType, size, url}, children[]`를 한 번에 내려준다. `done`은 §6.1대로 접는다.
+   - 노드에는 **모델 · effort · 토큰**(그 task의 entry `usage` 합)을 함께 적고, 서브트리 단위로 롤업(모델별 토큰 합, 등판 횟수)을 낸다. 누가 얼마를 썼는지가 보이지 않으면 모델 배치를 고칠 근거가 없다.
+   - **브랜치 라벨**은 그 task의 entry들이 담은 `refs.branch`(+`refs.repo`)의 **distinct 집합**이다. 한 task가 여러 브랜치를 가질 수 있으므로 노드 옆에 나열한다. 파생값이므로 task에 컬럼을 추가하지 않는다.
+   - 잎의 출처는 둘이다: task에 연결된 `agent_document`(§4.2 `task_id`)와 upstream 첨부(`asset` 테이블 — `apps/api/src/database/schema.ts:586`; 생성 경로는 `POST /api/task/image-upload/{id}` + `/finalize`, `apps/api/src/task/index.ts:460,488`). 다만 그 경로는 현재 **이미지 MIME 허용목록**만 통과시키고 `surface`가 `description | comment`로 닫혀 있어, HTML 리포트·zip 번들 첨부는 upstream 수정 없이는 만들어지지 않는다(§10). `asset` 행 자체는 `kind`·`mime_type`이 자유 텍스트라 스키마 변경 없이 담긴다.
+   - **클릭 동작.** HTML 산출물은 `allow-same-origin` **없는** `<iframe sandbox>` 안에서 인라인으로 연다. iframe이 에셋 URL을 직접 불러야 하며 **본문을 앱 DOM에 렌더하지 않는다** — 에이전트가 생성한 HTML은 신뢰 경계 밖이고, 앱 DOM에 넣는 순간 세션을 가진 XSS가 된다. markdown 문서는 문서 탭(`docs.$slug`)으로 열고, zip·pdf 등 나머지는 다운로드 링크로 보낸다.
+3. **라이브 섹션** — 열린/완료 카운트, 활성 task 임계치 배너, 활성 lease.
 
 ### 6.1 하드 리밋
 
-- `done`은 기본 접힘, 30일 후 아카이브
-- 타임라인은 최근 20개. 그 이상은 드릴다운
-- 활성 task가 임계치를 넘으면 경고 (워킹셋이 부푸는 신호)
+- `done`은 기본 접힘 — 칸반은 무수정이고, **개요 탭의 타임라인 트리**가 완료 컬럼(`isFinal`) task를 "완료 N" 한 줄로 접는다
+- 30일 후 아카이브 — `agent_project.done_archive_days`(기본 30, 0=off) 기준 cron. **대량 상태 변경과 알림을 유발하므로 Phase 1c에서 별도 사용자 승인 후 도입한다**
+- 타임라인은 최근 20개. 그 이상은 기존 커서(`before`=entry id)로 드릴다운
+- 활성 task가 임계치를 넘으면 경고 (워킹셋이 부푸는 신호). 임계치는 `agent_project.active_task_threshold`(기본 20, brief 상한과 정렬)이며 개요 탭 배너로 띄운다
 
 ### 6.2 "코어 변경"은 결정론으로 판정한다
 
@@ -293,6 +357,12 @@ core_paths:
   - src/domain/**
   - "**/migrations/**"
 ```
+
+**판정 주체는 서버다.** 패턴은 `agent_project.core_paths`에 저장하고(사람이 프로젝트당 한 번, `project:update`), `agent_log_append`가 받은 `refs.files`와 API가 picomatch로 대조해 `core_changed`를 기록한다. 클라이언트가 보내던 `coreChanged` 입력은 제거한다 — 모델이 채우는 필드로 두면 없애려던 변덕이 그대로 남는다.
+
+- `null` = 판정하지 않음(`refs.files`가 없거나 패턴이 비어 있음), `[]` = 판정했으나 매칭 0건.
+- 입력 스키마에서 `coreChanged`를 지워도 구 클라이언트는 400 없이 무시된다(unknown key strip).
+- 기존 entry는 **백필하지 않는다.** 서버 판정 이전 값은 당시 클라이언트의 주장이며, 원장은 append-only다.
 
 ### 6.3 HTML은 캐시다
 
@@ -324,12 +394,17 @@ core_paths:
 | Phase | 내용 | 완료 조건 |
 |---|---|---|
 | **0** | 스키마 확정 (4테이블, 마이그레이션 번호대, actor 모델) | 되돌리기 비싼 결정 완료 |
-| **1** | API 모듈 + 에이전트 MCP 툴셋 + 4탭 뷰 | **dogfooding 시작, Linear 종료** |
+| **1** | API 모듈 + 에이전트 MCP 툴셋 + 5탭 뷰 | **5탭 뷰 포함, dogfooding 시작**[^linear] |
+| 1a | `agent_document` API(`task_id` 포함) + `agent_entry`에 `effort`·`agent_label`·`usage` 컬럼 + 문서 탭 + 개요 탭(핸드오프 콜아웃 + `/tree` 엔드포인트 + 브랜치 라벨 + 모델·effort·토큰 롤업 + 산출물 잎·sandbox 뷰어) + 메모 탭 + 5탭 nav | 산출물 저장·열람, 개요에서 이력·비용 파악 |
+| 1b | `agent_project` + core_paths 서버 판정 + 지식 탭 + `workspace:update` capability | 결정론 판정, 용어 확정 UI |
+| 1c | MCP `agent_doc_get`/`agent_doc_put`, `using-kaneo` 핸드오프 entry 형식 4섹션(완료·진행 중·막힘·다음) 고정 + git 작업 시 `refs.branch` 필수, 하네스 훅으로 `usage` 자동 기록, 아카이브 cron 승인 게이트, 운영 반영 | 툴 10개 확정, 에이전트가 스스로 리포트를 남김 |
 | 2 | Linear export → entry 흡수 | 열린 이슈만 Task로, 닫힌 이슈는 entry 1개로 압축. 코멘트는 가져오지 않는다 |
 | 3 | 압축 계층 (§4.6) | entry가 쌓인 뒤 |
 | 4 | consolidation → 용어사전 승격 | 반복 등장 개념을 제안 큐로 |
 
 **Phase 1이 끝나면 Linear를 끌 수 있다.** 3·4는 데이터 없이는 설계할 수 없다(cold start).
+
+[^linear]: Linear → Kaneo 전환 자체는 2026-09-02에 이미 이뤄졌다. Phase 1의 완료 조건은 "5탭 뷰 포함, dogfooding 시작"이다.
 
 ### 승격 파이프라인 (Phase 4)
 
@@ -370,6 +445,10 @@ entry N개에 같은 용어 반복 등장
 4. upstream merge 주기
 5. ~~MCP 실측~~ → **완료** (§5.0). 남은 것: tools/list 실크기 계측에 OAuth 플로우 통과 필요
 6. Kaneo 커뮤니티에 문제 제기 시점 — 작동하는 것을 보여준 뒤가 유리하나, "이 문제 겪고 계신가요"라는 **질문**은 비용 0이므로 선행 가능
+7. 문서 버전 이력 — Phase 1은 덮어쓰기. `agent_document_revision`은 컬럼 변경 없이 얹을 수 있으므로 필요해질 때 결정한다. 동시 편집은 마지막 저장 승리이며 `updatedAt` 조건부 PUT은 후속
+8. 산출물 첨부(HTML 리포트·zip·이미지) — upstream 업로드 경로는 `taskId`에 묶여 있고 **이미지 MIME 허용목록**과 `surface: description | comment`로 닫혀 있다. 개요 트리의 첨부 잎(§6)이 실제로 채워지려면 upstream을 고쳐야 하므로 보류하며, 그때까지 산출물은 `agent_document` 텍스트다
+9. 30일 아카이브 cron의 부작용 — 대량 상태 전이가 activity·알림·웹훅을 한꺼번에 발생시킨다. 배치 상한과 리더 락을 함께 설계하고 사용자 승인 뒤 켠다(Phase 1c)
+10. 문서가 사실상 KB로 읽힐 위험(§2.2) — 문서는 자격 게이트를 거치지 않은 산출물인데, 에이전트가 `doc_get`으로 읽으면 낡은 리포트가 KB처럼 작동한다. 저자 종류·`updatedAt` 노출과 툴 설명은 완화일 뿐 근본 해결이 아니다
 
 ---
 
@@ -386,7 +465,7 @@ entry N개에 같은 용어 반복 등장
 | **응답 크기 실측** | ✅ 로컬 기동 후 계측 (§5.0). Docker compose, task 20 / 코멘트 30 |
 | MCP tools/list 크기 | ⚠️ **정적 추정** — MCP가 OAuth 토큰만 받아 직접 계측 실패 (apikey·세션쿠키 모두 401) |
 | 대규모 프로젝트 수치 | ⚠️ **선형 외삽** — task 200개는 실측 아님 |
-| Web 탭 추가 난이도 | ⚠️ 미검증 — 파일 추가만으로 되는지 실제로 안 해봄 |
+| Web 탭 추가 난이도 | ✅ 실측 (2026-09-02, 정적 분석) — **파일 추가만으로는 안 된다.** 라우트는 파일로 생기지만 탭은 upstream 컴포넌트 2개를 고쳐야 나온다: `apps/web/src/components/common/project-layout.tsx:35`의 닫힌 `activeView` union과 하드코딩된 탭 버튼 4개, `header/mobile-project-nav.tsx`의 같은 union과 `grid-cols-4`. 추가로 `routeTree.gen.ts`가 git 추적 대상이라 재생성·커밋이 필요하다. §3.3 "등록 라인만" 규율을 web에 그대로 적용할 수 없으므로, 스위처를 fork 컴포넌트로 뽑아 두 파일의 diff를 국소화한다 |
 
 ### Phase 0 스키마 검증 (2026-09-01, 로컬 Postgres 실적용)
 
