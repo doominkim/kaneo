@@ -14,6 +14,7 @@ import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import activity from "./activity";
+import agentArtifact from "./agent-artifact";
 import agentDocument from "./agent-document";
 import agentEntry from "./agent-entry";
 import agentLease from "./agent-lease";
@@ -586,6 +587,7 @@ export function createApp() {
   const agentLeaseApi = api.route("/agent-lease", agentLease);
   const agentDocumentApi = api.route("/agent-document", agentDocument);
   const agentProjectApi = api.route("/agent-project", agentProject);
+  const agentArtifactApi = api.route("/agent-artifact", agentArtifact);
   const commentApi = api.route("/comment", comment);
   const timeEntryApi = api.route("/time-entry", timeEntry);
   const labelApi = api.route("/label", label);
@@ -764,6 +766,7 @@ export function createApp() {
     agentLeaseApi,
     agentDocumentApi,
     agentProjectApi,
+    agentArtifactApi,
     billingApi,
     columnApi,
     commentApi,
@@ -897,6 +900,7 @@ const {
   agentLeaseApi,
   agentDocumentApi,
   agentProjectApi,
+  agentArtifactApi,
   billingApi,
   columnApi,
   commentApi,
@@ -947,6 +951,7 @@ export type AppType =
   | typeof agentLeaseApi
   | typeof agentDocumentApi
   | typeof agentProjectApi
+  | typeof agentArtifactApi
   | typeof commentApi
   | typeof timeEntryApi
   | typeof labelApi

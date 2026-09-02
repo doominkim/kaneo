@@ -6,6 +6,7 @@ import type {
 import db, { schema } from "../../database";
 import {
   agentActorTable,
+  agentArtifactTable,
   agentDocumentTable,
   agentEntryTable,
 } from "../../database/schema-agent-layer";
@@ -29,13 +30,14 @@ function isDone(status: string, isFinal: boolean | null) {
 
 /**
  * The overview tree, assembled server-side in a fixed number of queries
- * (tasks, subtask relations, entries, documents — four) regardless of project
- * size. A client walking task-by-task would be N+1 several times over.
+ * (tasks, subtask relations, entries, documents, artifacts — five) regardless
+ * of project size. A client walking task-by-task would be N+1 several times
+ * over.
  *
- * `attachments` is always empty here. Phase 1a' adds a fork-owned
- * `agent_artifact` table (presign/finalize, html/zip/pdf/md) and fills the leaf
- * from it; the upstream `asset` table is NOT the source — its rows are inline
- * description/comment images, not deliverables.
+ * `attachments` come from the fork-owned `agent_artifact` table (finalized
+ * rows only); the upstream `asset` table is NOT the source — its rows are
+ * inline description/comment images, not deliverables. Leaves carry no URL:
+ * one is minted per click from `GET /api/agent-artifact/{projectId}/{id}/url`.
  *
  * Roots are tasks that are the target of no `subtask` relation (`sourceTaskId`
  * is the parent, `targetTaskId` the child), ordered by creation. A task with
@@ -45,7 +47,7 @@ function isDone(status: string, isFinal: boolean | null) {
  * roots so nothing silently disappears from the view.
  */
 async function getTree(projectId: string): Promise<{ nodes: TreeNode[] }> {
-  const [tasks, relations, entries, documents] = await Promise.all([
+  const [tasks, relations, entries, documents, artifacts] = await Promise.all([
     db
       .select({
         id: schema.taskTable.id,
@@ -121,6 +123,24 @@ async function getTree(projectId: string): Promise<{ nodes: TreeNode[] }> {
         ),
       )
       .orderBy(asc(agentDocumentTable.slug)),
+    db
+      .select({
+        id: agentArtifactTable.id,
+        taskId: agentArtifactTable.taskId,
+        name: agentArtifactTable.name,
+        contentType: agentArtifactTable.contentType,
+        size: agentArtifactTable.size,
+        createdAt: agentArtifactTable.createdAt,
+      })
+      .from(agentArtifactTable)
+      .where(
+        and(
+          eq(agentArtifactTable.projectId, projectId),
+          isNotNull(agentArtifactTable.taskId),
+          isNotNull(agentArtifactTable.finalizedAt),
+        ),
+      )
+      .orderBy(desc(agentArtifactTable.createdAt), desc(agentArtifactTable.id)),
   ]);
 
   const taskIds = new Set(tasks.map((task) => task.id));
@@ -187,6 +207,20 @@ async function getTree(projectId: string): Promise<{ nodes: TreeNode[] }> {
     documentsOf.set(document.taskId, list);
   }
 
+  const attachmentsOf = new Map<string, TreeNode["attachments"]>();
+  for (const artifact of artifacts) {
+    if (!artifact.taskId) continue;
+    const list = attachmentsOf.get(artifact.taskId) ?? [];
+    list.push({
+      id: artifact.id,
+      name: artifact.name,
+      contentType: artifact.contentType,
+      size: artifact.size,
+      createdAt: artifact.createdAt,
+    });
+    attachmentsOf.set(artifact.taskId, list);
+  }
+
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const rendered = new Set<string>();
 
@@ -212,7 +246,7 @@ async function getTree(projectId: string): Promise<{ nodes: TreeNode[] }> {
       updatedAt: task.updatedAt,
       branches: branchesOf.get(taskId) ?? [],
       documents: documentsOf.get(taskId) ?? [],
-      attachments: [],
+      attachments: attachmentsOf.get(taskId) ?? [],
       usage: usageOf.get(taskId) ?? emptyUsage(),
       children,
     };

@@ -15,6 +15,13 @@
       "when": 1788331699192,
       "tag": "0001_flaky_boom_boom",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788392215235,
+      "tag": "0002_agent_artifact",
+      "breakpoints": true
     }
   ]
 }

@@ -23,7 +23,7 @@ const treeRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Task timeline tree",
   description:
-    "The overview tree in one call: root tasks (not a `subtask` target) in creation order, children nested via subtask relations, and per task the distinct branches from its ledger entries, linked documents and token usage. `attachments` is typed but empty until Phase 1a' (`agent_artifact`). Derived from the ledger and tasks — nothing here is stored separately.",
+    "The overview tree in one call: root tasks (not a `subtask` target) in creation order, children nested via subtask relations, and per task the distinct branches from its ledger entries, linked documents, uploaded artifacts and token usage. Derived from the ledger, tasks and artifact records — nothing here is stored separately.",
   middleware: [workspaceAccess.fromProject("projectId")] as const,
   request: { params: projectIdParam },
   responses: {

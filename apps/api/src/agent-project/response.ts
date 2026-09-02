@@ -20,8 +20,8 @@ const documentLeafSchema = z
 
 /**
  * Deliberately no `url`: artifacts are served through short-lived URLs fetched
- * per click (`GET /api/agent-artifact/{projectId}/{id}/url`, Phase 1a'), so a
- * tree response never carries anything that could be replayed later.
+ * per click (`GET /api/agent-artifact/{projectId}/{id}/url`), so a tree
+ * response never carries anything that could be replayed later.
  */
 const attachmentLeafSchema = z
   .object({
@@ -104,7 +104,7 @@ export const treeNodeSchema: z.ZodType<TreeNode> = z
       documents: z.array(documentLeafSchema),
       attachments: z.array(attachmentLeafSchema).openapi({
         description:
-          "Uploaded artifacts (html/zip/pdf/md) linked to the task. Always empty until the fork-owned `agent_artifact` table lands (Phase 1a').",
+          "Finalized artifacts (html/zip/pdf/md) linked to the task, newest first. Mint a URL per click via `GET /api/agent-artifact/{projectId}/{id}/url`.",
       }),
       usage: usageSchema.openapi({
         description: "Summed over this task's own entries, not its subtree.",

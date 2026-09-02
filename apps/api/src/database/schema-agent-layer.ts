@@ -386,6 +386,76 @@ export const agentDocumentTable = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* agent_artifact — uploaded deliverables (html report, zip, pdf, md)          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A file deliverable stored in S3, distinct from the upstream `asset` table:
+ * that one is inline description/comment images bound to a task + surface,
+ * this one is a project-level output that may or may not belong to a task.
+ *
+ * Two-step lifecycle. `presign` inserts the row with `finalizedAt` NULL and
+ * hands back a PUT URL; `finalize` verifies the object (HeadObject) against the
+ * size/contentType recorded here and stamps `finalizedAt`. Only finalized rows
+ * are ever listed, served or hung on the tree. A pending row is therefore
+ * invisible but keeps its `storageKey`, so an abandoned upload can still be
+ * found and cleaned — nothing is orphaned silently.
+ *
+ * `taskId` is SET NULL on task deletion, like documents: the artifact outlives
+ * the task it was produced under. `uploadedBy` (human, HTTP) / `actorId`
+ * (agent, MCP) mirror the document authorship rule; Phase 1a' only writes the
+ * human side.
+ */
+export const agentArtifactTable = pgTable(
+  "agent_artifact",
+  {
+    id: text("id")
+      .$defaultFn(() => createId())
+      .primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaceTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projectTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    taskId: text("task_id").references(() => taskTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /** original file name as shown to people; the key uses a sanitized copy */
+    name: text("name").notNull(),
+    /** one of the allowlisted MIME types, lower-cased at the API layer */
+    contentType: text("content_type").notNull(),
+    /** bytes, as declared at presign and verified at finalize */
+    size: integer("size").notNull(),
+    /** full S3 key including S3_KEY_PREFIX; unique so one object maps to one row */
+    storageKey: text("storage_key").notNull(),
+    uploadedBy: text("uploaded_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    actorId: text("actor_id").references(() => agentActorTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /** NULL until the object has been verified in storage */
+    finalizedAt: timestamp("finalized_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("agent_artifact_storage_key_unique").on(table.storageKey),
+    index("agent_artifact_project_task_idx").on(table.projectId, table.taskId),
+    index("agent_artifact_workspaceId_idx").on(table.workspaceId),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
 
 export type AgentActor = typeof agentActorTable.$inferSelect;
 export type NewAgentActor = typeof agentActorTable.$inferInsert;
@@ -397,3 +467,5 @@ export type AgentTerm = typeof agentTermTable.$inferSelect;
 export type NewAgentTerm = typeof agentTermTable.$inferInsert;
 export type AgentDocument = typeof agentDocumentTable.$inferSelect;
 export type NewAgentDocument = typeof agentDocumentTable.$inferInsert;
+export type AgentArtifact = typeof agentArtifactTable.$inferSelect;
+export type NewAgentArtifact = typeof agentArtifactTable.$inferInsert;

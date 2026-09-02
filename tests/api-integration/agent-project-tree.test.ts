@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import db, { schema } from "../../apps/api/src/database";
 import {
   agentActorTable,
+  agentArtifactTable,
   agentDocumentTable,
   agentEntryTable,
 } from "../../apps/api/src/database/schema-agent-layer";
@@ -350,7 +351,7 @@ describe("API integration: agent project tree", () => {
     expect(other?.usage.entryCount).toBe(0);
   });
 
-  it("hangs linked documents as leaves and leaves attachments empty", async () => {
+  it("hangs linked documents and finalized artifacts as leaves", async () => {
     const member = await createWorkspaceMember();
     const { project, columns } = await createProjectFixture({
       workspaceId: member.workspace.id,
@@ -379,8 +380,61 @@ describe("API integration: agent project tree", () => {
       body: "y",
       updatedBy: member.user.id,
     });
+    // Two finalized artifacts (newest first), one still pending (invisible),
+    // one project-level (no task, so not a leaf).
+    const artifactBase = {
+      workspaceId: member.workspace.id,
+      projectId: project.id,
+      uploadedBy: member.user.id,
+    };
+    const [older] = await db
+      .insert(agentArtifactTable)
+      .values({
+        ...artifactBase,
+        taskId: task.id,
+        name: "report.html",
+        contentType: "text/html",
+        size: 4096,
+        storageKey: `agent-artifacts/${member.workspace.id}/${project.id}/a1/report.html`,
+        finalizedAt: new Date(Date.UTC(2026, 2, 1)),
+        createdAt: new Date(Date.UTC(2026, 2, 1)),
+      })
+      .returning();
+    const [newer] = await db
+      .insert(agentArtifactTable)
+      .values({
+        ...artifactBase,
+        taskId: task.id,
+        name: "bundle.zip",
+        contentType: "application/zip",
+        size: 65536,
+        storageKey: `agent-artifacts/${member.workspace.id}/${project.id}/a2/bundle.zip`,
+        finalizedAt: new Date(Date.UTC(2026, 2, 2)),
+        createdAt: new Date(Date.UTC(2026, 2, 2)),
+      })
+      .returning();
+    await db.insert(agentArtifactTable).values([
+      {
+        ...artifactBase,
+        taskId: task.id,
+        name: "pending.pdf",
+        contentType: "application/pdf",
+        size: 1,
+        storageKey: `agent-artifacts/${member.workspace.id}/${project.id}/a3/pending.pdf`,
+        finalizedAt: null,
+      },
+      {
+        ...artifactBase,
+        taskId: null,
+        name: "project-level.md",
+        contentType: "text/markdown",
+        size: 1,
+        storageKey: `agent-artifacts/${member.workspace.id}/${project.id}/a4/project-level.md`,
+        finalizedAt: new Date(),
+      },
+    ]);
     // An upstream asset row on the task is NOT surfaced: attachments come
-    // from the fork-owned agent_artifact table (Phase 1a'), not from `asset`.
+    // from the fork-owned agent_artifact table, not from `asset`.
     await db.insert(schema.assetTable).values({
       workspaceId: member.workspace.id,
       projectId: project.id,
@@ -411,7 +465,24 @@ describe("API integration: agent project tree", () => {
     ]);
     // Leaves carry no body — that is what keeps the tree bounded.
     expect(JSON.stringify(tree)).not.toContain("xxxxxxxxxx");
-    expect(node?.attachments).toEqual([]);
+    expect(node?.attachments).toEqual([
+      {
+        id: newer.id,
+        name: "bundle.zip",
+        contentType: "application/zip",
+        size: 65536,
+        createdAt: newer.createdAt.toISOString(),
+      },
+      {
+        id: older.id,
+        name: "report.html",
+        contentType: "text/html",
+        size: 4096,
+        createdAt: older.createdAt.toISOString(),
+      },
+    ]);
+    // No storage key or URL in the tree — URLs are minted per click.
+    expect(JSON.stringify(node?.attachments)).not.toContain("agent-artifacts/");
     expect(bareNode?.documents).toEqual([]);
     expect(bareNode?.attachments).toEqual([]);
   });
