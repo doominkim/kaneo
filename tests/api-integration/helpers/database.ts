@@ -7,6 +7,13 @@ import db from "../../../apps/api/src/database";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = resolve(currentDir, "../../../apps/api/drizzle");
+// Agent Layer (fork) migrations live in their own folder with their own
+// tracking table, mirroring runStartupTasks in apps/api/src/index.ts. Sharing
+// upstream's journal would conflict on every upstream migration.
+const agentMigrationsFolder = resolve(
+  currentDir,
+  "../../../apps/api/drizzle-agent",
+);
 
 let migrationPromise: Promise<void> | null = null;
 
@@ -67,6 +74,10 @@ export async function ensureTestDatabaseMigrated() {
       await ensureTestDatabaseExists();
       await migrate(db, {
         migrationsFolder,
+      });
+      await migrate(db, {
+        migrationsFolder: agentMigrationsFolder,
+        migrationsTable: "__drizzle_migrations_agent",
       });
     })();
   }
