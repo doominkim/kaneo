@@ -101,15 +101,16 @@ MinIO에는 `kaneo-uploads` 전용 bucket, `kaneo-prod` 전용 사용자/버킷 
 2. **API integration test**: 해결됨(위 2차 세션 갱신 참조). 남은 것은 운영 PG 버전 확인(label PG 13 문제가 운영에 해당하는지)뿐이다.
 3. **MCP 실제 OAuth 호출과 응답 크기**: `/api/mcp`에 OAuth로 연결해 MCP 8개 도구(그중 하나인 `agent_brief`)의 실제 payload/token 크기를 아직 측정하지 못했다.
 4. **Agent Layer API 3모듈**: 로컬 integration 테스트로 HTTP 계약을 검증했다(위 참조). 운영 DB에서의 인증 왕복과 컨트롤러 결함 4건 수정은 남아 있다.
-5. **web 탭**: Agent Layer 전용 UI 탭은 아직 구현하지 않았다. `ProjectLayout`의 닫힌 `activeView` union, 탭 네비게이션, fetcher, TanStack Query hook까지 함께 바뀌어야 한다.
+5. **사람 뷰 4탭 (DESIGN §6)**: 개요·태스크·지식·메모 탭과 §6.1 하드 리밋, §6.2 `core_paths` 결정론 판정은 **Phase 1 범위인데 미구현**이다. 이전 인계에서 "별도 이슈"로 밀렸던 것을 2026-09-02 Kaneo task KAN-6으로 복원했다. `ProjectLayout`의 닫힌 `activeView` union, 탭 네비게이션, fetcher, TanStack Query hook까지 함께 바뀌어야 한다.
+6. **Phase 2 Linear 흡수**: 열린 이슈 → task, 닫힌 이슈 → entry 압축(DESIGN §8). 이전 SAN-244 범위의 "이관 제외"는 설계와 어긋나 KAN-10으로 복원했다.
 
 ## 다음 작업 순서
 
 1. `https://kaneo.kit.io.kr`에 로그인해 작은 첨부 파일을 task에 올린다. 네트워크 요청이 `https://files.kit.io.kr/kaneo-uploads/...`인지, finalize가 성공하는지, 새로고침 후 다운로드와 삭제가 되는지 기록한다. 실패하면 브라우저 console/Network의 상태 코드와 response body만 수집하고 자격증명·presigned URL query는 공유하지 않는다.
 2. (완료) 로컬 integration DB, Agent Layer integration 테스트, 결함 4건 수정. **재배포 전제**: 아래 "운영 호스트 침해" 대응이 끝나야 한다.
 3. OAuth MCP 클라이언트로 운영 `/api/mcp`의 `tools/list`와 read-only 도구부터 호출해 응답 byte/token 수를 기록한다. MCP 8개에는 append/propose/acquire/release mutation이 있으므로, mutation 전에는 전용 테스트 workspace/task, append-only 영구 데이터 허용 범위, 사용자 승인, lease 해제 기준을 먼저 정한다. 승인 전에는 mutation을 호출하지 않는다.
-4. 검증된 계약을 바탕으로 web Agent Layer 탭을 별도 이슈로 설계·구현한다.
-5. 증거를 SAN-244에 남기고 남은 범위가 끝났을 때만 완료 처리한다.
+4. 잔여 작업의 정본은 Kaneo project `kaneo`(KAN) 부모 task KAN-1 (`o2z5e9avzi7e1w8zzxa01c0u`)이다. 우선순위: KAN-5 침해 대응 → KAN-4 잠금 → KAN-7 MCP 보안 → KAN-9 타임존 → KAN-6 사람 뷰 4탭(설계 승인 후) → KAN-10 Linear 흡수 → KAN-2/3 실측 → KAN-8 CORS.
+5. 증거는 Kaneo 원장(`agent_log_append`)에 남긴다. SAN-244는 더 이상 갱신하지 않는다.
 
 ### 다음 명령 예시
 
