@@ -49,12 +49,12 @@ const listEntriesRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "List ledger entries",
   description:
-    "Newest first. Returns summaries only — `body` and `decision` are excluded at the query level so the cost of a listing stays bounded. Fetch a single entry to read them.",
+    "Newest first. Returns summaries only — `body` and `decision` are excluded at the query level so the cost of a listing stays bounded. Fetch a single entry to read them. Page by passing the previous response's `nextBefore` as `before`.",
   middleware: [workspaceAccess.fromProject("projectId")] as const,
   request: { params: projectIdParam, query: listEntriesQuery },
   responses: {
     200: jsonResponse("Entry summaries, newest first", entryListSchema),
-    400: errorResponse("Unknown project"),
+    400: errorResponse("Unknown project, or unknown cursor"),
     403: errorResponse("No access to the project's workspace"),
   },
 });
@@ -66,7 +66,7 @@ const getEntryRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Get one ledger entry",
   description:
-    "The full record including `body` and `decision`. Scoped under the project so workspace access resolves the same way as the listing.",
+    "The full record including `body` and `decision`. Scoped under the project so workspace access resolves the same way as the listing; an entry that belongs to another project is reported as not found.",
   middleware: [workspaceAccess.fromProject("projectId")] as const,
   request: {
     params: projectIdParam.extend({ entryId: projectIdParam.shape.projectId }),
@@ -99,8 +99,9 @@ const agentEntry = apiRouter<BaseVariables & { workspaceId: string }>()
       200,
     ),
   )
-  .openapi(getEntryRoute, async (c) =>
-    c.json(await getEntry(c.req.valid("param").entryId), 200),
-  );
+  .openapi(getEntryRoute, async (c) => {
+    const { projectId, entryId } = c.req.valid("param");
+    return c.json(await getEntry(projectId, entryId), 200);
+  });
 
 export default agentEntry;

@@ -43,7 +43,13 @@ async function resolveTerm(workspaceId: string, term: string) {
         eq(agentTermTable.workspaceId, workspaceId),
         or(
           sql`lower(${agentTermTable.canonical}) = lower(${normalized})`,
-          sql`${agentTermTable.aliases} @> ${JSON.stringify([normalized])}::jsonb`,
+          // Aliases are matched the same way as the canonical name (case- and
+          // whitespace-insensitive), which jsonb containment cannot express.
+          sql`exists (
+            select 1
+            from jsonb_array_elements_text(coalesce(${agentTermTable.aliases}, '[]'::jsonb)) as alias(value)
+            where lower(trim(alias.value)) = lower(${normalized})
+          )`,
         ),
       ),
     );

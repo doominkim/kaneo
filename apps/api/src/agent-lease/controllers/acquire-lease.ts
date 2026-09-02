@@ -1,4 +1,4 @@
-import { eq, lt } from "drizzle-orm";
+import { eq, lt, or, sql } from "drizzle-orm";
 import resolveActor from "../../agent-entry/controllers/resolve-actor";
 import db from "../../database";
 import {
@@ -17,15 +17,21 @@ type AcquireInput = {
 };
 
 /**
- * Claim a task, or report who already holds it.
+ * Claim a task, renew an existing claim, or report who already holds it.
  *
  * Atomicity matters here: two sessions asking at the same moment must not both
  * be told yes. The unique constraint on task_id plus a conditional upsert does
  * that in one statement — a read-then-write would race.
  *
- * The conditional is `expires_at < now()`: a live claim is left alone, an
- * expired one is taken over. That is why the TTL is mandatory; without it a
- * crashed session would hold a task forever with no way to reclaim it.
+ * The conditional is `expires_at < now() OR session_id = <caller>`: a live
+ * claim held by someone else is left alone, an expired one is taken over, and
+ * the holding session's own re-ask extends its TTL. The renewal path is what
+ * lets a long-running session heartbeat instead of silently losing the task at
+ * expiry. That is also why the TTL is mandatory; without it a crashed session
+ * would hold a task forever with no way to reclaim it.
+ *
+ * A renewal keeps `acquired_at`, so the row still answers "since when has this
+ * session held the task"; only a takeover resets it.
  */
 async function acquireLease(input: AcquireInput) {
   const actor = await resolveActor(
@@ -52,10 +58,15 @@ async function acquireLease(input: AcquireInput) {
       set: {
         actorId: actor?.id ?? "",
         sessionId: input.sessionId,
-        acquiredAt: now,
+        // Inside ON CONFLICT DO UPDATE the bare table reference is the
+        // existing row, so this compares against the current holder.
+        acquiredAt: sql`case when ${agentLeaseTable.sessionId} = ${input.sessionId} then ${agentLeaseTable.acquiredAt} else ${sql.param(now, agentLeaseTable.acquiredAt)} end`,
         expiresAt,
       },
-      where: lt(agentLeaseTable.expiresAt, now),
+      where: or(
+        lt(agentLeaseTable.expiresAt, now),
+        eq(agentLeaseTable.sessionId, input.sessionId),
+      ),
     })
     .returning();
 

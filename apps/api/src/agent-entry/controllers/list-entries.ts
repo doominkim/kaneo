@@ -1,4 +1,6 @@
-import { and, desc, eq, isNotNull, lt } from "drizzle-orm";
+import { and, desc, eq, isNotNull, lt, or, type SQL, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import { HTTPException } from "hono/http-exception";
 import db from "../../database";
 import {
   agentActorTable,
@@ -20,15 +22,52 @@ type ListInput = {
  * Upstream's equivalent ships every row's full text and measured 18.5KB for 20
  * tasks. A projection is the only thing that actually keeps the cost bounded;
  * trimming in the response layer still pays the transfer.
+ *
+ * Paging is a keyset on (created_at, id). The cursor is the id of the last
+ * entry of the previous page, and its created_at is read back inside the query
+ * rather than round-tripped through the client: PostgreSQL stores microseconds,
+ * a JS Date carries milliseconds, and a timestamp cursor would silently skip
+ * every row inside the truncated window. The ledger is append-only, so a
+ * cursor id never disappears underneath a caller.
  */
 async function listEntries(input: ListInput) {
-  const conditions = [eq(agentEntryTable.projectId, input.projectId)];
+  // `and()` drops undefined members, so `or()`'s nullable return can be
+  // pushed straight in without a guard.
+  const conditions: (SQL | undefined)[] = [
+    eq(agentEntryTable.projectId, input.projectId),
+  ];
 
   if (input.before) {
-    const beforeDate = new Date(input.before);
-    if (!Number.isNaN(beforeDate.getTime())) {
-      conditions.push(lt(agentEntryTable.createdAt, beforeDate));
+    const [cursorRow] = await db
+      .select({ id: agentEntryTable.id })
+      .from(agentEntryTable)
+      .where(
+        and(
+          eq(agentEntryTable.id, input.before),
+          eq(agentEntryTable.projectId, input.projectId),
+        ),
+      )
+      .limit(1);
+    if (!cursorRow) {
+      throw new HTTPException(400, { message: "Unknown cursor" });
     }
+
+    // The subquery keeps the comparison on PostgreSQL's own stored value; the
+    // JS Date the driver would hand back is already truncated to milliseconds.
+    const cursor = alias(agentEntryTable, "cursor");
+    const cursorCreatedAt = sql`(${db
+      .select({ createdAt: cursor.createdAt })
+      .from(cursor)
+      .where(eq(cursor.id, input.before))})`;
+    conditions.push(
+      or(
+        lt(agentEntryTable.createdAt, cursorCreatedAt),
+        and(
+          eq(agentEntryTable.createdAt, cursorCreatedAt),
+          lt(agentEntryTable.id, input.before),
+        ),
+      ),
+    );
   }
   if (input.taskId) conditions.push(eq(agentEntryTable.taskId, input.taskId));
   if (input.kind) conditions.push(eq(agentEntryTable.kind, input.kind));
@@ -50,7 +89,7 @@ async function listEntries(input: ListInput) {
     .from(agentEntryTable)
     .leftJoin(agentActorTable, eq(agentEntryTable.actorId, agentActorTable.id))
     .where(and(...conditions))
-    .orderBy(desc(agentEntryTable.createdAt))
+    .orderBy(desc(agentEntryTable.createdAt), desc(agentEntryTable.id))
     .limit(input.limit);
 
   const entries = rows.map((r) => ({
@@ -74,10 +113,7 @@ async function listEntries(input: ListInput) {
   const last = entries.length > 0 ? entries[entries.length - 1] : undefined;
   return {
     entries,
-    nextBefore:
-      entries.length === input.limit && last
-        ? last.createdAt.toISOString()
-        : null,
+    nextBefore: entries.length === input.limit && last ? last.id : null,
   };
 }
 

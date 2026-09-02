@@ -221,11 +221,14 @@ export function registerAgentTools(
     "agent_log_tail",
     {
       description:
-        "Recent ledger entries, newest first. Summaries only — call agent_entry_get for a specific entry's body and decision.",
+        "Recent ledger entries, newest first. Summaries only — call agent_entry_get for a specific entry's body and decision. To page, pass the previous result's nextBefore as `before`.",
       inputSchema: z.object({
         projectId: z.string(),
         limit: z.number().int().min(1).max(50).default(10),
-        before: z.string().optional(),
+        before: z
+          .string()
+          .optional()
+          .describe("Opaque cursor: nextBefore from the previous page"),
         taskId: z.string().optional(),
         kind: z
           .enum(["work", "investigation", "decision", "handoff"])

@@ -61,7 +61,8 @@ export const listEntriesQuery = z.object({
       "Capped at 50. The ledger is unbounded; callers must page rather than pull everything.",
   }),
   before: z.string().optional().openapi({
-    description: "Cursor: ISO timestamp. Returns entries created before it.",
+    description:
+      "Opaque cursor: the `nextBefore` value from the previous page. Returns the entries older than that one; an unknown cursor is a 400.",
   }),
   taskId: z.string().optional(),
   kind: z.enum(["work", "investigation", "decision", "handoff"]).optional(),

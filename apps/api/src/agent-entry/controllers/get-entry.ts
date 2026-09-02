@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
 import {
@@ -6,13 +6,25 @@ import {
   agentEntryTable,
 } from "../../database/schema-agent-layer";
 
-/** Full record including `body` and `decision`. Fetched one at a time by design. */
-async function getEntry(entryId: string) {
+/**
+ * Full record including `body` and `decision`. Fetched one at a time by design.
+ *
+ * Scoped by project as well as id: the route's `{projectId}` is what the
+ * workspace-access middleware authorized, so an entry outside that project must
+ * be invisible here, or authorizing against one's own project would unlock
+ * every entry in the instance.
+ */
+async function getEntry(projectId: string, entryId: string) {
   const [row] = await db
     .select()
     .from(agentEntryTable)
     .leftJoin(agentActorTable, eq(agentEntryTable.actorId, agentActorTable.id))
-    .where(eq(agentEntryTable.id, entryId))
+    .where(
+      and(
+        eq(agentEntryTable.id, entryId),
+        eq(agentEntryTable.projectId, projectId),
+      ),
+    )
     .limit(1);
 
   if (!row) {

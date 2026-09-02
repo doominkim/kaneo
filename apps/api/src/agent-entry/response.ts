@@ -37,7 +37,8 @@ export const entryListSchema = z
   .object({
     entries: z.array(entrySummarySchema),
     nextBefore: z.string().nullable().openapi({
-      description: "Cursor for the next page, or null when exhausted.",
+      description:
+        "Opaque cursor for the next page — pass it back as `before` — or null when exhausted.",
     }),
   })
   .openapi("AgentEntryList");
