@@ -4,17 +4,17 @@
 >
 > [DESIGN.md](./DESIGN.md)는 구현 전 설계 snapshot일 수 있다. 현재 운영 상태의 정본은 이 문서의 실측과 Git/Argo 런타임 확인이다.
 
-## 현재 상태 — 첨부 업로드 인프라까지 운영 반영 완료
+## 현재 상태 — Agent Layer 결함 수정(`agent.6`)까지 운영 반영 완료
 
 Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-prod`는 해당 이미지와 S3 첨부 스토리지를 사용 중이다. 첨부 UI의 실제 로그인 사용자 업로드만 아직 브라우저 환경 문제로 확인하지 못했다. **다음 작업의 첫 순서는 로그인한 Kaneo에서 파일 하나를 올리고, 다운로드·삭제까지 확인하는 것**이다.
 
 | 대상 | 확정 상태 | 근거 |
 |---|---|---|
-| Kaneo 코드 | `agent-layer`의 `8dd35aca` push 완료 | `git` 원격 브랜치 확인 |
-| 이미지 | `ghcr.io/doominkim/kaneo:2.22.0-agent.5` 빌드 성공 | [GitHub Actions run 33579884424](https://github.com/doominkim/kaneo/actions/runs/33579884424) |
-| GitOps manifest | platform `main`의 `e315e8b` | SealedSecret과 공개 S3 환경값 포함 |
+| Kaneo 코드 | `agent-layer`의 `136f30bc` push 완료 | `git` 원격 브랜치 확인 |
+| 이미지 | `ghcr.io/doominkim/kaneo:2.22.0-agent.6` 빌드 성공 | [GitHub Actions run 33587771774](https://github.com/doominkim/kaneo/actions/runs/33587771774) |
+| GitOps manifest | platform `main`의 `566afe9` | 이미지 태그 `agent.6`, SealedSecret과 공개 S3 환경값 포함 |
 | TLS vhost | sandbox `main`의 `5dc74e2` | `files.kit.io.kr` 전용 nginx vhost |
-| Argo / Pod | `kaneo-prod` Synced, Healthy, image `agent.5`, 1/1 Ready, restart 0 | 운영 클러스터 실측 |
+| Argo / Pod | `kaneo-prod` Synced, Healthy, image `agent.6`, 1/1 Ready, restart 0, 마이그레이션 로그 정상 | 운영 클러스터 실측 (2026-09-02 12:50 KST) |
 | MinIO HTTPS | `https://files.kit.io.kr/minio/health/live` 200 | SAN=`files.kit.io.kr`, 만료 `2026-12-01` |
 
 관련 Linear: [SAN-244 — Kaneo Agent Layer 운영 배포 및 핵심 실측](https://linear.app/c2fuzg/issue/SAN-244/kaneo-agent-layer-운영-배포-및-핵심-실측). 현재 상태는 In Progress이며, 아래 남은 실측/MCP/web 작업을 닫은 뒤 완료 처리한다.
@@ -88,8 +88,8 @@ MinIO에는 `kaneo-uploads` 전용 bucket, `kaneo-prod` 전용 사용자/버킷 
 
 - 로컬 integration DB: PostgreSQL 13에 `kaneo_test`를 만들고 `DATABASE_URL="postgresql://dominic@localhost:5432/kaneo_test"`를 **명령줄 환경변수**로 넘겨 실행한다. root `.env`는 읽지 않는다. `postgres` role은 필요 없다.
 - 결과: unit 391/391, integration 283 pass / 3 fail (label 3건은 upstream 코드가 PG 13에서 500: `on conflict ... where "label"."task_id" is null` 거부, CI는 `postgres:16`). 운영 PostgreSQL은 `postgres-pgvector:17` (17.4)로 실측했으므로 운영과 무관하다.
-- 신규: `tests/api-integration/helpers/database.ts`에 `drizzle-agent` 마이그레이션 적용, `tests/api-integration/agent-{entry,lease,term}.test.ts` 계약 테스트. 독립 리뷰가 아래 결함 4건을 확인했고 같은 세션에서 수정했다(독립 리뷰 APPROVE). **수정본은 아직 운영 이미지(`agent.5`)에 없다.**
-  1. **보안** — `GET /api/agent-entry/{projectId}/{entryId}`가 `entryId`만으로 조회해 다른 workspace의 entry 본문이 읽혔다. 이제 `projectId`로 스코프하고 불일치 시 404.
+- 신규: `tests/api-integration/helpers/database.ts`에 `drizzle-agent` 마이그레이션 적용, `tests/api-integration/agent-{entry,lease,term}.test.ts` 계약 테스트. 독립 리뷰가 아래 결함 4건을 확인했고 같은 세션에서 수정했다(독립 리뷰 APPROVE). 커밋 `e7172a1a`/`7b4e33ed`, 이미지 `agent.6`, platform `566afe9`로 운영 반영.
+  1. **보안** — `GET /api/agent-entry/{projectId}/{entryId}`가 `entryId`만으로 조회해 다른 workspace의 entry 본문이 읽혔다. 이제 `projectId`로 스코프하고 불일치 시 404. (`agent.6`으로 운영 반영됨)
   2. lease 보유 세션의 재획득이 거부됐다. 이제 같은 `sessionId`면 `acquired:true`로 `expiresAt`이 연장되고 `acquiredAt`은 유지된다.
   3. alias resolve가 대소문자를 구분했다. 이제 `lower(trim())`로 정규화한다.
   4. `nextBefore` 커서가 ms 정밀도라 같은 ms 안의 entry가 누락됐다. **계약 변경**: `before`/`nextBefore`는 이제 ISO 시각이 아니라 **마지막 entry의 id**다. `(created_at DESC, id DESC)` keyset이며, 해당 project의 entry가 아닌 커서는 400 `Unknown cursor`. MCP `agent_log_tail`의 `before`도 동일하다.
@@ -176,7 +176,7 @@ fika.ing(Mac Studio, macOS 15.6.1, k3s·PostgreSQL 17·MinIO·Redis 호스트)�
 
 ## 오래된 정보 폐기
 
-- `2.22.0-agent.2`는 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.5`다.
-- `apps/kaneo/prod.yaml`은 미커밋/빈 `sealedEnv` 상태가 아니다. `e315e8b`가 운영에 반영되었다.
+- `2.22.0-agent.2`~`agent.5`는 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.6`이다.
+- `apps/kaneo/prod.yaml`은 미커밋/빈 `sealedEnv` 상태가 아니다. `566afe9`가 운영에 반영되었다.
 - TLS 발급/배포는 pending이 아니다. `files.kit.io.kr`은 정상 HTTPS다.
 - 운영 DB/auth/S3 secret은 Bitwarden과 SealedSecret으로 이미 주입되어 있다. 값을 문서나 명령 출력에 적지 않는다.
