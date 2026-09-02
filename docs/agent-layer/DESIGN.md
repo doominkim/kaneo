@@ -325,7 +325,7 @@ doc_put(project, slug)  title + body(≤200KB) 덮어쓰기. lease 불필요
 | 태스크 | 기존 Kaneo 뷰 (board/backlog/calendar/gantt). 상단 탭 아래 2단 스위처로 유지 |
 | 지식 | 용어사전(제안됨/확정/이의), 결정 목록 |
 | 메모 | 타임라인 (최근 20 + 드릴다운), 코어 변경 하이라이트, entry별 모델·effort·토큰 |
-| 문서 | 산출물 목록·본문 (`agent_document`) — 세션 리포트, 설계 패킷. 에이전트가 쓰고 사람도 쓴다 |
+| 문서 | 프로젝트를 진행하며 쌓이는 **산출물·파일 보관함**. `agent_artifact`(html 리포트·zip·pdf·md·json: 업로드·보기·다운로드·삭제)가 중심이고 `agent_document`(마크다운 텍스트, MCP `doc_put`이 남기는 산출물)는 같은 목록의 한 종류. 이름·종류·크기·연결 task·올린 주체·시각, task/날짜 그룹. 위키가 아니다 (2026-09-03 재정의) |
 
 기존 4개 URL은 건드리지 않고 형제 라우트(`overview / knowledge / notes / docs / docs.$slug`)를 더한다(`overview`는 탭 경로일 뿐 문서 slug가 아니다). **기본 랜딩 탭은 Phase 1에서 board를 유지한다** — 개요로 옮기는 것은 2줄 변경이므로 dogfooding 후에 결정한다.
 문서 쓰기는 `task:update`(member 포함), 삭제와 설정(`agent_project`)은 `project:update`. 편집기는 task description이 쓰는 기존 tiptap 에디터를 재사용하고, 파일·이미지 첨부는 업로드 경로가 `taskId`를 요구하므로 Phase 1a에서 제외한다(§10).
