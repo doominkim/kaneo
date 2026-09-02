@@ -331,6 +331,53 @@ describe("MCP OAuth security", () => {
     expect((await redeem(verifier)).status).toBe(400);
   });
 
+  it("accepts extra grant and response types and echoes only the supported subset", async () => {
+    const response = await mcpRoutes.request("/mcp/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "Tolerant MCP client",
+        redirect_uris: ["https://client.example/tolerant"],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code", "token"],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      grant_types: string[];
+      response_types: string[];
+    };
+    expect(body.grant_types).toEqual(["authorization_code"]);
+    expect(body.response_types).toEqual(["code"]);
+  });
+
+  it("rejects registrations that omit the authorization_code grant", async () => {
+    const response = await mcpRoutes.request("/mcp/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        redirect_uris: ["https://client.example/no-auth-code"],
+        grant_types: ["refresh_token"],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
+  it("rejects registrations that omit the code response type", async () => {
+    const response = await mcpRoutes.request("/mcp/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        redirect_uris: ["https://client.example/no-code"],
+        response_types: ["token"],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+  });
+
   it("sweeps expired authorization requests when creating a new one", async () => {
     const now = Date.now();
     vi.useFakeTimers();

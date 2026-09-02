@@ -31,8 +31,33 @@ export const clientRegistrationSchema = z.object({
   redirect_uris: z.array(redirectUriSchema).min(1),
   client_name: z.string().max(100).optional(),
   token_endpoint_auth_method: z.literal("none").optional(),
-  grant_types: z.tuple([z.literal("authorization_code")]).optional(),
-  response_types: z.tuple([z.literal("code")]).optional(),
+  // RFC 7591 lets the server accept a registration request and answer with the
+  // subset of metadata it actually supports, so extra values are tolerated on
+  // input and dropped from the response instead of failing the whole request.
+  grant_types: z
+    .array(z.string().max(64))
+    .max(10)
+    .refine(
+      (values) => values.includes("authorization_code"),
+      "authorization_code grant is required",
+    )
+    .optional()
+    .openapi({
+      description:
+        "Must include authorization_code; other grant types are ignored because only the authorization_code grant is issued.",
+    }),
+  response_types: z
+    .array(z.string().max(64))
+    .max(10)
+    .refine(
+      (values) => values.includes("code"),
+      "code response type is required",
+    )
+    .optional()
+    .openapi({
+      description:
+        "Must include code; other response types are ignored because only the authorization code response type is issued.",
+    }),
 });
 
 export const authorizationQuerySchema = z.object({
