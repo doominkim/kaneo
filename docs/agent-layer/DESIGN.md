@@ -156,7 +156,7 @@ Task 본문은 고정 크기를 유지하고, 증가는 전부 `entry`로 나간
 - 저자 출처: `updated_by`(사람)와 `actor_id`(에이전트) 중 **쓰기 한 번에 정확히 하나**만 채운다. 어느 쪽이 썼는지가 문서를 읽는 판단의 절반이다.
 - 본문은 덮어쓰기(+`updated_at`)다. §2.4 append-only는 원장의 원칙이지 산출물에 적용하지 않는다. 버전 이력이 필요해지면 `agent_document_revision`을 얹는다(§10).
 - `task_id`는 선택이다. 채우면 개요 트리에서 그 task 아래 잎으로 붙고(§6), task가 지워져도 문서는 `SET NULL`로 살아남는다 — 원장과 같은 규율이다.
-- 파일·이미지 첨부는 미결이다(§10). upstream 업로드 경로가 `taskId`에 묶여 있고 이미지 MIME 허용목록만 통과시킨다.
+- 파일·이미지 첨부는 1a'의 fork 전용 `agent_artifact`로 간다(§6, §10). upstream 업로드 경로는 MIME을 거부하지 않지만 `taskId`·`surface`에 묶이고 inline 열람 URL이 없다.
 
 `agent_project`는 행이 없으면 기본값으로 응답한다. 여기 담기는 것은 본문이 아니라 **설정**이므로 문서와 분리한다.
 
@@ -346,7 +346,7 @@ doc_put(project, slug)  title + body(≤200KB) 덮어쓰기. lease 불필요
    - 조립은 서버가 한다. 클라이언트가 task마다 관계·문서·첨부를 조회하면 N+1이므로 `GET /api/agent-project/{projectId}/tree`가 노드당 `id, number, title, status, isFinal, createdAt, completedAt?, branches[], actors[]{provider, model, effort, appearances}, usage{inputTokens, outputTokens, totalTokens}, documents[]{id, slug, title, authorKind, updatedAt}, attachments[]{id, name, contentType, size, url}, children[]`를 한 번에 내려준다. `done`은 §6.1대로 접는다.
    - 노드에는 **모델 · effort · 토큰**(그 task의 entry `usage` 합)을 함께 적고, 서브트리 단위로 롤업(모델별 토큰 합, 등판 횟수)을 낸다. 누가 얼마를 썼는지가 보이지 않으면 모델 배치를 고칠 근거가 없다.
    - **브랜치 라벨**은 그 task의 entry들이 담은 `refs.branch`(+`refs.repo`)의 **distinct 집합**이다. 한 task가 여러 브랜치를 가질 수 있으므로 노드 옆에 나열한다. 파생값이므로 task에 컬럼을 추가하지 않는다.
-   - 잎의 출처는 둘이다: task에 연결된 `agent_document`(§4.2 `task_id`)와 upstream 첨부(`asset` 테이블 — `apps/api/src/database/schema.ts:586`; 생성 경로는 `POST /api/task/image-upload/{id}` + `/finalize`, `apps/api/src/task/index.ts:460,488`). 다만 그 경로는 현재 **이미지 MIME 허용목록**만 통과시키고 `surface`가 `description | comment`로 닫혀 있어, HTML 리포트·zip 번들 첨부는 upstream 수정 없이는 만들어지지 않는다(§10). `asset` 행 자체는 `kind`·`mime_type`이 자유 텍스트라 스키마 변경 없이 담긴다.
+   - 잎의 출처는 둘이다: task에 연결된 `agent_document`(§4.2 `task_id`)와 upstream 첨부(`asset` 테이블 — `apps/api/src/database/schema.ts:586`; 생성 경로는 `POST /api/task/image-upload/{id}` + `/finalize`, `apps/api/src/task/index.ts:460,488`). 다만 그 경로는 MIME을 거부하지는 않지만(비이미지는 `kind: attachment`로 저장, `task/index.ts:889`) 항상 task와 `surface`(`description | comment`)에 묶이고 inline 열람용 URL 라우트가 없다. 그래서 산출물은 fork 전용 `agent_artifact`(1a')에 두고 트리의 첨부 잎은 거기서 채운다(2026-09-02 결정). `asset` 행 자체는 `kind`·`mime_type`이 자유 텍스트라 스키마 변경 없이 담긴다.
    - **클릭 동작.** HTML 산출물은 `allow-same-origin` **없는** `<iframe sandbox>` 안에서 인라인으로 연다. iframe이 에셋 URL을 직접 불러야 하며 **본문을 앱 DOM에 렌더하지 않는다** — 에이전트가 생성한 HTML은 신뢰 경계 밖이고, 앱 DOM에 넣는 순간 세션을 가진 XSS가 된다. markdown 문서는 문서 탭(`docs.$slug`)으로 열고, zip·pdf 등 나머지는 다운로드 링크로 보낸다.
 3. **라이브 섹션** — 열린/완료 카운트, 활성 task 임계치 배너, 활성 lease.
 
@@ -455,7 +455,7 @@ entry N개에 같은 용어 반복 등장
 5. ~~MCP 실측~~ → **완료** (§5.0). 남은 것: tools/list 실크기 계측에 OAuth 플로우 통과 필요
 6. Kaneo 커뮤니티에 문제 제기 시점 — 작동하는 것을 보여준 뒤가 유리하나, "이 문제 겪고 계신가요"라는 **질문**은 비용 0이므로 선행 가능
 7. 문서 버전 이력 — Phase 1은 덮어쓰기. `agent_document_revision`은 컬럼 변경 없이 얹을 수 있으므로 필요해질 때 결정한다. 동시 편집은 마지막 저장 승리이며 `updatedAt` 조건부 PUT은 후속
-8. 산출물 첨부(HTML 리포트·zip·이미지) — upstream 업로드 경로는 `taskId`에 묶여 있고 **이미지 MIME 허용목록**과 `surface: description | comment`로 닫혀 있다. 개요 트리의 첨부 잎(§6)이 실제로 채워지려면 upstream을 고쳐야 하므로 보류하며, 그때까지 산출물은 `agent_document` 텍스트다
+8. 산출물 첨부(HTML 리포트·zip·pdf) — 2026-09-02 결정: fork 전용 `agent_artifact`(projectId, taskId nullable, name, contentType, size, storageKey, uploadedBy/actorId) + presign/finalize(HeadObject 검증)/목록/짧은 TTL presigned GET(html은 inline, 그 외 attachment)/delete(project:update). MIME allowlist: text/html, text/markdown, text/plain, application/json, application/pdf, application/zip. 10MiB. upstream `asset`·image-upload 경로는 건드리지 않는다. 미결로 남는 것: 문서 본문 안의 이미지 삽입(에디터 업로드가 taskId 의존)
 9. 30일 아카이브 cron의 부작용 — 대량 상태 전이가 activity·알림·웹훅을 한꺼번에 발생시킨다. 배치 상한과 리더 락을 함께 설계하고 사용자 승인 뒤 켠다(Phase 1c)
 10. 문서가 사실상 KB로 읽힐 위험(§2.2) — 문서는 자격 게이트를 거치지 않은 산출물인데, 에이전트가 `doc_get`으로 읽으면 낡은 리포트가 KB처럼 작동한다. 저자 종류·`updatedAt` 노출과 툴 설명은 완화일 뿐 근본 해결이 아니다
 
