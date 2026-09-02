@@ -84,18 +84,29 @@ MinIO에는 `kaneo-uploads` 전용 bucket, `kaneo-prod` 전용 사용자/버킷 
 | S3/프록시 경로 | 위 MinIO PUT/GET/DELETE, CORS, body limit 실측 완료 |
 | Kaneo 운영 기동 | root/config/get-session HTTP 200, Pod Ready 1/1 |
 
+### 2026-09-02 2차 세션 갱신 (미커밋 작업트리)
+
+- 로컬 integration DB: PostgreSQL 13에 `kaneo_test`를 만들고 `DATABASE_URL="postgresql://dominic@localhost:5432/kaneo_test"`를 **명령줄 환경변수**로 넘겨 실행한다. root `.env`는 읽지 않는다. `postgres` role은 필요 없다.
+- 결과: unit 391/391, integration 283 pass / 3 fail (label 3건은 upstream 코드가 PG 13에서 500: `on conflict ... where "label"."task_id" is null` 거부, CI는 `postgres:16`). 운영 PostgreSQL은 `postgres-pgvector:17` (17.4)로 실측했으므로 운영과 무관하다.
+- 신규: `tests/api-integration/helpers/database.ts`에 `drizzle-agent` 마이그레이션 적용, `tests/api-integration/agent-{entry,lease,term}.test.ts` 계약 테스트. 독립 리뷰가 아래 결함 4건을 확인했고 같은 세션에서 수정했다(독립 리뷰 APPROVE). **수정본은 아직 운영 이미지(`agent.5`)에 없다.**
+  1. **보안** — `GET /api/agent-entry/{projectId}/{entryId}`가 `entryId`만으로 조회해 다른 workspace의 entry 본문이 읽혔다. 이제 `projectId`로 스코프하고 불일치 시 404.
+  2. lease 보유 세션의 재획득이 거부됐다. 이제 같은 `sessionId`면 `acquired:true`로 `expiresAt`이 연장되고 `acquiredAt`은 유지된다.
+  3. alias resolve가 대소문자를 구분했다. 이제 `lower(trim())`로 정규화한다.
+  4. `nextBefore` 커서가 ms 정밀도라 같은 ms 안의 entry가 누락됐다. **계약 변경**: `before`/`nextBefore`는 이제 ISO 시각이 아니라 **마지막 entry의 id**다. `(created_at DESC, id DESC)` keyset이며, 해당 project의 entry가 아닌 커서는 400 `Unknown cursor`. MCP `agent_log_tail`의 `before`도 동일하다.
+- MCP 접속 경로: `/api/mcp`는 Bearer 필수. device flow(`POST /api/auth/device/code` → 브라우저 승인 → `POST /api/auth/device/token`, client_id `kaneo-cli`)가 터미널에서 가능하다. read-only 도구는 `agent_brief`/`agent_log_tail`/`agent_entry_get`/`agent_term_resolve`, 나머지 4개는 mutation이다. 운영 discovery 엔드포인트는 200, 미인증 `/api/mcp`는 401이다. 조사 중 subagent가 승인 없이 운영에 device/code POST를 1회 호출했다(pending 행 1개, 30분 만료, 토큰 없음).
+
 ### 미완료 / 미검증
 
 1. **로그인 UI 첨부 흐름**: Browser/Chrome 플러그인 `26.825`가 내부적으로 없는 `26.820` 모듈을 import해 자동 브라우저 검증을 할 수 없었다. HTTP 200은 로그인·첨부 성공 증거가 아니다. 사용자가 로그인한 브라우저에서 파일 업로드, 새로고침 후 다운로드, 삭제까지 수동 확인해야 한다.
-2. **API integration test**: 로컬 PostgreSQL에 `postgres` role이 없어 테스트 DB를 만들지 못했다. 이는 코드 실패가 아니라 로컬 테스트 DB 사전조건 부재다.
+2. **API integration test**: 해결됨(위 2차 세션 갱신 참조). 남은 것은 운영 PG 버전 확인(label PG 13 문제가 운영에 해당하는지)뿐이다.
 3. **MCP 실제 OAuth 호출과 응답 크기**: `/api/mcp`에 OAuth로 연결해 MCP 8개 도구(그중 하나인 `agent_brief`)의 실제 payload/token 크기를 아직 측정하지 못했다.
-4. **Agent Layer API 3모듈**: typecheck만 통과했다. Agent Layer 단위 테스트와 인증된 HTTP 동작은 미검증이다. 실제 계약은 entry의 append/list/get, lease의 acquire/release/list, term의 resolve/list/propose/confirm을 포함한다.
+4. **Agent Layer API 3모듈**: 로컬 integration 테스트로 HTTP 계약을 검증했다(위 참조). 운영 DB에서의 인증 왕복과 컨트롤러 결함 4건 수정은 남아 있다.
 5. **web 탭**: Agent Layer 전용 UI 탭은 아직 구현하지 않았다. `ProjectLayout`의 닫힌 `activeView` union, 탭 네비게이션, fetcher, TanStack Query hook까지 함께 바뀌어야 한다.
 
 ## 다음 작업 순서
 
 1. `https://kaneo.kit.io.kr`에 로그인해 작은 첨부 파일을 task에 올린다. 네트워크 요청이 `https://files.kit.io.kr/kaneo-uploads/...`인지, finalize가 성공하는지, 새로고침 후 다운로드와 삭제가 되는지 기록한다. 실패하면 브라우저 console/Network의 상태 코드와 response body만 수집하고 자격증명·presigned URL query는 공유하지 않는다.
-2. 로컬 integration DB를 준비한 뒤 attachment/Agent Layer API integration test를 실행한다. production DB나 storage를 개발·테스트에 사용하지 않는다.
+2. (완료) 로컬 integration DB, Agent Layer integration 테스트, 결함 4건 수정. **재배포 전제**: 아래 "운영 호스트 침해" 대응이 끝나야 한다.
 3. OAuth MCP 클라이언트로 운영 `/api/mcp`의 `tools/list`와 read-only 도구부터 호출해 응답 byte/token 수를 기록한다. MCP 8개에는 append/propose/acquire/release mutation이 있으므로, mutation 전에는 전용 테스트 workspace/task, append-only 영구 데이터 허용 범위, 사용자 승인, lease 해제 기준을 먼저 정한다. 승인 전에는 mutation을 호출하지 않는다.
 4. 검증된 계약을 바탕으로 web Agent Layer 탭을 별도 이슈로 설계·구현한다.
 5. 증거를 SAN-244에 남기고 남은 범위가 끝났을 때만 완료 처리한다.
@@ -121,11 +132,19 @@ curl -fsS https://files.kit.io.kr/minio/health/live
 pnpm --filter @kaneo/api test:unit
 pnpm --filter @kaneo/api typecheck
 
-# 로컬 integration (테스트 DB의 postgres role을 준비한 뒤)
-pnpm --filter @kaneo/api test:integration
+# 로컬 integration (로컬 role로 kaneo_test를 쓰도록 명령줄 환경변수로 지정; root .env는 읽지 않음)
+DATABASE_URL="postgresql://dominic@localhost:5432/kaneo_test" pnpm --filter @kaneo/api test:integration
 ```
 
 배포를 다시 해야 하는 코드/manifest 변경이 생기면 사용자 승인 후 `agent-layer` 이미지 빌드 성공 → platform manifest diff와 target revision 확인 → platform `main` push → Argo Synced/Healthy와 실제 API/UI 흐름까지 순서대로 증명한다. platform `main` push는 Argo auto-sync 운영 배포이므로 사용자 승인과 diff/revision 확인 없이 수행하지 않는다. push/build 성공만으로 운영 완료라고 판단하지 않는다.
+
+## 운영 호스트 침해 (2026-09-02 발견)
+
+fika.ing(Mac Studio, macOS 15.6.1, k3s·PostgreSQL 17·MinIO·Redis 호스트)에서 침해 지속성 흔적을 발견했다. `/etc/ssh/sshd_config.d/cve.conf`가 모든 사용자 키 인증을 `/var/root/.ssh/authorized_keys2`로 돌렸고(정상 키 등록이 실패한 원인), `/Library/LaunchDaemons/com.apple.configdb.update.plist`가 `/var/tmp/.ssh_append`로 root `authorized_keys`에 키를 추가하도록 돼 있었다. 모두 mtime 1970. 유력 경로는 CVE-2026-65400(Screen Sharing 사전인증 root RCE, 5900 외부 노출, 패치 15.7.9 미적용).
+
+- 완료: 증거를 `~/ir-2026-09-02`에 보존, 지속성 파일 제거, sshd 재시작. 이후 sshd `AuthorizedKeysFile`은 기본값이고 정상 키 인증이 동작한다.
+- 미완료(사용자 작업): 5900 및 불필요 포트(5432/6379/9000/8080/11434) 외부 차단, macOS 패치, **호스트에서 접근 가능했던 모든 자격증명 회전**(Kaneo DB, MinIO, Redis, k3s Secret/SealedSecret 키, GitHub/GHCR 토큰, 계정 비밀번호), root at 작업 확인. root RCE였으므로 재설치가 가장 확실하다.
+- 이 대응이 끝나기 전에는 새 이미지 배포, MCP 토큰 발급, SealedSecret 갱신을 하지 않는다. HANDOFF의 "무중단 키 회전" 절차는 유출 확정 상황이므로 적용하지 않고 즉시 회전한다.
 
 ## 런타임과 작업트리 주의사항
 
