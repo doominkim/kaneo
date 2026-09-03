@@ -156,6 +156,8 @@ Task 본문은 고정 크기(명세)를 유지하고, 증가는 전부 `entry`�
 | `agent_term` | 용어사전. `canonical`, `aliases`, `not_to_confuse_with` |
 | `agent_document` | 사람이 읽는 산출물. `project_id`+`slug` unique, **`task_id` nullable**(FK task, `SET NULL`), `title`, `body`(markdown), `updated_by`(user, nullable) / `actor_id`(`agent_actor`, nullable), `updated_at` |
 | `agent_project` | 프로젝트별 설정. `project_id` PK, `core_paths` jsonb, `active_task_threshold`(기본 20), `done_archive_days`(기본 30) |
+| `agent_domain` | 워크스페이스 도메인 지식 페이지 트리(§4.7). `workspace_id`, `parent_id`(self, `SET NULL`), `slug`(레벨별 unique), `title`, `body`(markdown), `position`, `updated_by` / `actor_id` |
+| `agent_project_domain` | 프로젝트 ↔ 도메인 페이지 링크. PK (`project_id`, `domain_id`), 양쪽 `CASCADE` |
 
 **모든 테이블에 `agent_` prefix를 붙인다.** upstream이 `entry`·`term` 같은 흔한 이름을 나중에 쓸 수 있고, prefix가 있어야 마이그레이션 범위를 이름으로 가를 수 있다.
 
@@ -260,6 +262,36 @@ active/dormant ──앵커 깨짐──▶ stale ──검수──▶ active |
 
 삭제가 아니라 **해상도가 낮아지는 것**이다. 압축되는 것은 "파일 3개 수정함" 같은 git이 이미 가진 노이즈뿐이다.
 
+### 4.7 도메인 지식 (`agent_domain`, 2026-09-03 승인)
+
+프로젝트는 일이 흐르는 단위이고 **의미는 프로젝트를 가로지른다** — "입고내역"이 무엇인지는 약국 프로젝트 셋이 공유한다. 그래서 도메인 지식은 워크스페이스 단위 **페이지 트리**로 두고, 프로젝트·용어·문서가 페이지를 **가리키게** 한다. 페이지는 링크된 것을 복사하지 않고 조회 시 집계한다(§2.1 — 사실은 한 곳에만).
+
+| 항목 | 정의 |
+|---|---|
+| 테이블 | `agent_domain`: `id`, `workspace_id`, `parent_id`(self FK, `SET NULL`), `slug` `^[a-z0-9][a-z0-9-]{0,63}$`, `title`(≤200), `body`(markdown ≤200KB, 기본 `''`), `position`(형제 순서, 기본 0), `updated_by`(user) / `actor_id`(agent_actor), `created_at`/`updated_at`(앱 시계) |
+| 유일성 | `(workspace_id, parent_id, slug)` UNIQUE + 루트용 partial unique index `(workspace_id, slug) WHERE parent_id IS NULL`. Postgres는 UNIQUE에서 NULL을 서로 다르게 보므로 복합 제약만으로는 루트 slug 중복을 못 막는다 |
+| 인덱스 | `(workspace_id, parent_id)` — 트리 조회 |
+| 링크 | `agent_term.domain_id`, `agent_document.domain_id`(둘 다 nullable, `SET NULL`), `agent_project_domain(project_id, domain_id)` PK·양쪽 `CASCADE` |
+| 마이그레이션 | `drizzle-agent/0007_agent_domain.sql` — 추가만, 기존 행 무변경 |
+| 저자 | 문서와 같은 규칙: 쓰기 한 번에 `updated_by`(사람, HTTP)와 `actor_id`(에이전트, MCP) 중 정확히 하나. 이동(move)은 저자를 바꾸지 않는다 |
+
+**API** (`/api/agent-domain/{workspaceId}`, 전부 `workspaceAccess.fromParam`):
+
+| 라우트 | 권한 | 동작 |
+|---|---|---|
+| `GET /{ws}` | 접근 | 평면 목록 `{domains:[{id,parentId,slug,title,position,updatedAt,childCount}]}`, `(parentId NULLS FIRST, position, title)` 순. 트리는 클라이언트가 조립 |
+| `POST /{ws}` | `task:update` | `{parentId?, slug, title, body?}`. 부모가 워크스페이스 밖이면 400, 같은 레벨 slug 충돌 409. 형제 중 마지막 `position` |
+| `GET /{ws}/{id}` | 접근 | 페이지 + `author{userId,name}`/`actor` + `ancestors`(루트→부모), `children`, `terms`, `projects`, `documents` |
+| `PUT /{ws}/{id}` | `task:update` | `{title?, body?}` 중 하나 이상. body는 전체 교체. `updated_by`=호출자, `actor_id`=NULL |
+| `POST /{ws}/{id}/move` | `workspace:update` | `{parentId\|null, position?}`. 자기 자신·자손 아래로는 400, 대상 레벨 slug 충돌 409 |
+| `DELETE /{ws}/{id}` | `workspace:update` | 자식·용어·문서·프로젝트 링크가 하나라도 있으면 409(개수 명시), 없으면 hard delete |
+
+링크 쪽 변경: `PUT /api/agent-project/{projectId}`에 `domainIds?: string[]`(≤20, 전부 그 워크스페이스 페이지여야 하며 아니면 400; **보내면 전체 교체, 안 보내면 무변경** — 옛 폼이 링크를 지우지 못하게), `GET`은 `domainIds`와 `domains[{id,slug,title}]`를 함께 돌려준다. `POST /api/agent-term`에 `domainId?`, `PATCH /api/agent-term/{ws}/{termId}/domain {domainId|null}`(`workspace:update` — 용어가 어디 속하는지는 검수와 같은 게이트). `PUT /api/agent-document/{project}/{slug}`에 `domainId?`(같은 워크스페이스, 아니면 400; 전체 교체라 생략하면 해제).
+
+**MCP** (§5.2): `agent_domain_list(workspaceId)` — 평면 트리 id/parentId/slug/title 200개 상한. `agent_domain_get(workspaceId, domainId? | slugPath?, offset?)` — `slugPath`는 루트→자식 slug를 `/`로 이은 것(`billing/refunds`)이고 트리를 받아 프로세스 안에서 순수 함수로 푼다(`agent-domain/slug-path.ts`, DB 없이 단위 테스트). 본문은 `doc_get`과 같은 8KB 바이트 창 + `nextOffset`, 링크는 이름만 20개씩(`linksTotal`로 잘린 수 표시). `agent_domain_put(workspaceId, domainId? | parentId?+slug, title, body, provider, model)` — upsert, `agent-direct`로 프로세스 내 호출해 `actor_id` 기록(`task:update`). `agent_brief`에 프로젝트에 링크된 페이지 `domains[{id,title}]`(10개 상한)가 붙는다.
+
+**slug는 ASCII다.** 한글 제목은 `title`에 두고 slug는 `[a-z0-9-]`로 쓴다. `slugPath`도 slug 기준이므로 `약국/입고내역` 같은 경로는 400이다 — 사람 뷰는 title로 표시하고 경로는 slug로 만든다.
+
 ---
 
 ## 5. MCP 설계
@@ -318,10 +350,13 @@ doc_put(project, slug)  title + body(≤200KB) 덮어쓰기. lease 불필요. ac
 artifact_put_text(project, name, contentType, text, taskId?)   ≤200KB 텍스트(html/md/json/txt)를 서버가 S3에 쓰고 즉시 확정. actorId 기록
 artifact_presign(project, name, contentType, size, taskId?)    큰 파일·zip·pdf: presigned PUT URL 반환. 바이트는 MCP를 타지 않는다 — 에이전트가 curl -T 로 올린다
 artifact_finalize(project, artifactId, storageKey)             HeadObject 검증 후 확정(멱등)
+domain_list(workspace)                                         도메인 페이지 평면 트리(id/parentId/slug/title, ≤200)
+domain_get(workspace, domainId? | slugPath?, offset?)          페이지 메타 + 8KB 본문 창 + 링크 이름(용어·프로젝트·문서·자식 각 ≤20)
+domain_put(workspace, domainId? | parentId?+slug, title, body) upsert. actorId 기록. body 전체 교체
 ```
 
-**툴 개수 상한은 두지 않는다(2026-09-03 개정).** 대신 정의 크기 예산으로 관리한다: `tools/list` 기준 `agent_*` 툴 정의(이름·설명·inputSchema) 합계 **12,288B 이하**, 툴 하나 **2,560B 이하**. `tests/api/mcp-agent-tools-budget.test.ts`가 실제 핸들러의 `tools/list`를 직렬화해 측정하고 초과 시 실패한다. 실측(2026-09-03, 13개 툴): 합계 **9,258B**, 최대 `agent_log_append` **2,148B** — 이 툴은 inputSchema만 1,695B(필드 14개·중첩 객체 3개)라 초안의 2KB로는 `decision.why`/`rejected`를 설명할 설명문이 들어가지 않아 2.5KB로 조정했다. 참고로 upstream 36개 툴 합계는 16,455B다. 근거: 툴 정의는 세션마다 상주하지만 하네스마다 비용 모델이 다르다 — Claude Code는 지연 로딩이라 개별 스키마 크기가 비용이고, Codex처럼 전체 스키마를 싣는 클라이언트는 개수×크기가 비용이다. 개수는 그 비용을 대표하지 못한다. 산출물 바이트를 MCP JSON에 싣는 단일 업로드 툴(base64)은 기각 — 1MB html이 약 35만 토큰이 된다.
-`doc_put`·`artifact_put_text`·`artifact_presign`은 HTTP를 거치지 않고 프로세스 내에서 컨트롤러를 직접 호출한다(`apps/api/src/mcp/agent-direct.ts`). MCP가 API를 부를 때 쓰는 bearer는 사용자의 일반 세션 토큰이라 API 쪽에서 MCP 호출과 `curl`을 구분할 수 없고, 따라서 `actorId`를 HTTP 필드·헤더로 열면 누구나 에이전트 저자를 사칭할 수 있다. 직접 호출 경로에서도 인가는 HTTP와 같은 원시 함수(`validateWorkspaceAccess`, `hasWorkspacePermission`, `task:update`)로 다시 수행한다.
+**툴 개수 상한은 두지 않는다(2026-09-03 개정).** 대신 정의 크기 예산으로 관리한다: `tools/list` 기준 `agent_*` 툴 정의(이름·설명·inputSchema) 합계 **12,288B 이하**, 툴 하나 **2,560B 이하**. `tests/api/mcp-agent-tools-budget.test.ts`가 실제 핸들러의 `tools/list`를 직렬화해 측정하고 초과 시 실패한다. 실측(2026-09-03, 13개 툴): 합계 **9,258B**, 최대 `agent_log_append` **2,148B** — 이 툴은 inputSchema만 1,695B(필드 14개·중첩 객체 3개)라 초안의 2KB로는 `decision.why`/`rejected`를 설명할 설명문이 들어가지 않아 2.5KB로 조정했다. 도메인 툴 3개 추가 후 재실측(2026-09-03, 16개 툴): 합계 **11,924B**(잔여 364B), 최대 `agent_log_append` **2,207B**, `agent_domain_put` 894B·`agent_domain_get` 613B·`agent_domain_list` 396B. `doc_put`·`term_propose`의 `domainId`와 `brief`의 `domains` 설명이 나머지 증가분이다. 다음 툴을 추가하려면 기존 설명을 줄이거나 예산을 재산정해야 한다. 참고로 upstream 36개 툴 합계는 16,455B다. 근거: 툴 정의는 세션마다 상주하지만 하네스마다 비용 모델이 다르다 — Claude Code는 지연 로딩이라 개별 스키마 크기가 비용이고, Codex처럼 전체 스키마를 싣는 클라이언트는 개수×크기가 비용이다. 개수는 그 비용을 대표하지 못한다. 산출물 바이트를 MCP JSON에 싣는 단일 업로드 툴(base64)은 기각 — 1MB html이 약 35만 토큰이 된다.
+`doc_put`·`artifact_put_text`·`artifact_presign`·`domain_put`은 HTTP를 거치지 않고 프로세스 내에서 컨트롤러를 직접 호출한다(`apps/api/src/mcp/agent-direct.ts`). MCP가 API를 부를 때 쓰는 bearer는 사용자의 일반 세션 토큰이라 API 쪽에서 MCP 호출과 `curl`을 구분할 수 없고, 따라서 `actorId`를 HTTP 필드·헤더로 열면 누구나 에이전트 저자를 사칭할 수 있다. 직접 호출 경로에서도 인가는 HTTP와 같은 원시 함수(`validateWorkspaceAccess`, `hasWorkspacePermission`, `task:update`)로 다시 수행한다.
 `doc_put`은 산출물을 남기는 경로다 — 세션 리포트를 사람에게 넘기는 유일한 쓰기 면이며, 원장 entry를 부풀리는 대신 여기로 나간다. slug 단위 덮어쓰기라 무한 append가 구조적으로 불가능하고, task를 잡지 않는 조사·설계 세션도 써야 하므로 lease를 요구하지 않는다.
 `brief`에는 문서 목록(`slug`/`title`/`updatedAt`)만 싣고 본문은 `doc_get`으로만 나간다(§5.1 예산).
 **문서는 산출물이지 KB가 아니다.** §2.2의 자격 게이트는 용어사전(`term`)에 적용되는 것이고 문서에는 적용하지 않는다 — 대신 문서는 저자 종류(사람/에이전트)와 `updatedAt`을 함께 실어 낡음이 보이게 한다. 툴 설명에도 명시한다.
@@ -344,6 +379,7 @@ artifact_finalize(project, artifactId, storageKey)             HeadObject 검증
 | 타임라인 | 태스크 타임라인 트리 — **세로**, 최신이 위, 자식은 들여쓰기. task를 펼치면 그 task의 원장 entry(최근 20 + 드릴다운)가 인라인으로 나오고, 그 자리에서 사람이 직접 entry를 쓸 수 있다 (2026-09-03: 메모 탭을 흡수) |
 | 태스크 | 기존 Kaneo 뷰 (board/backlog/calendar/gantt). 상단 탭 아래 2단 스위처로 유지 |
 | 지식 | 용어사전(제안됨/확정/이의), 결정 목록 |
+| 도메인 (사이드바, 워크스페이스 단위) | `agent_domain` 페이지 트리(§4.7). 프로젝트 탭이 아니라 워크스페이스 사이드바 항목 "도메인"으로, 왼쪽에 트리·오른쪽에 페이지(markdown 본문 + 저자·시각 + 링크된 용어·프로젝트·문서 집계). 생성·편집 `task:update`, 이동·삭제 `workspace:update`. 사람과 에이전트가 같은 페이지를 쓴다 |
 | 문서 | 프로젝트를 진행하며 쌓이는 **산출물·파일 보관함**. `agent_artifact`(html 리포트·zip·pdf·md·json: 업로드·보기·다운로드·삭제)가 중심이고 `agent_document`(마크다운 텍스트, MCP `doc_put`이 남기는 산출물)는 같은 목록의 한 종류. 이름·종류·크기·연결 task·올린 주체·시각, task/날짜 그룹. 위키가 아니다 (2026-09-03 재정의) |
 
 기존 4개 URL은 건드리지 않고 형제 라우트(`overview / timeline / knowledge / docs / docs.$slug`)를 더한다. 탭 순서는 개요·타임라인·태스크·지식·문서다. `notes` 라우트는 2026-09-03에 제거했다. **기본 랜딩 탭은 Phase 1에서 board를 유지한다** — 개요로 옮기는 것은 2줄 변경이므로 dogfooding 후에 결정한다.
