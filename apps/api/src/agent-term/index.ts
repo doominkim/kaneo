@@ -115,9 +115,9 @@ const deleteRoute = createRoute({
   operationId: "deleteAgentTerm",
   path: "/{workspaceId}/{termId}",
   tags: ["Agent Layer"],
-  summary: "Delete a proposed term",
+  summary: "Delete a term",
   description:
-    "Hard-deletes a term that is still `proposed` — nothing has relied on it yet. A `confirmed` or `disputed` term is refused with 409: retire it instead so a tombstone stays resolvable. Also 409 when another term names it in `supersededBy`. Requires workspace:update, the same gate as review.",
+    "Hard-deletes a term whatever its confidence or state — a workspace:update holder owns the lexicon. Retiring a term instead leaves a resolvable tombstone, so prefer it when the concept still needs an answer, but it is a choice rather than a precondition. The one refusal is 409, when another term names this one in `supersededBy` and deleting it would dangle that pointer. Requires workspace:update, the same gate as review.",
   middleware: [
     workspaceAccess.fromParam("workspaceId"),
     requireWorkspacePermission({ workspace: ["update"] }),
@@ -130,9 +130,7 @@ const deleteRoute = createRoute({
     ),
     403: errorResponse("No workspace access, or missing workspace:update"),
     404: errorResponse("Term not found in this workspace"),
-    409: errorResponse(
-      "Term is not `proposed` (retire it instead), or another term supersedes to it",
-    ),
+    409: errorResponse("Another term supersedes to this one"),
   },
 });
 

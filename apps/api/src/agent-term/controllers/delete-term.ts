@@ -4,17 +4,16 @@ import db from "../../database";
 import { agentTermTable } from "../../database/schema-agent-layer";
 
 /**
- * Hard delete, for `proposed` terms only.
+ * Hard delete, for any term the caller can reach.
  *
- * A proposal that was never reviewed has not been relied on by anyone, so
- * removing it loses nothing; a `confirmed` (or `disputed`) term may already be
- * cited by sessions and must go through retirement instead, which leaves a
- * tombstone (`state=retired`, `supersededBy`) that a later resolve can still
- * answer with. That is why the refusal is a 409 and not a 403: the caller has
- * the right, the row is in the wrong state.
+ * Confidence and state do not gate this: a workspace:update holder owns the
+ * lexicon and may drop an entry outright rather than retire it. Retirement
+ * stays available for the case where a tombstone is wanted, but it is a choice,
+ * not a precondition.
  *
- * A term another term points at via `supersededBy` is refused for the same
- * reason — deleting it would leave a dangling pointer on the survivor.
+ * The one refusal is a term another term points at via `supersededBy` —
+ * deleting it would leave a dangling pointer on the survivor. That is a 409 and
+ * not a 403: the caller has the right, the row is in the wrong state.
  *
  * Scoped by workspace: a term id from another workspace is "not found".
  */
@@ -23,7 +22,6 @@ async function deleteTerm(workspaceId: string, termId: string) {
     .select({
       id: agentTermTable.id,
       canonical: agentTermTable.canonical,
-      confidence: agentTermTable.confidence,
     })
     .from(agentTermTable)
     .where(
@@ -36,12 +34,6 @@ async function deleteTerm(workspaceId: string, termId: string) {
 
   if (!term) {
     throw new HTTPException(404, { message: "Term not found" });
-  }
-
-  if (term.confidence !== "proposed") {
-    throw new HTTPException(409, {
-      message: `Only proposed terms can be deleted; this one is ${term.confidence}. Retire it instead so a tombstone remains.`,
-    });
   }
 
   const [referrer] = await db

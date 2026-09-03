@@ -100,8 +100,9 @@ type TermRowProps = {
   canReview?: boolean;
   onReview?: (term: AgentTerm, confidence: "confirmed" | "disputed") => void;
   /**
-   * workspace:update. Only a `proposed` term is offered for deletion: a
-   * reviewed one is retired instead (the API answers 409 otherwise).
+   * workspace:update. Every row is offered for deletion regardless of
+   * confidence or state; the API refuses only a term another term supersedes
+   * to, and that reason is surfaced from the 409.
    */
   canDelete?: boolean;
   onDelete?: (term: AgentTerm) => void;
@@ -167,7 +168,7 @@ export function TermRow({
               </Button>
             </>
           ) : null}
-          {canDelete && term.confidence === "proposed" ? (
+          {canDelete ? (
             <Button
               type="button"
               variant="ghost"

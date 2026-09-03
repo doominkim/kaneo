@@ -2434,7 +2434,7 @@
 			"proposeFailed": "Could not propose the term.",
 			"delete": "Delete",
 			"deleteTitle": "Delete \"{{term}}\"?",
-			"deleteDescription": "Removes the proposal for good. Only proposed terms can be deleted; a reviewed term is retired instead so a tombstone remains.",
+			"deleteDescription": "Deletes the term for good, whatever its confidence or state. A term that another term names as its replacement cannot be deleted.",
 			"deleting": "Deleting…",
 			"deleted": "\"{{term}}\" deleted.",
 			"deleteFailed": "Could not delete the term.",

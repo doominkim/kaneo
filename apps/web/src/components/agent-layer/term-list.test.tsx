@@ -232,19 +232,20 @@ describe("TermList", () => {
     );
   });
 
-  it("offers delete only on proposed rows, and only with workspace:update", () => {
+  it("offers delete on every row, and only with workspace:update", () => {
     render(<TermList workspaceId="ws" canReview={false} />);
     expect(screen.queryByTestId("delete-term")).not.toBeInTheDocument();
     cleanup();
 
     render(<TermList workspaceId="ws" canReview />);
     const rows = screen.getAllByTestId("term-row");
-    expect(within(rows[0]).getByTestId("delete-term")).toBeInTheDocument();
-    expect(within(rows[1]).queryByTestId("delete-term")).toBeNull();
-    expect(within(rows[2]).queryByTestId("delete-term")).toBeNull();
+    // proposed, confirmed and disputed/retired alike.
+    for (const row of rows) {
+      expect(within(row).getByTestId("delete-term")).toBeInTheDocument();
+    }
   });
 
-  it("deletes a proposed term through the dialog and shows the 409 reason verbatim", async () => {
+  it("deletes a term through the dialog and shows the 409 reason verbatim", async () => {
     render(<TermList workspaceId="ws" canReview />);
 
     fireEvent.click(
@@ -271,7 +272,7 @@ describe("TermList", () => {
     );
 
     const reason =
-      "Only proposed terms can be deleted; this one is confirmed. Retire it instead so a tombstone remains.";
+      'Term is referenced as the replacement of "구코드" and cannot be deleted';
     mocks.remove.mockRejectedValueOnce(new AgentLayerApiError(409, reason));
     fireEvent.click(
       within(screen.getAllByTestId("term-row")[0]).getByTestId("delete-term"),

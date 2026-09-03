@@ -2398,7 +2398,7 @@
 			"termsEmptyHint": "Propose a term, or widen the filters.",
 			"delete": "Delete",
 			"deleted": "\"{{term}}\" deleted.",
-			"deleteDescription": "Removes the proposal for good. Only proposed terms can be deleted; a reviewed term is retired instead so a tombstone remains.",
+			"deleteDescription": "Deletes the term for good, whatever its confidence or state. A term that another term names as its replacement cannot be deleted.",
 			"deleteFailed": "Could not delete the term.",
 			"deleteForbidden": "workspace:update is required to delete a term.",
 			"deleteRefused": "The term cannot be deleted.",

@@ -871,7 +871,7 @@ describe("API integration: agent terms", () => {
       return row !== undefined;
     }
 
-    it("hard-deletes a proposed term for workspace:update", async () => {
+    it("hard-deletes a term for workspace:update", async () => {
       const admin = await createWorkspaceMember({ role: "admin" });
       const term = await seedTerm(admin.workspace.id, { canonical: "Draft" });
 
@@ -890,29 +890,39 @@ describe("API integration: agent terms", () => {
       expect((await remove(app, admin.workspace.id, term.id)).status).toBe(404);
     });
 
-    it("refuses a confirmed or disputed term with 409 and points at retirement", async () => {
+    it("deletes a confirmed or disputed term too — confidence does not gate it", async () => {
       const admin = await createWorkspaceMember({ role: "admin" });
       const confirmed = await seedTerm(admin.workspace.id, {
+        canonical: "Reviewed",
         confidence: "confirmed",
       });
       const disputed = await seedTerm(admin.workspace.id, {
         confidence: "disputed",
+      });
+      const retired = await seedTerm(admin.workspace.id, {
+        confidence: "confirmed",
+        state: "retired",
       });
 
       mockAuthenticatedSession(admin.user);
       const { app } = createApp();
 
       const response = await remove(app, admin.workspace.id, confirmed.id);
-      expect(response.status).toBe(409);
-      await expect(response.text()).resolves.toBe(
-        "Only proposed terms can be deleted; this one is confirmed. Retire it instead so a tombstone remains.",
-      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        id: confirmed.id,
+        canonical: "Reviewed",
+      });
       expect((await remove(app, admin.workspace.id, disputed.id)).status).toBe(
-        409,
+        200,
+      );
+      expect((await remove(app, admin.workspace.id, retired.id)).status).toBe(
+        200,
       );
 
-      expect(await stillThere(confirmed.id)).toBe(true);
-      expect(await stillThere(disputed.id)).toBe(true);
+      expect(await stillThere(confirmed.id)).toBe(false);
+      expect(await stillThere(disputed.id)).toBe(false);
+      expect(await stillThere(retired.id)).toBe(false);
     });
 
     it("refuses a term another term supersedes to", async () => {
