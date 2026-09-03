@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import db, { schema } from "../../apps/api/src/database";
 import {
   agentActorTable,
@@ -14,6 +14,7 @@ import {
   createProjectFixture,
   createWorkspaceMember,
 } from "./helpers/fixtures";
+import { mcpToolCall, toolJson } from "./helpers/mcp";
 
 type EntryUsage = {
   inputTokens?: number;
@@ -41,6 +42,7 @@ type EntrySummary = {
     model: string;
     onBehalfOf: string | null;
   } | null;
+  author: { userId: string; name: string } | null;
 };
 
 type EntryList = {
@@ -156,6 +158,7 @@ describe("API integration: agent entries", () => {
       model: "claude-opus-5",
       onBehalfOf: member.user.id,
     });
+    expect(payload.author).toBeNull();
 
     // The append response is deliberately the SUMMARY shape.
     expect(payload).not.toHaveProperty("body");
@@ -175,6 +178,7 @@ describe("API integration: agent entries", () => {
       summary: "Chose the append-only ledger",
       body: "Long form agent-facing notes",
       compaction: "full",
+      createdBy: null,
     });
     expect(persisted?.decision).toMatchObject({
       what: "append-only ledger",
@@ -594,6 +598,7 @@ describe("API integration: agent entries", () => {
         model: "claude-opus-5",
         onBehalfOf: null,
       });
+      expect(first.author).toBeNull();
     });
 
     it("pages with limit and the nextBefore cursor", async () => {
@@ -869,6 +874,301 @@ describe("API integration: agent entries", () => {
       await expect(response.text()).resolves.toBe(
         "You don't have access to this workspace",
       );
+    });
+  });
+
+  // One note stream, two kinds of author (DESIGN.md §2.3): the body decides.
+  // provider + model → agent entry; neither → human entry by the caller.
+  describe("human entries", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    function humanBody(projectId: string, overrides: Record<string, unknown>) {
+      return JSON.stringify({
+        projectId,
+        summary: "Reviewed the plan by hand",
+        ...overrides,
+      });
+    }
+
+    it("attributes an entry without provider/model to the current user", async () => {
+      const member = await createWorkspaceMember({ userName: "Dominic" });
+      const { project, columns } = await createProjectFixture({
+        workspaceId: member.workspace.id,
+      });
+      const task = await seedTask(project.id, columns.todo.id, 1);
+
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      const response = await app.request("/api/agent-entry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: humanBody(project.id, {
+          taskId: task.id,
+          kind: "decision",
+          body: "long form written by a person",
+          decision: { what: "ship it", why: "reviewed", rejected: "wait" },
+          refs: { repo: "doominkim/kaneo", branch: "agent-layer" },
+          sessionId: null,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as EntrySummary;
+      expect(payload).toMatchObject({
+        taskId: task.id,
+        kind: "decision",
+        summary: "Reviewed the plan by hand",
+        hasDecision: true,
+        repo: "doominkim/kaneo",
+        branch: "agent-layer",
+        effort: null,
+        agentLabel: null,
+        usage: null,
+        actor: null,
+        author: { userId: member.user.id, name: "Dominic" },
+      });
+
+      const [persisted] = await db
+        .select()
+        .from(agentEntryTable)
+        .where(eq(agentEntryTable.id, payload.id));
+      expect(persisted).toMatchObject({
+        actorId: null,
+        createdBy: member.user.id,
+        body: "long form written by a person",
+      });
+
+      // No agent_actor row is minted for a human write.
+      const actors = await db
+        .select()
+        .from(agentActorTable)
+        .where(eq(agentActorTable.workspaceId, member.workspace.id));
+      expect(actors).toHaveLength(0);
+    });
+
+    it("rejects provider without model and model without provider", async () => {
+      const member = await createWorkspaceMember();
+      const { project } = await createProjectFixture({
+        workspaceId: member.workspace.id,
+      });
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      const providerOnly = await app.request("/api/agent-entry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: humanBody(project.id, { provider: "anthropic" }),
+      });
+      expect(providerOnly.status).toBe(400);
+      await expect(providerOnly.text()).resolves.toBe(
+        "model: provider and model must be given together",
+      );
+
+      const modelOnly = await app.request("/api/agent-entry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: humanBody(project.id, { model: "claude-opus-5" }),
+      });
+      expect(modelOnly.status).toBe(400);
+      await expect(modelOnly.text()).resolves.toBe(
+        "provider: provider and model must be given together",
+      );
+
+      const rows = await db
+        .select({ id: agentEntryTable.id })
+        .from(agentEntryTable);
+      expect(rows).toHaveLength(0);
+    });
+
+    it("rejects effort, agentLabel and usage on a human entry", async () => {
+      const member = await createWorkspaceMember();
+      const { project } = await createProjectFixture({
+        workspaceId: member.workspace.id,
+      });
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      for (const [field, value, message] of [
+        [
+          "effort",
+          "high",
+          "effort: effort is only accepted with provider and model (an agent entry)",
+        ],
+        [
+          "agentLabel",
+          "3setter",
+          "agentLabel: agentLabel is only accepted with provider and model (an agent entry)",
+        ],
+        [
+          "usage",
+          { totalTokens: 5 },
+          "usage: usage is only accepted with provider and model (an agent entry)",
+        ],
+      ] as const) {
+        const response = await app.request("/api/agent-entry", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: humanBody(project.id, { [field]: value }),
+        });
+        expect(response.status, field).toBe(400);
+        await expect(response.text()).resolves.toBe(message);
+      }
+
+      // Explicit nulls are not "present": an agent-shaped client that always
+      // sends the keys can still post a human entry.
+      const nulls = await app.request("/api/agent-entry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: humanBody(project.id, {
+          effort: null,
+          agentLabel: null,
+          usage: null,
+        }),
+      });
+      expect(nulls.status).toBe(200);
+    });
+
+    it("still requires task:update — a viewer cannot post a human entry", async () => {
+      const member = await createWorkspaceMember({ role: "viewer" });
+      const { project } = await createProjectFixture({
+        workspaceId: member.workspace.id,
+      });
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      const response = await app.request("/api/agent-entry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: humanBody(project.id, {}),
+      });
+      expect(response.status).toBe(403);
+    });
+
+    it("interleaves human and agent entries with their authors in list, detail and the handoff filter", async () => {
+      const member = await createWorkspaceMember({ userName: "Dominic" });
+      const { project } = await createProjectFixture({
+        workspaceId: member.workspace.id,
+      });
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      const agentHandoff = (await (
+        await app.request("/api/agent-entry", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: appendBody(project.id, {
+            kind: "handoff",
+            summary: "agent handoff",
+          }),
+        })
+      ).json()) as EntrySummary;
+      const humanNote = (await (
+        await app.request("/api/agent-entry", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: humanBody(project.id, { summary: "human note" }),
+        })
+      ).json()) as EntrySummary;
+      const humanHandoff = (await (
+        await app.request("/api/agent-entry", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: humanBody(project.id, {
+            kind: "handoff",
+            summary: "human handoff",
+            body: "where we are",
+          }),
+        })
+      ).json()) as EntrySummary;
+
+      const list = (await (
+        await app.request(`/api/agent-entry/${project.id}`)
+      ).json()) as EntryList;
+      expect(
+        list.entries.map((e) => [e.summary, e.actor?.model ?? null, e.author]),
+      ).toEqual([
+        ["human handoff", null, { userId: member.user.id, name: "Dominic" }],
+        ["human note", null, { userId: member.user.id, name: "Dominic" }],
+        ["agent handoff", "claude-opus-5", null],
+      ]);
+
+      // The overview callout takes the latest handoff whoever wrote it.
+      const handoffs = (await (
+        await app.request(`/api/agent-entry/${project.id}?kind=handoff`)
+      ).json()) as EntryList;
+      expect(handoffs.entries.map((e) => e.id)).toEqual([
+        humanHandoff.id,
+        agentHandoff.id,
+      ]);
+      expect(handoffs.entries[0].author?.name).toBe("Dominic");
+
+      const detail = (await (
+        await app.request(`/api/agent-entry/${project.id}/${humanHandoff.id}`)
+      ).json()) as EntryDetail;
+      expect(detail).toMatchObject({
+        id: humanHandoff.id,
+        body: "where we are",
+        actor: null,
+        author: { userId: member.user.id, name: "Dominic" },
+      });
+      expect(humanNote.author?.userId).toBe(member.user.id);
+    });
+
+    it("carries author through agent_brief.recentEntries and agent_log_tail", async () => {
+      const member = await createWorkspaceMember({ userName: "Dominic" });
+      const { project } = await createProjectFixture({
+        workspaceId: member.workspace.id,
+      });
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+      // The tools reach the API over HTTP; route that into the same app.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = new URL(String(input));
+          return app.request(`${url.pathname}${url.search}`, init);
+        }),
+      );
+
+      await app.request("/api/agent-entry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: humanBody(project.id, { summary: "human note" }),
+      });
+      await mcpToolCall(app, "agent_log_append", {
+        projectId: project.id,
+        summary: "agent note",
+        provider: "anthropic",
+        model: "claude-opus-5",
+      });
+
+      const tail = toolJson<EntryList>(
+        await mcpToolCall(app, "agent_log_tail", { projectId: project.id }),
+      );
+      expect(
+        tail.entries.map((e) => [e.summary, e.actor?.model ?? null, e.author]),
+      ).toEqual([
+        ["agent note", "claude-opus-5", null],
+        ["human note", null, { userId: member.user.id, name: "Dominic" }],
+      ]);
+
+      const brief = toolJson<{ recentEntries: EntrySummary[] }>(
+        await mcpToolCall(app, "agent_brief", { projectId: project.id }),
+      );
+      expect(brief.recentEntries.map((e) => e.author)).toEqual([
+        null,
+        { userId: member.user.id, name: "Dominic" },
+      ]);
+
+      // The MCP write path is agent-only: provider/model stay required there.
+      const rejected = await mcpToolCall(app, "agent_log_append", {
+        projectId: project.id,
+        summary: "no identity",
+      });
+      expect(rejected.isError).toBe(true);
     });
   });
 

@@ -102,6 +102,12 @@ const nodes: AgentTreeNode[] = [
             slug: "report",
             title: "Session report",
             actorId: "actor",
+            actor: {
+              id: "actor",
+              provider: "anthropic",
+              model: "claude-fable-5-1",
+              onBehalfOf: "user-1",
+            },
             updatedBy: null,
             updatedAt: "2026-09-01T00:00:00.000Z",
           },
@@ -112,6 +118,14 @@ const nodes: AgentTreeNode[] = [
             name: "report.html",
             contentType: "text/html",
             size: 2048,
+            actorId: "actor-gpt",
+            actor: {
+              id: "actor-gpt",
+              provider: "openai",
+              model: "gpt-5.6-luna",
+              onBehalfOf: "user-1",
+            },
+            uploadedBy: null,
             createdAt: "2026-09-01T00:00:00.000Z",
           },
           {
@@ -119,6 +133,9 @@ const nodes: AgentTreeNode[] = [
             name: "bundle.zip",
             contentType: "application/zip",
             size: 1048576,
+            actorId: null,
+            actor: null,
+            uploadedBy: "user-1",
             createdAt: "2026-09-01T00:00:00.000Z",
           },
         ],
@@ -259,6 +276,9 @@ describe("TaskTimelineTree", () => {
       "/dashboard/workspace/$workspaceId/project/$projectId/docs/$slug",
     );
     expect(documentLink).toHaveTextContent("Session report");
+    expect(within(document).getByTestId("agent-author")).toHaveTextContent(
+      "claude-fable-5-1",
+    );
 
     const attachments = screen.getAllByTestId("tree-attachment");
     expect(attachments).toHaveLength(2);
@@ -274,6 +294,11 @@ describe("TaskTimelineTree", () => {
       "data-params",
       JSON.stringify({ workspaceId: "ws", projectId: "p", artifactId: "a1" }),
     );
+    expect(within(htmlLeaf).getByTestId("agent-author")).toHaveTextContent(
+      "gpt-5.6-luna",
+    );
+    // Human upload: no model to name, and no misleading "Agent" badge either.
+    expect(within(zipLeaf).queryByTestId("agent-author")).toBeNull();
     expect(htmlLeaf).toHaveTextContent("report.html");
     expect(htmlLeaf).toHaveTextContent("2.0 KB");
 

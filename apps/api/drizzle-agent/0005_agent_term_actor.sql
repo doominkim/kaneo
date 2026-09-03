@@ -1,0 +1,2 @@
+ALTER TABLE "agent_term" ADD COLUMN "actor_id" text;--> statement-breakpoint
+ALTER TABLE "agent_term" ADD CONSTRAINT "agent_term_actor_id_agent_actor_id_fk" FOREIGN KEY ("actor_id") REFERENCES "public"."agent_actor"("id") ON DELETE set null ON UPDATE cascade;

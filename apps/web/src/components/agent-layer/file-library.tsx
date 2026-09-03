@@ -11,7 +11,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { AgentArtifact } from "@/fetchers/agent-layer/get-agent-artifacts";
 import type { AgentDocumentSummary } from "@/fetchers/agent-layer/get-agent-documents";
@@ -25,6 +24,7 @@ import {
   formatRelativeTime,
 } from "@/lib/format";
 import { toast } from "@/lib/toast";
+import { AgentAuthorBadge } from "./agent-author-badge";
 import { AgentLayerEmpty } from "./agent-layer-state";
 import {
   ARTIFACT_KIND_ICONS,
@@ -377,6 +377,8 @@ function LibraryRow({
   const author = uploaderId
     ? (memberNameById.get(uploaderId) ?? uploaderId)
     : null;
+  const actor =
+    item.kind === "artifact" ? item.artifact.actor : item.document.actor;
   const time = libraryItemTime(item);
   const name = libraryItemName(item);
   const linkClassName =
@@ -445,11 +447,7 @@ function LibraryRow({
         </td>
       ) : null}
       <td className="px-3 py-2 text-muted-foreground">
-        {author ?? (
-          <Badge variant="info" size="sm" data-testid="agent-author">
-            {t("agentLayer:common.agent")}
-          </Badge>
-        )}
+        <AgentAuthorBadge actor={actor} humanName={author} />
       </td>
       <td
         className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground"

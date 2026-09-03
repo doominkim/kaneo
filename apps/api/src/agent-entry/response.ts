@@ -1,14 +1,29 @@
 import { responseTimestamp, z } from "../openapi";
+import { actorResponseSchema } from "./actor-response";
 import { refsBody, usageBody } from "./schema";
 
-const actorSchema = z
+/**
+ * The shared actor block, registered under the `AgentActor` component name.
+ * `actor-response.ts` leaves its copy unnamed precisely so this is the only
+ * registration; documents, artifacts, and terms inline the same shape.
+ */
+const actorSchema = actorResponseSchema.openapi("AgentActor");
+
+const authorSchema = z
   .object({
-    id: z.string(),
-    provider: z.string(),
-    model: z.string(),
-    onBehalfOf: z.string().nullable(),
+    userId: z.string(),
+    name: z.string(),
   })
-  .openapi("AgentActor");
+  .openapi("AgentEntryAuthor");
+
+const actorField = actorSchema.nullable().openapi({
+  description:
+    "The agent that wrote the entry; null for a human entry (see `author`).",
+});
+const authorField = authorSchema.nullable().openapi({
+  description:
+    "The person who wrote the entry from the UI; null for an agent entry (see `actor`). At most one of `actor`/`author` is set; both null means the author row was deleted.",
+});
 
 /**
  * Summary shape — deliberately WITHOUT `body` and `decision`.
@@ -42,7 +57,8 @@ export const entrySummarySchema = z
     agentLabel: z.string().nullable(),
     usage: usageBody.nullable(),
     createdAt: responseTimestamp,
-    actor: actorSchema.nullable(),
+    actor: actorField,
+    author: authorField,
   })
   .openapi("AgentEntrySummary");
 
@@ -77,6 +93,7 @@ export const entryDetailSchema = z
     compaction: z.string(),
     sessionId: z.string().nullable(),
     createdAt: responseTimestamp,
-    actor: actorSchema.nullable(),
+    actor: actorField,
+    author: authorField,
   })
   .openapi("AgentEntryDetail");

@@ -194,6 +194,13 @@ git이 이미 갖고 있는 것은 **참조만** 한다 (commit sha, PR 번호).
 refs: { repo, branch, commits, prs, files }
 ```
 
+```
+actor_id:   FK agent_actor  — 에이전트가 썼을 때. 응답에는 actor{id, provider, model, onBehalfOf}
+created_by: FK user         — 사람이 UI에서 썼을 때 (0004). 응답에는 author{userId, name}
+```
+
+행마다 둘 중 정확히 하나가 채워진다(§4.1, 앱 레벨 강제). `POST /api/agent-entry`는 `provider`+`model`이 둘 다 오면 에이전트 entry, 둘 다 없으면 호출자를 `created_by`로 하는 사람 entry로 저장하고, 하나만 오거나 사람 entry에 `effort`·`agent_label`·`usage`가 실리면 400이다. MCP `agent_log_append`는 에이전트 전용이라 `provider`·`model`이 계속 필수다. 트리 롤업(§6)에서 사람 entry는 `entryCount`에는 들지만 `byModel`에는 들지 않는다 — usage를 가질 수 없기 때문이다.
+
 `repo`(`doominkim/kaneo`)와 `branch`(`agent-layer`)는 선택 필드이고 `agent_log_append` 입력이 받는다. **git 작업이었다면 브랜치는 반드시 기록한다** — 어느 브랜치에서 한 일인지는 commit sha만으로는 세션 밖에서 복원되지 않으며, 병합 전 작업이 어디 있는지 사람이 찾는 첫 단서다.
 
 ```

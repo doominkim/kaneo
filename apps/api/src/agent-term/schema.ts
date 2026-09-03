@@ -43,6 +43,14 @@ export const proposeTermBody = z.object({
   }),
   anchors: z.array(anchorSchema).default([]),
   sourceEntryId: z.string().nullable().optional(),
+  provider: z.string().optional().openapi({
+    description:
+      "Provider of the model writing the proposal, e.g. `anthropic`. Send with `model` from an agent; omit both when a person is proposing. The actor row is resolved server-side as (workspace, caller, model) — a caller cannot name someone else's actor.",
+  }),
+  model: z.string().optional().openapi({
+    description:
+      "Model id of the writer, e.g. `claude-opus-5`. Stored and shown verbatim; the server never maps it to a display name.",
+  }),
 });
 
 export const confirmTermBody = z.object({

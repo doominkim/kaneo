@@ -318,6 +318,13 @@ describe("API integration: agent project tree", () => {
         refs: null,
         usage: null,
       },
+      {
+        // A human entry: an appearance in entryCount, never a byModel key.
+        actorId: null,
+        createdBy: member.user.id,
+        refs: null,
+        usage: null,
+      },
     ];
     for (const [index, spec] of entries.entries()) {
       await db.insert(agentEntryTable).values({
@@ -325,6 +332,7 @@ describe("API integration: agent project tree", () => {
         projectId: project.id,
         taskId: task.id,
         actorId: spec.actorId,
+        createdBy: "createdBy" in spec ? spec.createdBy : null,
         summary: `entry ${index}`,
         refs: spec.refs,
         usage: spec.usage,
@@ -353,7 +361,7 @@ describe("API integration: agent project tree", () => {
       { repo: "doominkim/kaneo", branch: "feat/b" },
     ]);
     expect(node?.usage).toEqual({
-      entryCount: 5,
+      entryCount: 6,
       inputTokens: 110,
       outputTokens: 55,
       totalTokens: 150 + 15 + 20 + 7,
@@ -470,6 +478,7 @@ describe("API integration: agent project tree", () => {
         slug: "report",
         title: "Report",
         actorId: null,
+        actor: null,
         updatedBy: member.user.id,
         updatedAt: doc.updatedAt.toISOString(),
       },
@@ -482,6 +491,9 @@ describe("API integration: agent project tree", () => {
         name: "bundle.zip",
         contentType: "application/zip",
         size: 65536,
+        actorId: null,
+        actor: null,
+        uploadedBy: member.user.id,
         createdAt: newer.createdAt.toISOString(),
       },
       {
@@ -489,6 +501,9 @@ describe("API integration: agent project tree", () => {
         name: "report.html",
         contentType: "text/html",
         size: 4096,
+        actorId: null,
+        actor: null,
+        uploadedBy: member.user.id,
         createdAt: older.createdAt.toISOString(),
       },
     ]);

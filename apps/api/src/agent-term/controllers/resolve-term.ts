@@ -1,24 +1,11 @@
 import { and, eq, or, sql } from "drizzle-orm";
+import { actorSelection, liftActor } from "../../agent-entry/actor-response";
 import db from "../../database";
-import { agentTermTable } from "../../database/schema-agent-layer";
-
-type TermRow = typeof agentTermTable.$inferSelect;
-
-function shape(row: TermRow) {
-  return {
-    id: row.id,
-    canonical: row.canonical,
-    definition: row.definition,
-    aliases: (row.aliases as string[] | null) ?? [],
-    notToConfuseWith: (row.notToConfuseWith as string[] | null) ?? [],
-    anchors: row.anchors ?? [],
-    confidence: row.confidence,
-    state: row.state,
-    supersededBy: row.supersededBy,
-    lastVerifiedAt: row.lastVerifiedAt,
-    createdAt: row.createdAt,
-  };
-}
+import {
+  agentActorTable,
+  agentTermTable,
+} from "../../database/schema-agent-layer";
+import { toTermRecord } from "./term-record";
 
 /**
  * Deterministic lookup. The same input always returns the same answer.
@@ -31,13 +18,18 @@ function shape(row: TermRow) {
  * `retired` rows are NOT filtered out: a tombstone carries real information
  * ("this is dead, look at X instead"). Hiding it invites the same dead concept
  * to be proposed again six months later.
+ *
+ * The proposing actor rides along on every returned term, including the
+ * `ambiguous` list: when a human has to disambiguate, "which model proposed
+ * each of these" is part of what they are deciding on.
  */
 async function resolveTerm(workspaceId: string, term: string) {
   const normalized = term.trim();
 
   const rows = await db
-    .select()
+    .select({ term: agentTermTable, ...actorSelection })
     .from(agentTermTable)
+    .leftJoin(agentActorTable, eq(agentTermTable.actorId, agentActorTable.id))
     .where(
       and(
         eq(agentTermTable.workspaceId, workspaceId),
@@ -59,7 +51,7 @@ async function resolveTerm(workspaceId: string, term: string) {
   }
 
   const canonicalHit = rows.find(
-    (r) => r.canonical.toLowerCase() === normalized.toLowerCase(),
+    (r) => r.term.canonical.toLowerCase() === normalized.toLowerCase(),
   );
   const hit = canonicalHit ?? rows[0];
 
@@ -72,8 +64,11 @@ async function resolveTerm(workspaceId: string, term: string) {
         lastAccessedAt: new Date(),
         accessCount: sql`${agentTermTable.accessCount} + 1`,
       })
-      .where(eq(agentTermTable.id, hit.id));
+      .where(eq(agentTermTable.id, hit.term.id));
   }
+
+  const shape = (row: (typeof rows)[number]) =>
+    toTermRecord(row.term, liftActor(row));
 
   return {
     match: canonicalHit ? ("canonical" as const) : ("alias" as const),

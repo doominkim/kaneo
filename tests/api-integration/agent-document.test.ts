@@ -169,6 +169,7 @@ describe("API integration: agent documents", () => {
       taskId: null,
       updatedBy: member.user.id,
       actorId: null,
+      actor: null,
     });
 
     const list = (await (
@@ -181,6 +182,7 @@ describe("API integration: agent documents", () => {
       title: "Session report",
       updatedBy: member.user.id,
       actorId: null,
+      actor: null,
     });
     // Listing never ships bodies.
     expect(list.documents[0]).not.toHaveProperty("body");
@@ -567,6 +569,10 @@ describe("API integration: agent documents", () => {
         actorId: saved.actorId,
         updatedAt: expect.any(String),
       });
+      // The tool result stays shaped down — the agent already knows its own
+      // model, so `actor` would be tokens for nothing. It appears on the HTTP
+      // surfaces below, which are the ones a person reads.
+      expect(saved).not.toHaveProperty("actor");
       // The put response never echoes the body back.
       expect(saved).not.toHaveProperty("body");
 
@@ -596,7 +602,26 @@ describe("API integration: agent documents", () => {
       const detail = (await (
         await app.request(`/api/agent-document/${project.id}/session-report`)
       ).json()) as DocumentDetail;
-      expect(detail).toMatchObject({ updatedBy: null, actorId: saved.actorId });
+      const agentActor = {
+        id: saved.actorId,
+        provider: "anthropic",
+        model: "claude-opus-5",
+        onBehalfOf: member.user.id,
+      };
+      expect(detail).toMatchObject({
+        updatedBy: null,
+        actorId: saved.actorId,
+        actor: agentActor,
+      });
+
+      // ...and on the listing, which is where the model actually gets read.
+      const listed = (await (
+        await app.request(`/api/agent-document/${project.id}`)
+      ).json()) as DocumentList;
+      expect(listed.documents[0]).toMatchObject({
+        actorId: saved.actorId,
+        actor: agentActor,
+      });
     });
 
     it("flips authorship both ways: agent overwrite clears updatedBy, human overwrite clears actorId", async () => {

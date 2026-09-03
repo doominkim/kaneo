@@ -279,7 +279,7 @@ export function registerAgentTools(
     "agent_log_append",
     {
       description:
-        "Append one ledger entry. Use this instead of a task comment — comments are the human surface and an agent writing there is what makes a task page unreadable. Record `decision.why` and `decision.rejected`: code keeps only what was chosen. If git was involved, set `refs.branch` (and `refs.repo`). Pass `effort`, `agentLabel` and harness-supplied `usage` so cost is attributable per appearance.",
+        "Append one ledger entry as this agent (provider/model required here; humans post to the same stream from the UI and show up as `author`). Use this for progress, not a task comment, so the task page stays bounded. Record `decision.why` and `decision.rejected`: code keeps only what was chosen. If git was involved, set `refs.branch` (and `refs.repo`). Pass `effort`, `agentLabel` and harness-supplied `usage` so cost is attributable per appearance.",
       inputSchema: z.object({
         projectId: z.string(),
         taskId: z.string().nullable().optional(),
@@ -339,7 +339,7 @@ export function registerAgentTools(
     "agent_log_tail",
     {
       description:
-        "Recent ledger entries, newest first. Summaries only — call agent_entry_get for a specific entry's body and decision. To page, pass the previous result's nextBefore as `before`.",
+        "Recent ledger entries, newest first, human and agent interleaved (`author` = human, `actor` = agent). Summaries only — call agent_entry_get for a specific entry's body and decision. To page, pass the previous result's nextBefore as `before`.",
       inputSchema: z.object({
         projectId: z.string(),
         limit: z.number().int().min(1).max(50).default(10),
@@ -399,9 +399,11 @@ export function registerAgentTools(
     "agent_term_propose",
     {
       description:
-        "Propose a term for the lexicon. It is stored as `proposed` and a human must confirm it — never assume a proposal is authoritative.",
+        "Propose a term for the lexicon. It is stored as `proposed` and a human must confirm it — never assume a proposal is authoritative. Pass `provider`/`model` so the proposal records which model wrote it; a reviewer weighs a proposal by its author.",
       inputSchema: z.object({
         workspaceId: z.string(),
+        provider: z.string(),
+        model: z.string(),
         canonical: z.string(),
         definition: z.string().nullable().optional(),
         aliases: z.array(z.string()).default([]),

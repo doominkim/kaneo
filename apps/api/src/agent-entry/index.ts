@@ -24,7 +24,7 @@ const appendEntryRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Append a ledger entry",
   description:
-    "Record one unit of agent work. Append-only: there is no update or delete, and a correction is a new entry. This is the agent write surface — agents do not write task comments, which is what keeps a task page bounded.",
+    "Record one unit of work on the project's note stream. Append-only: there is no update or delete, and a correction is a new entry. Humans and agents share the stream and differ only in attribution: send `provider` + `model` for an agent entry (attributed to an agent_actor, `actor` set), or neither for a human entry (attributed to the calling user, `author` set). One without the other, or `effort`/`agentLabel`/`usage` on a human entry, is a 400.",
   middleware: [
     workspaceAccess.fromProject("projectId"),
     requireWorkspacePermission({ task: ["update"] }),
@@ -37,7 +37,9 @@ const appendEntryRoute = createRoute({
   },
   responses: {
     200: jsonResponse("The appended entry", entrySummarySchema),
-    400: errorResponse("Invalid body, or unknown project"),
+    400: errorResponse(
+      "Invalid body (including provider without model or vice versa, or agent-only fields on a human entry), or unknown project",
+    ),
     403: errorResponse("No workspace access, or missing task:update"),
   },
 });
@@ -49,7 +51,7 @@ const listEntriesRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "List ledger entries",
   description:
-    "Newest first. Returns summaries only — `body` and `decision` are excluded at the query level so the cost of a listing stays bounded. Fetch a single entry to read them. Page by passing the previous response's `nextBefore` as `before`.",
+    "Newest first, human and agent entries interleaved; each row carries `actor` (agent) or `author` (human). Returns summaries only — `body` and `decision` are excluded at the query level so the cost of a listing stays bounded. Fetch a single entry to read them. Page by passing the previous response's `nextBefore` as `before`.",
   middleware: [workspaceAccess.fromProject("projectId")] as const,
   request: { params: projectIdParam, query: listEntriesQuery },
   responses: {

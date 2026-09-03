@@ -1,11 +1,16 @@
 import { and, eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
+import { userTable } from "../../database/schema";
 import {
   agentActorTable,
   agentEntryTable,
 } from "../../database/schema-agent-layer";
-import type { EntryRefs, EntryUsage } from "./entry-fields";
+import {
+  type EntryRefs,
+  type EntryUsage,
+  shapeAuthorship,
+} from "./entry-fields";
 
 /**
  * Full record including `body` and `decision`. Fetched one at a time by design.
@@ -17,9 +22,14 @@ import type { EntryRefs, EntryUsage } from "./entry-fields";
  */
 async function getEntry(projectId: string, entryId: string) {
   const [row] = await db
-    .select()
+    .select({
+      entry: agentEntryTable,
+      actor: agentActorTable,
+      author: { id: userTable.id, name: userTable.name },
+    })
     .from(agentEntryTable)
     .leftJoin(agentActorTable, eq(agentEntryTable.actorId, agentActorTable.id))
+    .leftJoin(userTable, eq(agentEntryTable.createdBy, userTable.id))
     .where(
       and(
         eq(agentEntryTable.id, entryId),
@@ -32,22 +42,14 @@ async function getEntry(projectId: string, entryId: string) {
     throw new HTTPException(404, { message: "Entry not found" });
   }
 
-  const entry = row.agent_entry;
-  const actor = row.agent_actor;
+  const entry = row.entry;
 
   return {
     ...entry,
     refs: (entry.refs as EntryRefs | null) ?? null,
     coreChanged: (entry.coreChanged as string[] | null) ?? null,
     usage: (entry.usage as EntryUsage | null) ?? null,
-    actor: actor
-      ? {
-          id: actor.id,
-          provider: actor.provider,
-          model: actor.model,
-          onBehalfOf: actor.onBehalfOf,
-        }
-      : null,
+    ...shapeAuthorship(row.actor, row.author),
   };
 }
 

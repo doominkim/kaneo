@@ -1,3 +1,4 @@
+import { actorResponseSchema } from "../agent-entry/actor-response";
 import { responseTimestamp, z } from "../openapi";
 
 /**
@@ -20,6 +21,10 @@ export const documentSummarySchema = z
     actorId: z.string().nullable().openapi({
       description:
         "agent_actor id of the agent author, or null when a human wrote it.",
+    }),
+    actor: actorResponseSchema.nullable().openapi({
+      description:
+        "The agent that wrote the current body, resolved from `actorId`; null when a human wrote it. `model` is the model id as the harness reported it and is shown verbatim — the API never maps it to a display name.",
     }),
     updatedAt: responseTimestamp,
   })

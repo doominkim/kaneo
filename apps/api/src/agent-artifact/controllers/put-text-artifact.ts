@@ -1,6 +1,7 @@
 import { createId } from "@paralleldrive/cuid2";
 import { eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
+import { loadActor } from "../../agent-entry/actor-response";
 import db from "../../database";
 import { agentArtifactTable } from "../../database/schema-agent-layer";
 import {
@@ -114,7 +115,7 @@ async function putTextArtifact(input: PutTextInput) {
   if (!finalized) {
     throw new HTTPException(500, { message: "Failed to finalize artifact" });
   }
-  return toArtifactRecord(finalized);
+  return toArtifactRecord(finalized, await loadActor(finalized.actorId));
 }
 
 export default putTextArtifact;

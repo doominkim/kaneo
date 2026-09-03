@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
+import { loadActor } from "../../agent-entry/actor-response";
 import db, { schema } from "../../database";
 import { agentDocumentTable } from "../../database/schema-agent-layer";
 import { isTaskForeignKeyViolation } from "./is-task-fk-violation";
@@ -84,7 +85,9 @@ async function putDocument(input: PutInput) {
     throw new HTTPException(500, { message: "Failed to save document" });
   }
 
-  return document;
+  // Looked up rather than joined: the write returns its own row, and the
+  // lookup only happens when the write was actually attributed to an agent.
+  return { ...document, actor: await loadActor(document.actorId) };
 }
 
 export default putDocument;

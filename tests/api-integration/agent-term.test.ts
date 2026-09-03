@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import db, { schema } from "../../apps/api/src/database";
-import { agentTermTable } from "../../apps/api/src/database/schema-agent-layer";
+import {
+  agentActorTable,
+  agentTermTable,
+} from "../../apps/api/src/database/schema-agent-layer";
 import { createApp } from "../../apps/api/src/index";
 import { mockAnonymousSession, mockAuthenticatedSession } from "./helpers/auth";
 import { resetTestDatabase } from "./helpers/database";
 import { createWorkspaceMember } from "./helpers/fixtures";
+import { mcpToolCall, toolJson } from "./helpers/mcp";
 
 type Term = {
   id: string;
@@ -18,6 +22,13 @@ type Term = {
   confidence: string;
   state: string;
   supersededBy: string | null;
+  actorId: string | null;
+  actor: {
+    id: string;
+    provider: string;
+    model: string;
+    onBehalfOf: string | null;
+  } | null;
   lastVerifiedAt: string | null;
   createdAt: string;
 };
@@ -55,6 +66,10 @@ function confirm(
 describe("API integration: agent terms", () => {
   beforeEach(async () => {
     await resetTestDatabase();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("rejects unauthenticated proposals", async () => {
@@ -95,6 +110,9 @@ describe("API integration: agent terms", () => {
       confidence: "proposed",
       state: "active",
       supersededBy: null,
+      // No provider/model on the request: a person proposed this.
+      actorId: null,
+      actor: null,
       lastVerifiedAt: null,
     });
     expect(payload.anchors).toEqual([{ kind: "db", table: "agent_entry" }]);
@@ -110,7 +128,103 @@ describe("API integration: agent terms", () => {
       confidence: "proposed",
       state: "active",
       ownerId: member.user.id,
+      actorId: null,
       accessCount: 0,
+    });
+  });
+
+  it("records the proposing model when an agent proposes, and keeps it through list, resolve and review", async () => {
+    // Admin, because the review step at the end needs workspace:update.
+    const member = await createWorkspaceMember({ role: "admin" });
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    // agent_term_propose reaches the API over HTTP rather than in-process, so
+    // its fetch is routed back into this app instance.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        return app.request(`${url.pathname}${url.search}`, init);
+      }),
+    );
+    const proposed = toolJson<Term>(
+      await mcpToolCall(app, "agent_term_propose", {
+        workspaceId: member.workspace.id,
+        canonical: "Lease",
+        definition: "A soft claim on a task",
+        aliases: ["agent_lease"],
+        provider: "anthropic",
+        model: "claude-fable-5-1",
+      }),
+    );
+
+    const expectedActor = {
+      id: expect.any(String),
+      provider: "anthropic",
+      model: "claude-fable-5-1",
+      onBehalfOf: member.user.id,
+    };
+    expect(proposed).toMatchObject({
+      canonical: "Lease",
+      confidence: "proposed",
+      actorId: expect.any(String),
+      actor: expectedActor,
+    });
+
+    // The actor row is resolved server-side as (workspace, caller, model),
+    // exactly as the ledger does it — the caller never names an actor id.
+    const [actor] = await db
+      .select()
+      .from(agentActorTable)
+      .where(eq(agentActorTable.id, proposed.actorId as string));
+    expect(actor).toMatchObject({
+      workspaceId: member.workspace.id,
+      onBehalfOf: member.user.id,
+      provider: "anthropic",
+      model: "claude-fable-5-1",
+    });
+    // `ownerId` is NOT cleared: the proposal still happened on a human's
+    // authority, and the reviewer needs both halves.
+    const [row] = await db
+      .select()
+      .from(agentTermTable)
+      .where(eq(agentTermTable.id, proposed.id));
+    expect(row).toMatchObject({
+      ownerId: member.user.id,
+      actorId: proposed.actorId,
+    });
+
+    const listed = (await (
+      await app.request(`/api/agent-term/${member.workspace.id}`)
+    ).json()) as TermList;
+    expect(listed.terms[0]).toMatchObject({
+      actorId: proposed.actorId,
+      actor: expectedActor,
+    });
+
+    const resolved = (await (
+      await app.request(
+        `/api/agent-term/${member.workspace.id}/resolve?term=agent_lease`,
+      )
+    ).json()) as Resolution;
+    expect(resolved.match).toBe("alias");
+    expect(resolved.term).toMatchObject({
+      actorId: proposed.actorId,
+      actor: expectedActor,
+    });
+
+    // A review records the outcome without erasing who proposed it.
+    const reviewed = (await (
+      await confirm(app, member.workspace.id, {
+        termId: proposed.id,
+        confidence: "confirmed",
+      })
+    ).json()) as Term;
+    expect(reviewed).toMatchObject({
+      confidence: "confirmed",
+      actorId: proposed.actorId,
+      actor: expectedActor,
     });
   });
 

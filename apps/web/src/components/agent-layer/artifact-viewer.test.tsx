@@ -43,6 +43,12 @@ const html: AgentArtifact = {
   size: 2048,
   uploadedBy: null,
   actorId: "actor-1",
+  actor: {
+    id: "actor-1",
+    provider: "anthropic",
+    model: "claude-fable-5-1",
+    onBehalfOf: "user-1",
+  },
   createdAt: "2026-09-03T00:00:00.000Z",
 };
 
@@ -73,6 +79,31 @@ afterEach(() => {
 });
 
 describe("ArtifactViewer", () => {
+  it("names the writing model verbatim instead of a flat agent label", () => {
+    renderViewer(html);
+    const author = screen.getByTestId("agent-author");
+    expect(author).toHaveTextContent("claude-fable-5-1");
+    expect(author).toHaveAttribute(
+      "title",
+      "anthropic/claude-fable-5-1 · user-1",
+    );
+  });
+
+  it("shows the person, not a model, when a human uploaded it", () => {
+    render(
+      <ArtifactViewer
+        artifact={{ ...html, uploadedBy: "user-1", actorId: null, actor: null }}
+        workspaceId="ws"
+        projectId="p"
+        projectSlug="KAN"
+        taskNumber={7}
+        authorName="Dominic"
+      />,
+    );
+    expect(screen.getByText("Dominic")).toBeInTheDocument();
+    expect(screen.queryByTestId("agent-author")).not.toBeInTheDocument();
+  });
+
   it("frames the inline URL in a fully sandboxed iframe", () => {
     renderViewer(html);
 

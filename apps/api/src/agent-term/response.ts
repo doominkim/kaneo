@@ -1,3 +1,4 @@
+import { actorResponseSchema } from "../agent-entry/actor-response";
 import { nullableResponseTimestamp, responseTimestamp, z } from "../openapi";
 
 export const termSchema = z
@@ -11,6 +12,14 @@ export const termSchema = z
     confidence: z.string(),
     state: z.string(),
     supersededBy: z.string().nullable(),
+    actorId: z.string().nullable().openapi({
+      description:
+        "agent_actor id of the model that proposed the term, or null when a person did.",
+    }),
+    actor: actorResponseSchema.nullable().openapi({
+      description:
+        "The model that proposed the term, resolved from `actorId`; null for a human proposal. Which model wrote a proposal is what a reviewer weighs it by. `model` is the model id as the harness reported it and is shown verbatim.",
+    }),
     lastVerifiedAt: nullableResponseTimestamp,
     createdAt: responseTimestamp,
   })

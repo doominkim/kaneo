@@ -1,9 +1,16 @@
+import { eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import getSettings from "../../agent-project/controllers/get-settings";
 import { judgeCoreChanged } from "../../agent-project/core-paths";
 import db from "../../database";
+import { userTable } from "../../database/schema";
 import { agentEntryTable } from "../../database/schema-agent-layer";
-import { type EntryRefs, type EntryUsage, liftRefs } from "./entry-fields";
+import {
+  type EntryRefs,
+  type EntryUsage,
+  liftRefs,
+  shapeAuthorship,
+} from "./entry-fields";
 import resolveActor from "./resolve-actor";
 
 type AppendInput = {
@@ -16,8 +23,9 @@ type AppendInput = {
   body?: string | null;
   decision?: unknown;
   refs?: EntryRefs | null;
-  provider: string;
-  model: string;
+  /** Both set → agent entry; both absent → human entry. Validated at the edge. */
+  provider?: string;
+  model?: string;
   sessionId?: string | null;
   effort?: string | null;
   agentLabel?: string | null;
@@ -32,10 +40,30 @@ type AppendInput = {
  * project's core-path patterns are matched against `refs.files` at append
  * time, and the verdict is stored with the row. It is never recomputed, so
  * changing the patterns later does not rewrite history.
+ *
+ * Authorship is exactly one of `actorId` (provider/model given) or
+ * `createdBy` (neither given: the calling user). The schema already rejected
+ * the mixed cases, so `provider && model` is the only branch decided here.
  */
 async function appendEntry(input: AppendInput) {
-  const [actor, settings] = await Promise.all([
-    resolveActor(input.workspaceId, input.userId, input.provider, input.model),
+  const isAgent = input.provider != null && input.model != null;
+  const [actor, author, settings] = await Promise.all([
+    isAgent
+      ? resolveActor(
+          input.workspaceId,
+          input.userId,
+          input.provider as string,
+          input.model as string,
+        )
+      : null,
+    isAgent
+      ? null
+      : db
+          .select({ id: userTable.id, name: userTable.name })
+          .from(userTable)
+          .where(eq(userTable.id, input.userId))
+          .limit(1)
+          .then((rows) => rows[0] ?? null),
     getSettings(input.projectId),
   ]);
   const coreChanged = judgeCoreChanged(input.refs?.files, settings.corePaths);
@@ -47,6 +75,7 @@ async function appendEntry(input: AppendInput) {
       projectId: input.projectId,
       taskId: input.taskId ?? null,
       actorId: actor?.id ?? null,
+      createdBy: isAgent ? null : input.userId,
       sessionId: input.sessionId ?? null,
       kind: input.kind,
       summary: input.summary,
@@ -78,14 +107,7 @@ async function appendEntry(input: AppendInput) {
     agentLabel: entry.agentLabel,
     usage: (entry.usage as EntryUsage | null) ?? null,
     createdAt: entry.createdAt,
-    actor: actor
-      ? {
-          id: actor.id,
-          provider: actor.provider,
-          model: actor.model,
-          onBehalfOf: actor.onBehalfOf,
-        }
-      : null,
+    ...shapeAuthorship(actor, author),
   };
 }
 

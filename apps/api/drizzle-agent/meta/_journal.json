@@ -29,6 +29,20 @@
       "when": 1788399332265,
       "tag": "0003_agent_project",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788404501241,
+      "tag": "0004_agent_entry_created_by",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788405287529,
+      "tag": "0005_agent_term_actor",
+      "breakpoints": true
     }
   ]
 }

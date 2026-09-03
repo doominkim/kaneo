@@ -55,7 +55,14 @@ export const usageBody = z
       "Token usage for this appearance. The model does not know its own usage; the harness supplies it.",
   });
 
-export const appendEntryBody = z.object({
+/**
+ * Fields that only make sense for an agent appearance. A human entry that
+ * carries any of them is rejected (400) rather than silently stripped, so a
+ * client that forgot provider/model finds out instead of losing the cost data.
+ */
+const AGENT_ONLY_FIELDS = ["effort", "agentLabel", "usage"] as const;
+
+const appendEntryFields = z.object({
   projectId: z.string(),
   taskId: z.string().nullable().optional().openapi({
     description:
@@ -73,8 +80,14 @@ export const appendEntryBody = z.object({
   }),
   decision: decisionBody.nullable().optional(),
   refs: refsBody.nullable().optional(),
-  provider: z.string().openapi({ description: "anthropic | openai | ..." }),
-  model: z.string().openapi({ description: "claude-opus-5 | gpt-5.6 | ..." }),
+  provider: z.string().optional().openapi({
+    description:
+      "anthropic | openai | ... Given together with `model` for an agent entry; omit both for a human entry (the current user becomes the author). One without the other is a 400.",
+  }),
+  model: z.string().optional().openapi({
+    description:
+      "claude-opus-5 | gpt-5.6 | ... Given together with `provider`; see `provider`.",
+  }),
   sessionId: z.string().nullable().optional(),
   effort: effortEnum.nullable().optional().openapi({
     description:
@@ -85,6 +98,40 @@ export const appendEntryBody = z.object({
   }),
   usage: usageBody.nullable().optional(),
 });
+
+/**
+ * One note stream, two kinds of author (DESIGN.md §2.3, §4.1). The body decides
+ * which: `provider` + `model` → an agent entry attributed to an `agent_actor`;
+ * neither → a human entry attributed to the calling user. Exactly one of the
+ * two is stored per row, so the check is made here where the shape is decided.
+ */
+export const appendEntryBody = appendEntryFields
+  .superRefine((body, ctx) => {
+    const hasProvider = body.provider != null;
+    const hasModel = body.model != null;
+    if (hasProvider !== hasModel) {
+      ctx.addIssue({
+        code: "custom",
+        path: [hasProvider ? "model" : "provider"],
+        message: "provider and model must be given together",
+      });
+      return;
+    }
+    if (hasProvider) return;
+    for (const field of AGENT_ONLY_FIELDS) {
+      if (body[field] != null) {
+        ctx.addIssue({
+          code: "custom",
+          path: [field],
+          message: `${field} is only accepted with provider and model (an agent entry)`,
+        });
+      }
+    }
+  })
+  .openapi({
+    description:
+      "An agent entry carries `provider` and `model`; a human entry carries neither and is attributed to the current user. `effort`, `agentLabel` and `usage` are accepted on agent entries only.",
+  });
 
 export const listEntriesQuery = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(10).openapi({

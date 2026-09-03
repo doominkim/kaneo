@@ -16,6 +16,7 @@ import { cn } from "@/lib/cn";
 import { downloadAgentArtifact } from "@/lib/download-agent-artifact";
 import { getStatusLabel } from "@/lib/i18n/domain";
 import { toast } from "@/lib/toast";
+import { AgentAuthorBadge } from "./agent-author-badge";
 import {
   AgentLayerEmpty,
   AgentLayerErrorState,
@@ -240,15 +241,24 @@ function NodeCard({
           aria-label={t("agentLayer:timeline.documents")}
         >
           {node.documents.map((document) => (
-            <li key={document.id} data-testid="tree-document">
+            <li
+              key={document.id}
+              data-testid="tree-document"
+              className="flex min-w-0 items-center gap-1.5"
+            >
               <Link
                 to="/dashboard/workspace/$workspaceId/project/$projectId/docs/$slug"
                 params={{ workspaceId, projectId, slug: document.slug }}
-                className="flex items-center gap-1.5 truncate text-xs text-foreground/80 underline-offset-2 hover:underline"
+                className="flex min-w-0 items-center gap-1.5 truncate text-xs text-foreground/80 underline-offset-2 hover:underline"
               >
                 <FileText className="size-3 shrink-0 text-muted-foreground" />
                 <span className="truncate">{document.title}</span>
               </Link>
+              {/* Only for agent leaves: the tree has no member directory, so a
+                  human author would render as a raw user id. */}
+              {document.actor ? (
+                <AgentAuthorBadge actor={document.actor} />
+              ) : null}
             </li>
           ))}
         </ul>
@@ -396,6 +406,7 @@ function AttachmentLeaf({
       data-testid="tree-attachment"
       data-kind={artifactKindOf(attachment.contentType)}
       title={attachment.contentType}
+      className="flex min-w-0 items-center gap-1.5"
     >
       {isInlineViewable(attachment.contentType) ? (
         <Link
@@ -415,6 +426,8 @@ function AttachmentLeaf({
           {label}
         </button>
       )}
+      {/* See the document leaf: agent uploads only. */}
+      {attachment.actor ? <AgentAuthorBadge actor={attachment.actor} /> : null}
     </li>
   );
 }

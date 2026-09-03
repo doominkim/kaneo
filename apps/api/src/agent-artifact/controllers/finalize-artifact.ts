@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
+import { loadActor } from "../../agent-entry/actor-response";
 import db from "../../database";
 import { agentArtifactTable } from "../../database/schema-agent-layer";
 import { ArtifactObjectMissingError, headArtifactObject } from "../storage";
@@ -46,7 +47,7 @@ async function finalizeArtifact(input: FinalizeInput) {
     });
   }
   if (row.finalizedAt) {
-    return toArtifactRecord(row);
+    return toArtifactRecord(row, await loadActor(row.actorId));
   }
 
   let object: Awaited<ReturnType<typeof headArtifactObject>>;
@@ -75,7 +76,7 @@ async function finalizeArtifact(input: FinalizeInput) {
   if (!finalized) {
     throw new HTTPException(500, { message: "Failed to finalize artifact" });
   }
-  return toArtifactRecord(finalized);
+  return toArtifactRecord(finalized, await loadActor(finalized.actorId));
 }
 
 export default finalizeArtifact;

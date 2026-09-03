@@ -13,7 +13,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AgentDocument } from "@/fetchers/agent-layer/get-agent-document";
@@ -22,6 +21,7 @@ import { usePutAgentDocument } from "@/hooks/mutations/agent-layer/use-put-agent
 import { cn } from "@/lib/cn";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { toast } from "@/lib/toast";
+import { AgentAuthorBadge } from "./agent-author-badge";
 
 /** Matches MAX_DOCUMENT_BODY_BYTES on the API. Bytes, not characters. */
 export const MAX_DOCUMENT_BODY_BYTES = 200 * 1024;
@@ -217,13 +217,12 @@ export function DocumentPage({
           )}
 
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-            {document.updatedBy ? (
-              <span>{authorName ?? document.updatedBy}</span>
-            ) : (
-              <Badge variant="info" size="sm">
-                {t("agentLayer:common.agent")}
-              </Badge>
-            )}
+            <AgentAuthorBadge
+              actor={document.actor}
+              humanName={
+                document.updatedBy ? (authorName ?? document.updatedBy) : null
+              }
+            />
             <span title={formatDateTime(document.updatedAt)}>
               {formatRelativeTime(document.updatedAt)}
             </span>

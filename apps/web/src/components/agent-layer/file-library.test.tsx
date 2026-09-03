@@ -80,6 +80,12 @@ const artifacts: AgentArtifact[] = [
     size: 20480,
     uploadedBy: null,
     actorId: "actor-1",
+    actor: {
+      id: "actor-1",
+      provider: "anthropic",
+      model: "claude-fable-5-1",
+      onBehalfOf: "user-1",
+    },
     createdAt: "2026-09-03T02:00:00.000Z",
   },
   {
@@ -91,6 +97,7 @@ const artifacts: AgentArtifact[] = [
     size: 3 * 1024 * 1024,
     uploadedBy: "user-1",
     actorId: null,
+    actor: null,
     createdAt: "2026-09-02T02:00:00.000Z",
   },
 ];
@@ -103,6 +110,7 @@ const documents: AgentDocumentSummary[] = [
     taskId: "t1",
     updatedBy: "user-1",
     actorId: null,
+    actor: null,
     updatedAt: "2026-09-03T01:00:00.000Z",
   },
 ];
@@ -169,7 +177,14 @@ describe("FileLibrary", () => {
       "artifact",
       "document",
     ]);
-    expect(within(taskRows[0]).getByTestId("agent-author")).toBeInTheDocument();
+    const agentAuthor = within(taskRows[0]).getByTestId("agent-author");
+    // The model id, verbatim — not a flat "Agent" label and not a prettified
+    // display name.
+    expect(agentAuthor).toHaveTextContent("claude-fable-5-1");
+    expect(agentAuthor).toHaveAttribute(
+      "title",
+      "anthropic/claude-fable-5-1 · user-1",
+    );
     expect(within(taskRows[0]).getByTestId("view-artifact")).toHaveAttribute(
       "data-params",
       JSON.stringify({ workspaceId: "ws", projectId: "p", artifactId: "a1" }),

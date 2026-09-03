@@ -2,11 +2,17 @@ import { and, desc, eq, isNotNull, lt, or, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
+import { userTable } from "../../database/schema";
 import {
   agentActorTable,
   agentEntryTable,
 } from "../../database/schema-agent-layer";
-import { type EntryRefs, type EntryUsage, liftRefs } from "./entry-fields";
+import {
+  type EntryRefs,
+  type EntryUsage,
+  liftRefs,
+  shapeAuthorship,
+} from "./entry-fields";
 
 type ListInput = {
   projectId: string;
@@ -91,9 +97,12 @@ async function listEntries(input: ListInput) {
       actorProvider: agentActorTable.provider,
       actorModel: agentActorTable.model,
       actorOnBehalfOf: agentActorTable.onBehalfOf,
+      authorId: userTable.id,
+      authorName: userTable.name,
     })
     .from(agentEntryTable)
     .leftJoin(agentActorTable, eq(agentEntryTable.actorId, agentActorTable.id))
+    .leftJoin(userTable, eq(agentEntryTable.createdBy, userTable.id))
     .where(and(...conditions))
     .orderBy(desc(agentEntryTable.createdAt), desc(agentEntryTable.id))
     .limit(input.limit);
@@ -110,14 +119,15 @@ async function listEntries(input: ListInput) {
     agentLabel: r.agentLabel,
     usage: (r.usage as EntryUsage | null) ?? null,
     createdAt: r.createdAt,
-    actor: r.actorId
-      ? {
-          id: r.actorId,
-          provider: r.actorProvider ?? "",
-          model: r.actorModel ?? "",
-          onBehalfOf: r.actorOnBehalfOf ?? null,
-        }
-      : null,
+    ...shapeAuthorship(
+      {
+        id: r.actorId,
+        provider: r.actorProvider,
+        model: r.actorModel,
+        onBehalfOf: r.actorOnBehalfOf,
+      },
+      { id: r.authorId, name: r.authorName },
+    ),
   }));
 
   const last = entries.length > 0 ? entries[entries.length - 1] : undefined;

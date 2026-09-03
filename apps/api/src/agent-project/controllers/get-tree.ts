@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
+import { actorSelection, liftActor } from "../../agent-entry/actor-response";
 import type {
   EntryRefs,
   EntryUsage,
@@ -121,11 +122,16 @@ async function getTree(projectId: string): Promise<Tree> {
         slug: agentDocumentTable.slug,
         title: agentDocumentTable.title,
         taskId: agentDocumentTable.taskId,
-        actorId: agentDocumentTable.actorId,
+        documentActorId: agentDocumentTable.actorId,
         updatedBy: agentDocumentTable.updatedBy,
         updatedAt: agentDocumentTable.updatedAt,
+        ...actorSelection,
       })
       .from(agentDocumentTable)
+      .leftJoin(
+        agentActorTable,
+        eq(agentDocumentTable.actorId, agentActorTable.id),
+      )
       .where(
         and(
           eq(agentDocumentTable.projectId, projectId),
@@ -140,9 +146,16 @@ async function getTree(projectId: string): Promise<Tree> {
         name: agentArtifactTable.name,
         contentType: agentArtifactTable.contentType,
         size: agentArtifactTable.size,
+        artifactActorId: agentArtifactTable.actorId,
+        uploadedBy: agentArtifactTable.uploadedBy,
         createdAt: agentArtifactTable.createdAt,
+        ...actorSelection,
       })
       .from(agentArtifactTable)
+      .leftJoin(
+        agentActorTable,
+        eq(agentArtifactTable.actorId, agentActorTable.id),
+      )
       .where(
         and(
           eq(agentArtifactTable.projectId, projectId),
@@ -176,6 +189,8 @@ async function getTree(projectId: string): Promise<Tree> {
   for (const entry of entries) {
     if (!entry.taskId) continue;
 
+    // Human entries count as appearances but never reach `byModel`: the API
+    // refuses `usage` on them, so `tokens` is null and the branch is skipped.
     const usage = usageOf.get(entry.taskId) ?? emptyUsage();
     usage.entryCount += 1;
     const tokens = (entry.usage as EntryUsage | null) ?? null;
@@ -213,7 +228,8 @@ async function getTree(projectId: string): Promise<Tree> {
       id: document.id,
       slug: document.slug,
       title: document.title,
-      actorId: document.actorId,
+      actorId: document.documentActorId,
+      actor: liftActor(document),
       updatedBy: document.updatedBy,
       updatedAt: document.updatedAt,
     });
@@ -229,6 +245,9 @@ async function getTree(projectId: string): Promise<Tree> {
       name: artifact.name,
       contentType: artifact.contentType,
       size: artifact.size,
+      actorId: artifact.artifactActorId,
+      actor: liftActor(artifact),
+      uploadedBy: artifact.uploadedBy,
       createdAt: artifact.createdAt,
     });
     attachmentsOf.set(artifact.taskId, list);

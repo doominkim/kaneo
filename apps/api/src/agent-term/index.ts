@@ -59,7 +59,7 @@ const proposeRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Propose a term",
   description:
-    "Adds a term as `proposed`. It never becomes `confirmed` here — unreviewed entries accumulating is how a lexicon stops being trusted.",
+    "Adds a term as `proposed`. It never becomes `confirmed` here — unreviewed entries accumulating is how a lexicon stops being trusted. Send `provider`/`model` from an agent so the proposal records which model wrote it; omit both when a person proposes.",
   middleware: [
     workspaceAccess.fromBody("workspaceId"),
     requireWorkspacePermission({ task: ["update"] }),

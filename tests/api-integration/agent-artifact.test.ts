@@ -378,6 +378,7 @@ describe("API integration: agent artifacts", () => {
       size: 2048,
       uploadedBy: member.user.id,
       actorId: null,
+      actor: null,
       createdAt: pending.createdAt.toISOString(),
     });
     expect(storage.headArtifactObject).toHaveBeenCalledWith(p.storageKey);
@@ -806,6 +807,14 @@ describe("API integration: agent artifacts", () => {
         size: Buffer.byteLength(text, "utf8"),
         uploadedBy: null,
         actorId: artifact.actorId,
+        // The point of KAN-11: the record names the model that wrote it, not
+        // just an opaque actor id.
+        actor: {
+          id: artifact.actorId,
+          provider: "anthropic",
+          model: "claude-opus-5",
+          onBehalfOf: member.user.id,
+        },
         createdAt: expect.any(String),
       });
       expect(artifact).not.toHaveProperty("storageKey");
@@ -964,6 +973,14 @@ describe("API integration: agent artifacts", () => {
         id: p.artifactId,
         uploadedBy: null,
         actorId: pending.actorId,
+        // Resolved on the way out of finalize, which only has the row's
+        // actor id — the model must survive the presign/finalize split.
+        actor: {
+          id: pending.actorId,
+          provider: "anthropic",
+          model: "claude-opus-5",
+          onBehalfOf: member.user.id,
+        },
       });
       vi.unstubAllGlobals();
 

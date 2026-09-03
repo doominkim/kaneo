@@ -1,4 +1,15 @@
+import { actorResponseSchema } from "../agent-entry/actor-response";
 import { nullableResponseTimestamp, responseTimestamp, z } from "../openapi";
+
+/**
+ * Who wrote a leaf. Carried on the tree itself rather than looked up per leaf:
+ * the overview is one call by design, and "which model produced this" is the
+ * question the tree exists to answer.
+ */
+const leafActorSchema = actorResponseSchema.nullable().openapi({
+  description:
+    "The agent that produced this leaf; null when a person did. `model` is the model id as the harness reported it and is shown verbatim.",
+});
 
 const branchSchema = z
   .object({
@@ -13,6 +24,7 @@ const documentLeafSchema = z
     slug: z.string(),
     title: z.string(),
     actorId: z.string().nullable(),
+    actor: leafActorSchema,
     updatedBy: z.string().nullable(),
     updatedAt: responseTimestamp,
   })
@@ -29,22 +41,33 @@ const attachmentLeafSchema = z
     name: z.string(),
     contentType: z.string(),
     size: z.number().int(),
+    actorId: z.string().nullable(),
+    actor: leafActorSchema,
+    uploadedBy: z.string().nullable().openapi({
+      description:
+        "User id of the human uploader, or null for an agent upload. Present so a human-uploaded file is not rendered as an anonymous agent one.",
+    }),
     createdAt: responseTimestamp,
   })
   .openapi("AgentTreeAttachment");
 
 const usageSchema = z
   .object({
-    entryCount: z.number().int(),
+    entryCount: z.number().int().openapi({
+      description:
+        "Ledger entries on this task, human and agent alike. Only agent entries can carry tokens, so this is the one figure a human entry moves.",
+    }),
     inputTokens: z.number().int(),
     outputTokens: z.number().int(),
     totalTokens: z.number().int(),
     byModel: z.record(z.string(), z.number().int()).openapi({
       description:
-        "Total tokens per actor model. Entries without an actor are keyed `unknown`.",
+        "Total tokens per actor model. Agent entries whose actor was deleted are keyed `unknown`; human entries never appear here (they carry no usage).",
     }),
   })
   .openapi("AgentTreeUsage");
+
+type LeafActor = z.infer<typeof actorResponseSchema> | null;
 
 export type TreeNode = {
   id: string;
@@ -60,6 +83,7 @@ export type TreeNode = {
     slug: string;
     title: string;
     actorId: string | null;
+    actor: LeafActor;
     updatedBy: string | null;
     updatedAt: Date;
   }>;
@@ -68,6 +92,9 @@ export type TreeNode = {
     name: string;
     contentType: string;
     size: number;
+    actorId: string | null;
+    actor: LeafActor;
+    uploadedBy: string | null;
     createdAt: Date;
   }>;
   usage: {

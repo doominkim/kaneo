@@ -1,7 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
+import { loadActor } from "../../agent-entry/actor-response";
 import db from "../../database";
 import { agentTermTable } from "../../database/schema-agent-layer";
+import { toTermRecord } from "./term-record";
 
 /**
  * Human review outcome. This is the only path from `proposed` to `confirmed`.
@@ -9,6 +11,10 @@ import { agentTermTable } from "../../database/schema-agent-layer";
  * Also stamps `lastVerifiedAt`, which the re-verification schedule reads: a term
  * that keeps surviving review earns a longer interval, one that keeps changing
  * gets checked more often.
+ *
+ * `actorId` is deliberately left alone: it records who PROPOSED the term, and
+ * a review does not change that. Clearing it here would erase the one fact the
+ * reviewer weighed the proposal by.
  */
 async function confirmTerm(
   workspaceId: string,
@@ -30,19 +36,7 @@ async function confirmTerm(
     throw new HTTPException(404, { message: "Term not found" });
   }
 
-  return {
-    id: updated.id,
-    canonical: updated.canonical,
-    definition: updated.definition,
-    aliases: (updated.aliases as string[] | null) ?? [],
-    notToConfuseWith: (updated.notToConfuseWith as string[] | null) ?? [],
-    anchors: updated.anchors ?? [],
-    confidence: updated.confidence,
-    state: updated.state,
-    supersededBy: updated.supersededBy,
-    lastVerifiedAt: updated.lastVerifiedAt,
-    createdAt: updated.createdAt,
-  };
+  return toTermRecord(updated, await loadActor(updated.actorId));
 }
 
 export default confirmTerm;

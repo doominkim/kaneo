@@ -1,3 +1,4 @@
+import { actorResponseSchema } from "../agent-entry/actor-response";
 import { responseTimestamp, z } from "../openapi";
 
 export const artifactSchema = z
@@ -13,6 +14,10 @@ export const artifactSchema = z
     }),
     actorId: z.string().nullable().openapi({
       description: "agent_actor id of the agent uploader, or null for a human.",
+    }),
+    actor: actorResponseSchema.nullable().openapi({
+      description:
+        "The agent that uploaded the artifact, resolved from `actorId`; null for a human upload. `model` is the model id as the harness reported it and is shown verbatim — the API never maps it to a display name.",
     }),
     createdAt: responseTimestamp,
   })

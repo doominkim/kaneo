@@ -1,6 +1,11 @@
 import { and, asc, eq } from "drizzle-orm";
+import { actorSelection, liftActor } from "../../agent-entry/actor-response";
 import db from "../../database";
-import { agentTermTable } from "../../database/schema-agent-layer";
+import {
+  agentActorTable,
+  agentTermTable,
+} from "../../database/schema-agent-layer";
+import { toTermRecord } from "./term-record";
 
 type ListInput = {
   workspaceId: string;
@@ -9,7 +14,13 @@ type ListInput = {
   limit: number;
 };
 
-/** Lexicon listing, for the human review queue and the knowledge tab. */
+/**
+ * Lexicon listing, for the human review queue and the knowledge tab.
+ *
+ * The proposing actor is joined in because the review queue is where it
+ * matters most: a reviewer decides differently depending on which model wrote
+ * the proposal, and a bare `actorId` does not tell them.
+ */
 async function listTerms(input: ListInput) {
   const conditions = [eq(agentTermTable.workspaceId, input.workspaceId)];
   if (input.state) conditions.push(eq(agentTermTable.state, input.state));
@@ -18,27 +29,14 @@ async function listTerms(input: ListInput) {
   }
 
   const rows = await db
-    .select()
+    .select({ term: agentTermTable, ...actorSelection })
     .from(agentTermTable)
+    .leftJoin(agentActorTable, eq(agentTermTable.actorId, agentActorTable.id))
     .where(and(...conditions))
     .orderBy(asc(agentTermTable.canonical))
     .limit(input.limit);
 
-  return {
-    terms: rows.map((row) => ({
-      id: row.id,
-      canonical: row.canonical,
-      definition: row.definition,
-      aliases: (row.aliases as string[] | null) ?? [],
-      notToConfuseWith: (row.notToConfuseWith as string[] | null) ?? [],
-      anchors: row.anchors ?? [],
-      confidence: row.confidence,
-      state: row.state,
-      supersededBy: row.supersededBy,
-      lastVerifiedAt: row.lastVerifiedAt,
-      createdAt: row.createdAt,
-    })),
-  };
+  return { terms: rows.map((row) => toTermRecord(row.term, liftActor(row))) };
 }
 
 export default listTerms;

@@ -1,7 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { ArrowLeft, Download, ExternalLink, RotateCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import getAgentArtifactUrl from "@/fetchers/agent-layer/get-agent-artifact-url";
 import type { AgentArtifact } from "@/fetchers/agent-layer/get-agent-artifacts";
@@ -9,6 +8,7 @@ import { useAgentArtifactUrl } from "@/hooks/queries/agent-layer/use-agent-artif
 import { downloadAgentArtifact } from "@/lib/download-agent-artifact";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { toast } from "@/lib/toast";
+import { AgentAuthorBadge } from "./agent-author-badge";
 import { AgentLayerErrorState, AgentLayerSkeleton } from "./agent-layer-state";
 import {
   ARTIFACT_KIND_ICONS,
@@ -104,13 +104,12 @@ export function ArtifactViewer({
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          {artifact.uploadedBy ? (
-            <span>{authorName ?? artifact.uploadedBy}</span>
-          ) : (
-            <Badge variant="info" size="sm">
-              {t("agentLayer:common.agent")}
-            </Badge>
-          )}
+          <AgentAuthorBadge
+            actor={artifact.actor}
+            humanName={
+              artifact.uploadedBy ? (authorName ?? artifact.uploadedBy) : null
+            }
+          />
           <span title={formatDateTime(artifact.createdAt)}>
             {formatRelativeTime(artifact.createdAt)}
           </span>

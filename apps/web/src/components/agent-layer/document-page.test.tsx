@@ -78,6 +78,7 @@ const document: AgentDocument = {
   taskId: "t1",
   updatedBy: "user-1",
   actorId: null,
+  actor: null,
   updatedAt: "2026-09-02T00:00:00.000Z",
   createdAt: "2026-09-02T00:00:00.000Z",
   workspaceId: "ws",
@@ -126,6 +127,34 @@ describe("DocumentPage", () => {
     expect(screen.getByTestId("edit-document")).toBeInTheDocument();
     expect(screen.getByTestId("delete-document")).toBeInTheDocument();
     expect(screen.queryByTestId("editor")).not.toBeInTheDocument();
+  });
+
+  it("names the writing model verbatim when an agent wrote the body", () => {
+    renderPage({
+      document: {
+        ...document,
+        updatedBy: null,
+        actorId: "actor-1",
+        actor: {
+          id: "actor-1",
+          provider: "openai",
+          model: "gpt-5.6-luna",
+          onBehalfOf: "user-1",
+        },
+      },
+    });
+    const author = screen.getByTestId("agent-author");
+    expect(author).toHaveTextContent("gpt-5.6-luna");
+    expect(author).toHaveAttribute("title", "openai/gpt-5.6-luna · user-1");
+  });
+
+  it("falls back to the flat agent label for a body with no actor", () => {
+    renderPage({
+      document: { ...document, updatedBy: null, actorId: null, actor: null },
+    });
+    expect(screen.getByTestId("agent-author")).toHaveTextContent(
+      "agentLayer:common.agent",
+    );
   });
 
   it("hides edit without task:update and delete without project:update", () => {

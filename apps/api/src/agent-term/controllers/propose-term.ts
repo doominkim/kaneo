@@ -1,7 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
+import resolveActor from "../../agent-entry/controllers/resolve-actor";
 import db from "../../database";
 import { agentTermTable } from "../../database/schema-agent-layer";
+import { toTermRecord } from "./term-record";
 
 type ProposeInput = {
   workspaceId: string;
@@ -12,6 +14,9 @@ type ProposeInput = {
   anchors: unknown[];
   sourceEntryId?: string | null;
   ownerId: string;
+  /** Both set by an agent caller, both absent for a person proposing in the UI. */
+  provider?: string | null;
+  model?: string | null;
 };
 
 /**
@@ -20,6 +25,12 @@ type ProposeInput = {
  * Auto-confirming model output is how a lexicon dies: unreviewed entries pile
  * up, trust erodes, and an untrusted lexicon is worse than no lexicon — callers
  * stop checking the code because they got a confident answer.
+ *
+ * Attribution follows the ledger append, not the document write: `ownerId`
+ * stays the human whose session made the call and `actorId` records the model
+ * that wrote the proposal, so both halves of "whose Claude proposed this" are
+ * on the row. A caller that sends no provider/model is a person, and the term
+ * is stored with `actorId` NULL.
  */
 async function proposeTerm(input: ProposeInput) {
   const [existing] = await db
@@ -39,6 +50,19 @@ async function proposeTerm(input: ProposeInput) {
     });
   }
 
+  // Resolved, not trusted: the caller names a provider/model, and the actor row
+  // it maps to is keyed by (workspace, this human, model) exactly as the ledger
+  // does it. No caller can name someone else's actor.
+  const actor =
+    input.provider && input.model
+      ? await resolveActor(
+          input.workspaceId,
+          input.ownerId,
+          input.provider,
+          input.model,
+        )
+      : null;
+
   const [created] = await db
     .insert(agentTermTable)
     .values({
@@ -50,6 +74,7 @@ async function proposeTerm(input: ProposeInput) {
       anchors: input.anchors,
       sourceEntryId: input.sourceEntryId ?? null,
       ownerId: input.ownerId,
+      actorId: actor?.id ?? null,
       confidence: "proposed",
       state: "active",
     })
@@ -59,19 +84,18 @@ async function proposeTerm(input: ProposeInput) {
     throw new HTTPException(500, { message: "Failed to create term" });
   }
 
-  return {
-    id: created.id,
-    canonical: created.canonical,
-    definition: created.definition,
-    aliases: (created.aliases as string[] | null) ?? [],
-    notToConfuseWith: (created.notToConfuseWith as string[] | null) ?? [],
-    anchors: created.anchors ?? [],
-    confidence: created.confidence,
-    state: created.state,
-    supersededBy: created.supersededBy,
-    lastVerifiedAt: created.lastVerifiedAt,
-    createdAt: created.createdAt,
-  };
+  // `resolveActor` already returned the row, so no second lookup is needed.
+  return toTermRecord(
+    created,
+    actor
+      ? {
+          id: actor.id,
+          provider: actor.provider,
+          model: actor.model,
+          onBehalfOf: actor.onBehalfOf,
+        }
+      : null,
+  );
 }
 
 export default proposeTerm;

@@ -97,6 +97,12 @@ export const agentActorTable = pgTable(
  * `taskId` is intentionally NULLABLE — investigation, design discussion and
  * abandoned attempts must be recordable without inventing a task first. This is
  * exactly what upstream `activity` (taskId NOT NULL) cannot express.
+ *
+ * Authorship rule (application-enforced, not a CHECK constraint — the same
+ * rule `agent_document` uses): exactly one of `actorId` (an agent, via MCP or
+ * the API with provider/model) or `createdBy` (a human, via the UI) is set per
+ * row. Both are `SET NULL` on delete, so an old row can end up with neither;
+ * readers must treat that as "author unknown", never as "both".
  */
 export const agentEntryTable = pgTable(
   "agent_entry",
@@ -121,7 +127,13 @@ export const agentEntryTable = pgTable(
       onDelete: "set null",
       onUpdate: "cascade",
     }),
+    /** agent author; NULL when a human wrote the row */
     actorId: text("actor_id").references(() => agentActorTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /** human author; NULL when an agent wrote the row (added in 0004) */
+    createdBy: text("created_by").references(() => userTable.id, {
       onDelete: "set null",
       onUpdate: "cascade",
     }),
@@ -173,6 +185,7 @@ export const agentEntryTable = pgTable(
     ),
     index("agent_entry_taskId_idx").on(table.taskId),
     index("agent_entry_actorId_idx").on(table.actorId),
+    index("agent_entry_createdBy_idx").on(table.createdBy),
     index("agent_entry_workspaceId_idx").on(table.workspaceId),
     index("agent_entry_compaction_idx").on(table.compaction),
   ],
@@ -276,6 +289,19 @@ export const agentTermTable = pgTable(
     supersededBy: text("superseded_by"),
 
     ownerId: text("owner_id").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /**
+     * The model that proposed the term; NULL when a person did.
+     *
+     * NOT exclusive with `ownerId`, unlike the document/artifact authorship
+     * rule: a proposal always happens on some human's authority, and the MCP
+     * path records both — the person the session belongs to and the model that
+     * actually wrote the words. Which model proposed a term is exactly what a
+     * reviewer weighs it by, and the pair is unrecoverable once lost.
+     */
+    actorId: text("actor_id").references(() => agentActorTable.id, {
       onDelete: "set null",
       onUpdate: "cascade",
     }),
