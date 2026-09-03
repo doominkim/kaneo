@@ -1,7 +1,9 @@
 import { HTTPException } from "hono/http-exception";
+import getSettings from "../../agent-project/controllers/get-settings";
+import { judgeCoreChanged } from "../../agent-project/core-paths";
 import db from "../../database";
 import { agentEntryTable } from "../../database/schema-agent-layer";
-import type { EntryRefs, EntryUsage } from "./entry-fields";
+import { type EntryRefs, type EntryUsage, liftRefs } from "./entry-fields";
 import resolveActor from "./resolve-actor";
 
 type AppendInput = {
@@ -14,7 +16,6 @@ type AppendInput = {
   body?: string | null;
   decision?: unknown;
   refs?: EntryRefs | null;
-  coreChanged?: string[] | null;
   provider: string;
   model: string;
   sessionId?: string | null;
@@ -26,14 +27,18 @@ type AppendInput = {
 /**
  * Append one ledger record. There is no update or delete counterpart — the
  * ledger is append-only, and a correction is a new row rather than an edit.
+ *
+ * `coreChanged` is decided here, not by the caller (DESIGN.md §6.2): the
+ * project's core-path patterns are matched against `refs.files` at append
+ * time, and the verdict is stored with the row. It is never recomputed, so
+ * changing the patterns later does not rewrite history.
  */
 async function appendEntry(input: AppendInput) {
-  const actor = await resolveActor(
-    input.workspaceId,
-    input.userId,
-    input.provider,
-    input.model,
-  );
+  const [actor, settings] = await Promise.all([
+    resolveActor(input.workspaceId, input.userId, input.provider, input.model),
+    getSettings(input.projectId),
+  ]);
+  const coreChanged = judgeCoreChanged(input.refs?.files, settings.corePaths);
 
   const [entry] = await db
     .insert(agentEntryTable)
@@ -48,7 +53,7 @@ async function appendEntry(input: AppendInput) {
       body: input.body ?? null,
       decision: input.decision ?? null,
       refs: input.refs ?? null,
-      coreChanged: input.coreChanged ?? null,
+      coreChanged,
       effort: input.effort ?? null,
       agentLabel: input.agentLabel ?? null,
       usage: input.usage ?? null,
@@ -68,6 +73,7 @@ async function appendEntry(input: AppendInput) {
     summary: entry.summary,
     hasDecision: entry.decision != null,
     coreChanged: (entry.coreChanged as string[] | null) ?? null,
+    ...liftRefs(entry.refs as EntryRefs | null),
     effort: entry.effort,
     agentLabel: entry.agentLabel,
     usage: (entry.usage as EntryUsage | null) ?? null,

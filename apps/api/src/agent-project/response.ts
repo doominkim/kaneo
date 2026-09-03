@@ -1,4 +1,4 @@
-import { responseTimestamp, z } from "../openapi";
+import { nullableResponseTimestamp, responseTimestamp, z } from "../openapi";
 
 const branchSchema = z
   .object({
@@ -114,6 +114,39 @@ export const treeNodeSchema: z.ZodType<TreeNode> = z
   )
   .openapi("AgentTreeNode");
 
+const thresholdSchema = z
+  .object({
+    activeTaskThreshold: z.number().int(),
+    openTotal: z.number().int().openapi({
+      description: "Tasks in the project that are not done, at any depth.",
+    }),
+    exceeded: z.boolean().openapi({
+      description: "openTotal > activeTaskThreshold — show the §6.1 banner.",
+    }),
+  })
+  .openapi("AgentTreeThreshold");
+
 export const treeSchema = z
-  .object({ nodes: z.array(treeNodeSchema) })
+  .object({
+    nodes: z.array(treeNodeSchema),
+    threshold: thresholdSchema.openapi({
+      description:
+        "Active-task limit from the project's settings (default 20 when unset) against the live open count. Carried on the tree so the overview needs one call.",
+    }),
+  })
   .openapi("AgentProjectTree");
+
+export const settingsSchema = z
+  .object({
+    projectId: z.string(),
+    corePaths: z.array(z.string()),
+    activeTaskThreshold: z.number().int(),
+    doneArchiveDays: z.number().int(),
+    configured: z.boolean().openapi({
+      description:
+        "False when no settings row exists yet and the values shown are the defaults.",
+    }),
+    updatedBy: z.string().nullable(),
+    updatedAt: nullableResponseTimestamp,
+  })
+  .openapi("AgentProjectSettings");

@@ -301,13 +301,12 @@ export function registerAgentTools(
           .object({
             repo: z.string().max(200).optional(),
             branch: z.string().max(200).optional(),
-            commits: z.array(z.string()).optional(),
-            prs: z.array(z.string()).optional(),
-            files: z.array(z.string()).optional(),
+            commits: z.array(z.string().max(64)).max(100).optional(),
+            prs: z.array(z.string().max(200)).max(50).optional(),
+            files: z.array(z.string().max(300)).max(200).optional(),
           })
           .nullable()
           .optional(),
-        coreChanged: z.array(z.string()).nullable().optional(),
         provider: z.string(),
         model: z.string(),
         sessionId: z.string().nullable().optional(),

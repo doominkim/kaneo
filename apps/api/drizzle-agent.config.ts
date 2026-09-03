@@ -12,9 +12,12 @@ config();
  * guarantee a merge conflict on every upstream migration, because the journal
  * is a single ordered JSON array.
  *
- * `tablesFilter` restricts diffing to `agent_*`, so upstream tables are visible
- * (foreign keys resolve) but never emitted here. This is why every table in
- * schema-agent-layer.ts carries the `agent_` prefix.
+ * Scoping is done by `schema`: only schema-agent-layer.ts is diffed, so only
+ * the `agent_*` tables are emitted here. Upstream tables are still visible to
+ * the diff through that file's one-way import, which is what lets the foreign
+ * keys resolve. (`tablesFilter` is not the mechanism — it applies to
+ * push/pull/introspect, not to `generate`.) The `agent_` prefix keeps the two
+ * migration sets distinguishable by name in the database.
  *
  *   pnpm --filter @kaneo/api exec drizzle-kit generate --config drizzle-agent.config.ts
  */

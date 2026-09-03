@@ -6,7 +6,7 @@ import {
   agentActorTable,
   agentEntryTable,
 } from "../../database/schema-agent-layer";
-import type { EntryUsage } from "./entry-fields";
+import { type EntryRefs, type EntryUsage, liftRefs } from "./entry-fields";
 
 type ListInput = {
   projectId: string;
@@ -18,7 +18,8 @@ type ListInput = {
 
 /**
  * Ledger listing. Selects the summary columns ONLY — `body` and `decision` are
- * excluded at the query level, not filtered afterwards.
+ * excluded at the query level, not filtered afterwards. `refs` is small
+ * (paths, shas) and is read so `repo`/`branch` can be lifted per row.
  *
  * Upstream's equivalent ships every row's full text and measured 18.5KB for 20
  * tasks. A projection is the only thing that actually keeps the cost bounded;
@@ -81,6 +82,7 @@ async function listEntries(input: ListInput) {
       summary: agentEntryTable.summary,
       hasDecision: isNotNull(agentEntryTable.decision),
       coreChanged: agentEntryTable.coreChanged,
+      refs: agentEntryTable.refs,
       effort: agentEntryTable.effort,
       agentLabel: agentEntryTable.agentLabel,
       usage: agentEntryTable.usage,
@@ -103,6 +105,7 @@ async function listEntries(input: ListInput) {
     summary: r.summary,
     hasDecision: Boolean(r.hasDecision),
     coreChanged: (r.coreChanged as string[] | null) ?? null,
+    ...liftRefs(r.refs as EntryRefs | null),
     effort: r.effort,
     agentLabel: r.agentLabel,
     usage: (r.usage as EntryUsage | null) ?? null,

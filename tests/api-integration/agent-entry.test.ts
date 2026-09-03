@@ -5,6 +5,7 @@ import db, { schema } from "../../apps/api/src/database";
 import {
   agentActorTable,
   agentEntryTable,
+  agentProjectTable,
 } from "../../apps/api/src/database/schema-agent-layer";
 import { createApp } from "../../apps/api/src/index";
 import { mockAnonymousSession, mockAuthenticatedSession } from "./helpers/auth";
@@ -28,6 +29,8 @@ type EntrySummary = {
   summary: string;
   hasDecision: boolean;
   coreChanged: string[] | null;
+  repo: string | null;
+  branch: string | null;
   effort: string | null;
   agentLabel: string | null;
   usage: EntryUsage | null;
@@ -125,8 +128,12 @@ describe("API integration: agent entries", () => {
           rejected: "in-place edits",
           reversible: false,
         },
-        refs: { commits: ["abc123"], files: ["apps/api/src/agent-entry"] },
-        coreChanged: ["apps/api/src/agent-entry/index.ts"],
+        refs: {
+          repo: "doominkim/kaneo",
+          branch: "agent-layer",
+          commits: ["abc123"],
+          files: ["apps/api/src/agent-entry"],
+        },
         sessionId: "session-1",
       }),
     });
@@ -139,7 +146,10 @@ describe("API integration: agent entries", () => {
       kind: "decision",
       summary: "Chose the append-only ledger",
       hasDecision: true,
-      coreChanged: ["apps/api/src/agent-entry/index.ts"],
+      // files were given but no core paths are configured: judged, none matched
+      coreChanged: [],
+      repo: "doominkim/kaneo",
+      branch: "agent-layer",
     });
     expect(payload.actor).toMatchObject({
       provider: "anthropic",
@@ -217,6 +227,8 @@ describe("API integration: agent entries", () => {
       kind: "work",
       hasDecision: false,
       coreChanged: null,
+      repo: null,
+      branch: null,
     });
   });
 
@@ -1039,5 +1051,280 @@ describe("API integration: agent entries", () => {
       );
 
     expect(persisted).toBeDefined();
+  });
+});
+
+describe("API integration: agent entry core-path judgment", () => {
+  beforeEach(async () => {
+    await resetTestDatabase();
+  });
+
+  async function configure(
+    projectId: string,
+    workspaceId: string,
+    corePaths: string[],
+  ) {
+    await db
+      .insert(agentProjectTable)
+      .values({ projectId, workspaceId, corePaths })
+      .onConflictDoUpdate({
+        target: agentProjectTable.projectId,
+        set: { corePaths },
+      });
+  }
+
+  async function append(projectId: string, overrides: Record<string, unknown>) {
+    const { app } = createApp();
+    const response = await app.request("/api/agent-entry", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: appendBody(projectId, overrides),
+    });
+    expect(response.status).toBe(200);
+    return (await response.json()) as EntrySummary;
+  }
+
+  it("matches refs.files against the configured patterns, nested at any depth", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    await configure(project.id, member.workspace.id, [
+      "src/domain/**",
+      "**/migrations/**",
+    ]);
+    mockAuthenticatedSession(member.user);
+
+    const entry = await append(project.id, {
+      refs: {
+        files: [
+          "README.md",
+          "src/domain/order/order.ts",
+          "src/ui/button.tsx",
+          "apps/api/drizzle/migrations/0001_init.sql",
+          "src/domain.ts",
+        ],
+      },
+    });
+
+    expect(entry.coreChanged).toEqual([
+      "src/domain/order/order.ts",
+      "apps/api/drizzle/migrations/0001_init.sql",
+    ]);
+
+    // Persisted, and identical on every read surface.
+    const [row] = await db
+      .select({ coreChanged: agentEntryTable.coreChanged })
+      .from(agentEntryTable)
+      .where(eq(agentEntryTable.id, entry.id));
+    expect(row?.coreChanged).toEqual(entry.coreChanged);
+
+    const { app } = createApp();
+    const list = (await (
+      await app.request(`/api/agent-entry/${project.id}`)
+    ).json()) as EntryList;
+    expect(list.entries[0]?.coreChanged).toEqual(entry.coreChanged);
+    const detail = (await (
+      await app.request(`/api/agent-entry/${project.id}/${entry.id}`)
+    ).json()) as EntryDetail;
+    expect(detail.coreChanged).toEqual(entry.coreChanged);
+  });
+
+  it("is null without refs.files and [] when nothing is configured", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    mockAuthenticatedSession(member.user);
+
+    // No settings row at all.
+    expect((await append(project.id, {})).coreChanged).toBeNull();
+    expect(
+      (await append(project.id, { refs: { branch: "main" } })).coreChanged,
+    ).toBeNull();
+    expect((await append(project.id, { refs: null })).coreChanged).toBeNull();
+    expect(
+      (await append(project.id, { refs: { files: ["src/domain/a.ts"] } }))
+        .coreChanged,
+    ).toEqual([]);
+    expect(
+      (await append(project.id, { refs: { files: [] } })).coreChanged,
+    ).toEqual([]);
+
+    // A settings row with an empty pattern list behaves the same.
+    await configure(project.id, member.workspace.id, []);
+    expect(
+      (await append(project.id, { refs: { files: ["src/domain/a.ts"] } }))
+        .coreChanged,
+    ).toEqual([]);
+    expect((await append(project.id, {})).coreChanged).toBeNull();
+  });
+
+  it("includes dotfiles, normalizes paths, skips unmatchable ones, dedupes", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    await configure(project.id, member.workspace.id, ["src/domain/**"]);
+    mockAuthenticatedSession(member.user);
+
+    const entry = await append(project.id, {
+      refs: {
+        files: [
+          "./src/domain/a.ts",
+          "src/domain/a.ts",
+          "src/domain/.env.example",
+          "src/domain/.config/x.json",
+          "/abs/src/domain/b.ts",
+          "src/../src/domain/c.ts",
+          "src/.hidden",
+        ],
+      },
+    });
+
+    expect(entry.coreChanged).toEqual([
+      "src/domain/a.ts",
+      "src/domain/.env.example",
+      "src/domain/.config/x.json",
+    ]);
+    // refs are stored as sent; only the judgment is normalized.
+    const detail = (await (
+      await createApp().app.request(
+        `/api/agent-entry/${project.id}/${entry.id}`,
+      )
+    ).json()) as EntryDetail;
+    expect((detail.refs as { files: string[] }).files[0]).toBe(
+      "./src/domain/a.ts",
+    );
+  });
+
+  it("ignores a client-supplied coreChanged and never re-judges old rows", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    mockAuthenticatedSession(member.user);
+
+    // Old clients still send the removed field: stripped, not a 400.
+    const claimed = await append(project.id, {
+      coreChanged: ["src/domain/claimed.ts"],
+    });
+    expect(claimed.coreChanged).toBeNull();
+    const claimedWithFiles = await append(project.id, {
+      coreChanged: ["src/domain/claimed.ts"],
+      refs: { files: ["src/domain/claimed.ts"] },
+    });
+    expect(claimedWithFiles.coreChanged).toEqual([]);
+
+    // Configuring patterns afterwards changes future verdicts only.
+    await configure(project.id, member.workspace.id, ["src/domain/**"]);
+    const after = await append(project.id, {
+      refs: { files: ["src/domain/claimed.ts"] },
+    });
+    expect(after.coreChanged).toEqual(["src/domain/claimed.ts"]);
+
+    const list = (await (
+      await createApp().app.request(`/api/agent-entry/${project.id}?limit=10`)
+    ).json()) as EntryList;
+    const byId = new Map(list.entries.map((e) => [e.id, e.coreChanged]));
+    expect(byId.get(claimed.id)).toBeNull();
+    expect(byId.get(claimedWithFiles.id)).toEqual([]);
+    expect(byId.get(after.id)).toEqual(["src/domain/claimed.ts"]);
+  });
+
+  it("uses the patterns of the entry's own project", async () => {
+    const member = await createWorkspaceMember();
+    const { project: a } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+      slug: "a",
+    });
+    const { project: b } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+      slug: "b",
+    });
+    await configure(a.id, member.workspace.id, ["src/domain/**"]);
+    mockAuthenticatedSession(member.user);
+
+    const files = ["src/domain/a.ts"];
+    expect((await append(a.id, { refs: { files } })).coreChanged).toEqual(
+      files,
+    );
+    expect((await append(b.id, { refs: { files } })).coreChanged).toEqual([]);
+  });
+
+  it("caps refs arrays: files 200x300, commits 100x64, prs 50x200", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+    const post = (refs: unknown) =>
+      app.request("/api/agent-entry", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: appendBody(project.id, { refs }),
+      });
+    const many = (n: number, s: string) => Array.from({ length: n }, () => s);
+
+    const rejected: Array<[string, unknown]> = [
+      ["201 files", { files: many(201, "a.ts") }],
+      ["301-char file", { files: ["a".repeat(301)] }],
+      ["101 commits", { commits: many(101, "abc") }],
+      ["65-char commit", { commits: ["a".repeat(65)] }],
+      ["51 prs", { prs: many(51, "#1") }],
+      ["201-char pr", { prs: ["a".repeat(201)] }],
+    ];
+    for (const [label, refs] of rejected) {
+      expect((await post(refs)).status, label).toBe(400);
+    }
+    expect(await db.select().from(agentEntryTable)).toHaveLength(0);
+
+    const ok = await post({
+      files: many(200, "a".repeat(300)),
+      commits: many(100, "a".repeat(64)),
+      prs: many(50, "a".repeat(200)),
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  it("lifts repo and branch onto every summary row", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    mockAuthenticatedSession(member.user);
+
+    const withBoth = await append(project.id, {
+      refs: { repo: "doominkim/kaneo", branch: "agent-layer" },
+    });
+    const branchOnly = await append(project.id, {
+      refs: { branch: "fix/x", commits: ["abc"] },
+    });
+    const emptyStrings = await append(project.id, {
+      refs: { repo: "", branch: "" },
+    });
+    const none = await append(project.id, {});
+
+    expect(withBoth).toMatchObject({
+      repo: "doominkim/kaneo",
+      branch: "agent-layer",
+    });
+    expect(branchOnly).toMatchObject({ repo: null, branch: "fix/x" });
+    expect(emptyStrings).toMatchObject({ repo: null, branch: null });
+    expect(none).toMatchObject({ repo: null, branch: null });
+
+    const list = (await (
+      await createApp().app.request(`/api/agent-entry/${project.id}`)
+    ).json()) as EntryList;
+    expect(list.entries.map((e) => [e.id, e.repo, e.branch])).toEqual([
+      [none.id, null, null],
+      [emptyStrings.id, null, null],
+      [branchOnly.id, null, "fix/x"],
+      [withBoth.id, "doominkim/kaneo", "agent-layer"],
+    ]);
+    // Still a summary: the expensive fields stay out.
+    expect(list.entries[0]).not.toHaveProperty("body");
+    expect(list.entries[0]).not.toHaveProperty("refs");
   });
 });

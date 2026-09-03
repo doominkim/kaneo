@@ -11,6 +11,7 @@ import {
   agentEntryTable,
 } from "../../database/schema-agent-layer";
 import type { TreeNode } from "../response";
+import getSettings from "./get-settings";
 
 const UNKNOWN_MODEL = "unknown";
 
@@ -28,11 +29,20 @@ function isDone(status: string, isFinal: boolean | null) {
   return isFinal === true || status === "done" || status === "archived";
 }
 
+type Tree = {
+  nodes: TreeNode[];
+  threshold: {
+    activeTaskThreshold: number;
+    openTotal: number;
+    exceeded: boolean;
+  };
+};
+
 /**
  * The overview tree, assembled server-side in a fixed number of queries
- * (tasks, subtask relations, entries, documents, artifacts — five) regardless
- * of project size. A client walking task-by-task would be N+1 several times
- * over.
+ * (tasks, subtask relations, entries, documents, artifacts — five, plus the
+ * settings row) regardless of project size. A client walking task-by-task would be N+1
+ * several times over.
  *
  * `attachments` come from the fork-owned `agent_artifact` table (finalized
  * rows only); the upstream `asset` table is NOT the source — its rows are
@@ -46,7 +56,7 @@ function isDone(status: string, isFinal: boolean | null) {
  * reachable only through a cycle (hence never a root) are appended as extra
  * roots so nothing silently disappears from the view.
  */
-async function getTree(projectId: string): Promise<{ nodes: TreeNode[] }> {
+async function getTree(projectId: string): Promise<Tree> {
   const [tasks, relations, entries, documents, artifacts] = await Promise.all([
     db
       .select({
@@ -142,6 +152,9 @@ async function getTree(projectId: string): Promise<{ nodes: TreeNode[] }> {
       )
       .orderBy(desc(agentArtifactTable.createdAt), desc(agentArtifactTable.id)),
   ]);
+  // One primary-key lookup after the fan-out: not worth a sixth branch in
+  // the Promise.all, and awaiting it here keeps its failure path ordinary.
+  const settings = await getSettings(projectId);
 
   const taskIds = new Set(tasks.map((task) => task.id));
 
@@ -266,7 +279,22 @@ async function getTree(projectId: string): Promise<{ nodes: TreeNode[] }> {
     if (node) nodes.push(node);
   }
 
-  return { nodes };
+  // Counted over every task, not the rendered roots: a subtask that is still
+  // open is still working-set. Cycle members are included since each task
+  // is counted once here regardless of how the tree rendered it.
+  let openTotal = 0;
+  for (const task of tasks) {
+    if (!isDone(task.status, task.isFinal)) openTotal += 1;
+  }
+
+  return {
+    nodes,
+    threshold: {
+      activeTaskThreshold: settings.activeTaskThreshold,
+      openTotal,
+      exceeded: openTotal > settings.activeTaskThreshold,
+    },
+  };
 }
 
 export default getTree;

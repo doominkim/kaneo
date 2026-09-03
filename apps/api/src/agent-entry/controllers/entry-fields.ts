@@ -18,3 +18,11 @@ export type EntryUsage = {
   totalTokens?: number;
   cacheReadTokens?: number;
 };
+
+/** The two refs a listing shows per row; null when refs carries neither. */
+export function liftRefs(refs: EntryRefs | null | undefined) {
+  return {
+    repo: refs?.repo || null,
+    branch: refs?.branch || null,
+  };
+}

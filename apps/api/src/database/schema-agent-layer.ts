@@ -456,6 +456,53 @@ export const agentArtifactTable = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* agent_project — per-project settings                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Per-project Agent Layer settings. Keyed by the project itself: there is at
+ * most one row, and no row at all means "defaults" — reads never create one.
+ *
+ * `corePaths` is the human-defined glob list that makes "core change" a
+ * deterministic judgment (DESIGN.md §6.2): the server matches an entry's
+ * `refs.files` against it at append time. Patterns are relative, `..`-free
+ * and matched with picomatch; the defaults for the two limits are the ones
+ * §6.1 names. `doneArchiveDays` is stored now but only read by the Phase 1c
+ * archive job.
+ *
+ * `createdAt`/`updatedAt` are written explicitly by the upsert so both come
+ * from the app clock, like the row's other values.
+ */
+export const agentProjectTable = pgTable(
+  "agent_project",
+  {
+    projectId: text("project_id")
+      .primaryKey()
+      .references(() => projectTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaceTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    /** string[] of relative glob patterns, e.g. "src/domain/**" */
+    corePaths: jsonb("core_paths").$type<string[]>().notNull().default([]),
+    activeTaskThreshold: integer("active_task_threshold").notNull().default(20),
+    doneArchiveDays: integer("done_archive_days").notNull().default(30),
+    updatedBy: text("updated_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [index("agent_project_workspaceId_idx").on(table.workspaceId)],
+);
+
+/* -------------------------------------------------------------------------- */
 
 export type AgentActor = typeof agentActorTable.$inferSelect;
 export type NewAgentActor = typeof agentActorTable.$inferInsert;
@@ -469,3 +516,5 @@ export type AgentDocument = typeof agentDocumentTable.$inferSelect;
 export type NewAgentDocument = typeof agentDocumentTable.$inferInsert;
 export type AgentArtifact = typeof agentArtifactTable.$inferSelect;
 export type NewAgentArtifact = typeof agentArtifactTable.$inferInsert;
+export type AgentProject = typeof agentProjectTable.$inferSelect;
+export type NewAgentProject = typeof agentProjectTable.$inferInsert;

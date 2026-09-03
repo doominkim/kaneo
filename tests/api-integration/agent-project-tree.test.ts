@@ -6,6 +6,7 @@ import {
   agentArtifactTable,
   agentDocumentTable,
   agentEntryTable,
+  agentProjectTable,
 } from "../../apps/api/src/database/schema-agent-layer";
 import { createApp } from "../../apps/api/src/index";
 import { mockAnonymousSession, mockAuthenticatedSession } from "./helpers/auth";
@@ -49,7 +50,14 @@ type TreeNode = {
   children: TreeNode[];
 };
 
-type Tree = { nodes: TreeNode[] };
+type Tree = {
+  nodes: TreeNode[];
+  threshold: {
+    activeTaskThreshold: number;
+    openTotal: number;
+    exceeded: boolean;
+  };
+};
 
 let taskCounter = 0;
 
@@ -141,7 +149,10 @@ describe("API integration: agent project tree", () => {
     });
     mockAuthenticatedSession(member.user);
 
-    expect(await fetchTree(project.id)).toEqual({ nodes: [] });
+    expect(await fetchTree(project.id)).toEqual({
+      nodes: [],
+      threshold: { activeTaskThreshold: 20, openTotal: 0, exceeded: false },
+    });
   });
 
   it("nests subtask targets under their parent and orders roots by creation", async () => {
@@ -525,6 +536,78 @@ describe("API integration: agent project tree", () => {
     expect(detached.children[0].children).toEqual([]);
   });
 
+  it("reports the default threshold against open tasks at any depth", async () => {
+    const member = await createWorkspaceMember();
+    const { project, columns } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+
+    mockAuthenticatedSession(member.user);
+    expect((await fetchTree(project.id)).threshold).toEqual({
+      activeTaskThreshold: 20,
+      openTotal: 0,
+      exceeded: false,
+    });
+
+    const root = await seedTask(project.id, columns.todo.id, "root");
+    const child = await seedTask(project.id, columns.inProgress.id, "child");
+    const grandchild = await seedTask(project.id, columns.inReview.id, "gc");
+    await relate(root.id, child.id);
+    await relate(child.id, grandchild.id);
+    // Done by column (isFinal) and done by status are both excluded.
+    await seedTask(project.id, columns.done.id, "done-column");
+    await seedTask(project.id, columns.todo.id, "done-status", {
+      status: "done",
+    });
+    await seedTask(project.id, columns.todo.id, "archived", {
+      status: "archived",
+    });
+
+    const tree = await fetchTree(project.id);
+    expect(tree.nodes.filter((n) => !n.done)).toHaveLength(1);
+    expect(tree.threshold).toEqual({
+      activeTaskThreshold: 20,
+      openTotal: 3,
+      exceeded: false,
+    });
+  });
+
+  it("uses the project's configured threshold and flags when it is exceeded", async () => {
+    const member = await createWorkspaceMember();
+    const { project, columns } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    await db.insert(agentProjectTable).values({
+      projectId: project.id,
+      workspaceId: member.workspace.id,
+      activeTaskThreshold: 2,
+    });
+    await seedTask(project.id, columns.todo.id, "a");
+    await seedTask(project.id, columns.todo.id, "b");
+    await seedTask(project.id, columns.done.id, "done");
+
+    mockAuthenticatedSession(member.user);
+    expect((await fetchTree(project.id)).threshold).toEqual({
+      activeTaskThreshold: 2,
+      openTotal: 2,
+      exceeded: false,
+    });
+
+    await seedTask(project.id, columns.inProgress.id, "c");
+    expect((await fetchTree(project.id)).threshold).toEqual({
+      activeTaskThreshold: 2,
+      openTotal: 3,
+      exceeded: true,
+    });
+
+    // Another project's settings do not leak in.
+    const { project: other } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+      slug: "other",
+    });
+    expect((await fetchTree(other.id)).threshold.activeTaskThreshold).toBe(20);
+  });
+
   it("documents the node as a recursive OpenAPI component", async () => {
     const { app } = createApp();
     const spec = (await (await app.request("/api/openapi")).json()) as {
@@ -540,5 +623,8 @@ describe("API integration: agent project tree", () => {
       type: "array",
       items: { $ref: "#/components/schemas/AgentTreeNode" },
     });
+    expect(
+      Object.keys(spec.components.schemas.AgentTreeThreshold?.properties ?? {}),
+    ).toEqual(["activeTaskThreshold", "openTotal", "exceeded"]);
   });
 });

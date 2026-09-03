@@ -27,13 +27,16 @@ export const refsBody = z
       description:
         "Branch the work happened on. A commit sha alone does not say where unmerged work lives, so record this whenever git was involved.",
     }),
-    commits: z.array(z.string()).optional(),
-    prs: z.array(z.string()).optional(),
-    files: z.array(z.string()).optional(),
+    commits: z.array(z.string().max(64)).max(100).optional(),
+    prs: z.array(z.string().max(200)).max(50).optional(),
+    files: z.array(z.string().max(300)).max(200).optional().openapi({
+      description:
+        "Repo-relative paths that changed (as `git diff --name-only` prints them). The server matches them against the project's core-path patterns to fill `coreChanged`.",
+    }),
   })
   .openapi({
     description:
-      "References into git. Never copies — the content already lives there and a copy rots.",
+      "References into git. Never copies — the content already lives there and a copy rots. Bounded: files ≤200×300 chars, commits ≤100×64, prs ≤50×200 — a diff wider than that belongs in a document, not a ledger row.",
   });
 
 export const effortEnum = z.enum(["low", "medium", "high", "xhigh", "max"]);
@@ -70,9 +73,6 @@ export const appendEntryBody = z.object({
   }),
   decision: decisionBody.nullable().optional(),
   refs: refsBody.nullable().optional(),
-  coreChanged: z.array(z.string()).nullable().optional().openapi({
-    description: "Changed paths that matched the project's core_paths config.",
-  }),
   provider: z.string().openapi({ description: "anthropic | openai | ..." }),
   model: z.string().openapi({ description: "claude-opus-5 | gpt-5.6 | ..." }),
   sessionId: z.string().nullable().optional(),

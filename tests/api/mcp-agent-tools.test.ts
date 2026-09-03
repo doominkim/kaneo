@@ -161,6 +161,21 @@ function documentDetail(body: string) {
   };
 }
 
+describe("agent_log_append", () => {
+  it("rejects oversized refs arrays before any request is made", async () => {
+    const calls = apiFetch.mock.calls.length;
+    const result = await callRaw("agent_log_append", {
+      projectId: "p1",
+      summary: "too many files",
+      provider: "anthropic",
+      model: "m",
+      refs: { files: Array.from({ length: 201 }, () => "a.ts") },
+    });
+    expect(result.isError).toBe(true);
+    expect(apiFetch.mock.calls.length).toBe(calls);
+  });
+});
+
 describe("agent_doc_get", () => {
   it("returns meta and a whole small body without truncation", async () => {
     apiFetch.mockImplementation(async () =>

@@ -22,6 +22,13 @@
       "when": 1788392215235,
       "tag": "0002_agent_artifact",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788399332265,
+      "tag": "0003_agent_project",
+      "breakpoints": true
     }
   ]
 }

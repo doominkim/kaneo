@@ -28,7 +28,16 @@ export const entrySummarySchema = z
       description:
         "Whether a decision payload exists. Fetch the entry by id to read it.",
     }),
-    coreChanged: z.array(z.string()).nullable(),
+    coreChanged: z.array(z.string()).nullable().openapi({
+      description:
+        "Server judgment of `refs.files` against the project's core-path patterns at append time: null = not judged (no `refs.files`), [] = judged, nothing matched. Never recomputed.",
+    }),
+    repo: z.string().nullable().openapi({
+      description: "`refs.repo`, lifted so a listing can show it per row.",
+    }),
+    branch: z.string().nullable().openapi({
+      description: "`refs.branch`, lifted so a listing can show it per row.",
+    }),
     effort: z.string().nullable(),
     agentLabel: z.string().nullable(),
     usage: usageBody.nullable(),
@@ -58,7 +67,10 @@ export const entryDetailSchema = z
     body: z.string().nullable(),
     decision: z.unknown(),
     refs: refsBody.nullable(),
-    coreChanged: z.array(z.string()).nullable(),
+    coreChanged: z.array(z.string()).nullable().openapi({
+      description:
+        "Server judgment of `refs.files` against the project's core-path patterns at append time: null = not judged (no `refs.files`), [] = judged, nothing matched. Rows written before server-side judgment carry the client's claim.",
+    }),
     effort: z.string().nullable(),
     agentLabel: z.string().nullable(),
     usage: usageBody.nullable(),

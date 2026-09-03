@@ -14,9 +14,11 @@ import { createModernMcpHandler } from "../../apps/api/src/mcp/modern";
  * handler so the JSON Schema conversion is included.
  *
  * Per-tool cap is 2.5KB, not the 2KB draft: `agent_log_append`'s schema alone
- * is 1695 bytes (14 fields, three nested objects) before any description, and
+ * is ~1600 bytes (13 fields, three nested objects) before any description, and
  * the description is where `decision.why`/`rejected` get explained. Measured
- * 2026-09-03: largest 2148, total 9258 for 13 tools.
+ * 2026-09-03 after dropping the client `coreChanged` input and capping the
+ * `refs` arrays: largest 2154,
+ * total 9264 for 13 tools.
  */
 const MAX_BYTES_PER_TOOL = 2560;
 const MAX_BYTES_TOTAL = 12288;
