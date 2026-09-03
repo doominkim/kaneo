@@ -30,6 +30,13 @@ import {
   isInlineViewable,
 } from "./artifact-kind";
 import { BranchChip, topModel, UsageChip } from "./chips";
+import {
+  canDeleteEntry,
+  type DeletableEntry,
+  EntryDeleteDialog,
+  useEntryPermissions,
+  useRestoreEntry,
+} from "./entry-actions";
 import { EntryComposer } from "./entry-composer";
 import { EntryRow } from "./entry-row";
 
@@ -39,12 +46,18 @@ type TreeContext = {
   projectSlug?: string;
   /** task:update, decided by the route: it gates the inline note composer. */
   canWrite: boolean;
+  /** Maintainer's view (project:update): folds also list soft-deleted rows. */
+  showDeleted: boolean;
   onOpenEntry: (entryId: string) => void;
 };
 
-type TaskTimelineTreeProps = Omit<TreeContext, "onOpenEntry" | "canWrite"> & {
+type TaskTimelineTreeProps = Omit<
+  TreeContext,
+  "onOpenEntry" | "canWrite" | "showDeleted"
+> & {
   nodes: AgentTreeNode[];
   canWrite?: boolean;
+  showDeleted?: boolean;
   onOpenEntry?: (entryId: string) => void;
 };
 
@@ -60,6 +73,7 @@ export function TaskTimelineTree({
   projectId,
   projectSlug,
   canWrite = false,
+  showDeleted = false,
   onOpenEntry,
 }: TaskTimelineTreeProps) {
   const context: TreeContext = {
@@ -67,6 +81,7 @@ export function TaskTimelineTree({
     projectId,
     projectSlug,
     canWrite,
+    showDeleted,
     onOpenEntry: onOpenEntry ?? (() => {}),
   };
   const [showDone, setShowDone] = useState(false);
@@ -310,6 +325,7 @@ function NodeCard({
           projectId={projectId}
           projectSlug={projectSlug}
           canWrite={context.canWrite}
+          showDeleted={context.showDeleted}
           // Branches arrive newest first, so the head is the latest one.
           latestBranch={node.branches[0] ?? null}
           onOpenEntry={context.onOpenEntry}
@@ -328,6 +344,7 @@ function TaskEntries({
   projectId,
   projectSlug,
   canWrite,
+  showDeleted,
   latestBranch,
   onOpenEntry,
 }: {
@@ -335,13 +352,19 @@ function TaskEntries({
   projectId: string;
   projectSlug?: string;
   canWrite: boolean;
+  showDeleted: boolean;
   latestBranch: AgentTreeNode["branches"][number] | null;
   onOpenEntry: (entryId: string) => void;
 }) {
   const { t } = useTranslation();
   const [composing, setComposing] = useState(false);
-  const query = useAgentEntries(projectId, undefined, taskId);
+  const query = useAgentEntries(projectId, undefined, taskId, showDeleted);
   const entries = query.data?.pages.flatMap((page) => page.entries) ?? [];
+  const permissions = useEntryPermissions();
+  const { restore } = useRestoreEntry(projectId);
+  const [pendingDelete, setPendingDelete] = useState<DeletableEntry | null>(
+    null,
+  );
 
   return (
     <div className="mt-2 space-y-2" data-testid="task-entries">
@@ -383,10 +406,25 @@ function TaskEntries({
               projectSlug={projectSlug}
               showTask={false}
               onOpen={() => onOpenEntry(entry.id)}
+              onDelete={
+                canDeleteEntry(entry, permissions)
+                  ? () => setPendingDelete(entry)
+                  : undefined
+              }
+              onRestore={
+                entry.deletedAt && permissions.canUpdateProjects
+                  ? () => restore(entry.id)
+                  : undefined
+              }
             />
           ))}
         </ol>
       )}
+      <EntryDeleteDialog
+        projectId={projectId}
+        entry={pendingDelete}
+        onClose={() => setPendingDelete(null)}
+      />
       {query.hasNextPage ? (
         <div className="mt-2 flex justify-center">
           <Button

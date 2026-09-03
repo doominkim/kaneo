@@ -1414,7 +1414,7 @@ describe("API integration: agent entries", () => {
     });
   });
 
-  it("keeps the ledger append-only: no update or delete surface is mounted", async () => {
+  it("keeps the ledger append-only: no update surface is mounted (delete is a soft hide, tested below)", async () => {
     const member = await createWorkspaceMember();
     const { project } = await createProjectFixture({
       workspaceId: member.workspace.id,
@@ -1439,13 +1439,17 @@ describe("API integration: agent entries", () => {
         body: JSON.stringify({ summary: "tampered" }),
       },
     );
-    const deleted = await app.request(
+    const patched = await app.request(
       `/api/agent-entry/${project.id}/${entry.id}`,
-      { method: "DELETE" },
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ summary: "tampered" }),
+      },
     );
 
     expect(updated.status).toBe(404);
-    expect(deleted.status).toBe(404);
+    expect(patched.status).toBe(404);
 
     const [persisted] = await db
       .select()
@@ -1733,5 +1737,532 @@ describe("API integration: agent entry core-path judgment", () => {
     // Still a summary: the expensive fields stay out.
     expect(list.entries[0]).not.toHaveProperty("body");
     expect(list.entries[0]).not.toHaveProperty("refs");
+  });
+});
+
+describe("API integration: agent entry soft delete", () => {
+  beforeEach(async () => {
+    await resetTestDatabase();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  type DeleteResult = { id: string; deletedAt: string | null };
+
+  /** A second person in an existing workspace, so "someone else's entry" exists. */
+  async function addMember(workspaceId: string, role: string, name: string) {
+    const userId = `user-${randomUUID()}`;
+    const [user] = await db
+      .insert(schema.userTable)
+      .values({
+        id: userId,
+        email: `${userId}@example.com`,
+        emailVerified: true,
+        name,
+      })
+      .returning();
+    await db.insert(schema.workspaceUserTable).values({
+      workspaceId,
+      userId: user.id,
+      role,
+      joinedAt: new Date(),
+    });
+    return user;
+  }
+
+  async function seedEntry(
+    workspaceId: string,
+    projectId: string,
+    overrides: Partial<typeof agentEntryTable.$inferInsert> = {},
+  ) {
+    const [entry] = await db
+      .insert(agentEntryTable)
+      .values({
+        workspaceId,
+        projectId,
+        summary: "seeded",
+        ...overrides,
+      })
+      .returning();
+    return entry;
+  }
+
+  async function seedActor(workspaceId: string, onBehalfOf: string) {
+    const [actor] = await db
+      .insert(agentActorTable)
+      .values({
+        workspaceId,
+        onBehalfOf,
+        provider: "anthropic",
+        model: "claude-opus-5",
+      })
+      .returning();
+    return actor;
+  }
+
+  function del(
+    app: ReturnType<typeof createApp>["app"],
+    projectId: string,
+    entryId: string,
+  ) {
+    return app.request(`/api/agent-entry/${projectId}/${entryId}`, {
+      method: "DELETE",
+    });
+  }
+
+  function restore(
+    app: ReturnType<typeof createApp>["app"],
+    projectId: string,
+    entryId: string,
+  ) {
+    return app.request(`/api/agent-entry/${projectId}/${entryId}/restore`, {
+      method: "POST",
+    });
+  }
+
+  /** Routes the MCP tools' outbound HTTP back into the app under test. */
+  function routeFetchInto(app: ReturnType<typeof createApp>["app"]) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        return app.request(`${url.pathname}${url.search}`, init);
+      }),
+    );
+  }
+
+  it("lets the human author hide their own entry without project:update, and keeps every other column", async () => {
+    // A viewer has task:read only, so nothing but authorship can grant this.
+    const viewer = await createWorkspaceMember({ role: "viewer" });
+    const { project } = await createProjectFixture({
+      workspaceId: viewer.workspace.id,
+    });
+    const entry = await seedEntry(viewer.workspace.id, project.id, {
+      createdBy: viewer.user.id,
+      kind: "decision",
+      summary: "mine",
+      body: "long form",
+      decision: { what: "x", why: "y" },
+      refs: { branch: "feat/x" },
+    });
+
+    mockAuthenticatedSession(viewer.user);
+    const { app } = createApp();
+
+    const before = Date.now();
+    const response = await del(app, project.id, entry.id);
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as DeleteResult;
+    expect(payload.id).toBe(entry.id);
+    expect(payload.deletedAt).not.toBeNull();
+    const deletedAt = new Date(payload.deletedAt as string).getTime();
+    expect(deletedAt).toBeGreaterThanOrEqual(before - 1000);
+    expect(deletedAt).toBeLessThanOrEqual(Date.now() + 1000);
+
+    const [persisted] = await db
+      .select()
+      .from(agentEntryTable)
+      .where(eq(agentEntryTable.id, entry.id));
+    expect(persisted).toMatchObject({
+      deletedBy: viewer.user.id,
+      kind: "decision",
+      summary: "mine",
+      body: "long form",
+      createdBy: viewer.user.id,
+    });
+    expect(persisted?.deletedAt?.toISOString()).toBe(payload.deletedAt);
+    expect(persisted?.decision).toEqual({ what: "x", why: "y" });
+    expect(persisted?.refs).toEqual({ branch: "feat/x" });
+
+    // Deleting twice is "not found", not a second stamp.
+    const again = await del(app, project.id, entry.id);
+    expect(again.status).toBe(404);
+    const [unchanged] = await db
+      .select({ deletedAt: agentEntryTable.deletedAt })
+      .from(agentEntryTable)
+      .where(eq(agentEntryTable.id, entry.id));
+    expect(unchanged?.deletedAt?.toISOString()).toBe(payload.deletedAt);
+  });
+
+  it("refuses someone else's entry, and any agent entry, without project:update", async () => {
+    const author = await createWorkspaceMember({ userName: "Author" });
+    const viewer = await addMember(author.workspace.id, "viewer", "Viewer");
+    const { project } = await createProjectFixture({
+      workspaceId: author.workspace.id,
+    });
+    const actor = await seedActor(author.workspace.id, viewer.id);
+    const theirs = await seedEntry(author.workspace.id, project.id, {
+      createdBy: author.user.id,
+    });
+    // Run on the viewer's own behalf, yet still an agent entry: no human author.
+    const agentEntry = await seedEntry(author.workspace.id, project.id, {
+      actorId: actor.id,
+    });
+
+    mockAuthenticatedSession(viewer);
+    const { app } = createApp();
+
+    for (const target of [theirs, agentEntry]) {
+      const response = await del(app, project.id, target.id);
+      expect(response.status).toBe(403);
+      await expect(response.text()).resolves.toBe(
+        "Only the entry's author or a project:update holder can delete it",
+      );
+    }
+
+    const rows = await db
+      .select({ deletedAt: agentEntryTable.deletedAt })
+      .from(agentEntryTable)
+      .where(eq(agentEntryTable.projectId, project.id));
+    expect(rows.map((r) => r.deletedAt)).toEqual([null, null]);
+  });
+
+  it("lets project:update hide anyone's entry, human or agent", async () => {
+    const author = await createWorkspaceMember({ userName: "Author" });
+    // Built-in `member` has no project:update; `admin` is the first role that does.
+    const maintainer = await addMember(author.workspace.id, "admin", "Admin");
+    const { project } = await createProjectFixture({
+      workspaceId: author.workspace.id,
+    });
+    const actor = await seedActor(author.workspace.id, author.user.id);
+    const human = await seedEntry(author.workspace.id, project.id, {
+      createdBy: author.user.id,
+    });
+    const agent = await seedEntry(author.workspace.id, project.id, {
+      actorId: actor.id,
+    });
+
+    mockAuthenticatedSession(maintainer);
+    const { app } = createApp();
+
+    for (const target of [human, agent]) {
+      const response = await del(app, project.id, target.id);
+      expect(response.status).toBe(200);
+      const [persisted] = await db
+        .select({ deletedBy: agentEntryTable.deletedBy })
+        .from(agentEntryTable)
+        .where(eq(agentEntryTable.id, target.id));
+      expect(persisted?.deletedBy).toBe(maintainer.id);
+    }
+  });
+
+  it("reports an entry from another project, or an unknown id, as not found", async () => {
+    const member = await createWorkspaceMember({ role: "admin" });
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    const other = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    const foreign = await seedEntry(member.workspace.id, other.project.id, {
+      createdBy: member.user.id,
+    });
+
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    expect((await del(app, project.id, foreign.id)).status).toBe(404);
+    expect((await del(app, project.id, "entry-missing")).status).toBe(404);
+    expect((await restore(app, project.id, foreign.id)).status).toBe(404);
+
+    const [persisted] = await db
+      .select({ deletedAt: agentEntryTable.deletedAt })
+      .from(agentEntryTable)
+      .where(eq(agentEntryTable.id, foreign.id));
+    expect(persisted?.deletedAt).toBeNull();
+  });
+
+  it("hides a deleted entry from the listing, the handoff pick, the single fetch, the MCP reads and the tree", async () => {
+    const member = await createWorkspaceMember({
+      userName: "Dominic",
+      role: "admin",
+    });
+    const { project, columns } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    const task = await seedTask(project.id, columns.todo.id, 1);
+    const actor = await seedActor(member.workspace.id, member.user.id);
+    const base = Date.now() - 10 * 60_000;
+    const kept = await seedEntry(member.workspace.id, project.id, {
+      taskId: task.id,
+      actorId: actor.id,
+      kind: "handoff",
+      summary: "older handoff",
+      refs: { branch: "feat/kept" },
+      usage: { totalTokens: 10 },
+      createdAt: new Date(base),
+    });
+    const hidden = await seedEntry(member.workspace.id, project.id, {
+      taskId: task.id,
+      actorId: actor.id,
+      kind: "handoff",
+      summary: "newest handoff, deleted",
+      body: "should not be readable",
+      refs: { branch: "feat/hidden" },
+      usage: { totalTokens: 1000 },
+      createdAt: new Date(base + 60_000),
+    });
+
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+    routeFetchInto(app);
+
+    expect((await del(app, project.id, hidden.id)).status).toBe(200);
+
+    const list = (await (
+      await app.request(`/api/agent-entry/${project.id}`)
+    ).json()) as EntryList;
+    expect(list.entries.map((e) => e.id)).toEqual([kept.id]);
+    expect(list.entries[0]?.deletedAt).toBeNull();
+
+    // The overview callout picks the newest handoff: the hidden one must not win.
+    const handoffs = (await (
+      await app.request(`/api/agent-entry/${project.id}?kind=handoff&limit=1`)
+    ).json()) as EntryList;
+    expect(handoffs.entries.map((e) => e.id)).toEqual([kept.id]);
+
+    const byTask = (await (
+      await app.request(`/api/agent-entry/${project.id}?taskId=${task.id}`)
+    ).json()) as EntryList;
+    expect(byTask.entries.map((e) => e.id)).toEqual([kept.id]);
+
+    const single = await app.request(
+      `/api/agent-entry/${project.id}/${hidden.id}`,
+    );
+    expect(single.status).toBe(404);
+
+    const tail = toolJson<EntryList>(
+      await mcpToolCall(app, "agent_log_tail", { projectId: project.id }),
+    );
+    expect(tail.entries.map((e) => e.id)).toEqual([kept.id]);
+
+    const brief = toolJson<{ recentEntries: EntrySummary[] }>(
+      await mcpToolCall(app, "agent_brief", { projectId: project.id }),
+    );
+    expect(brief.recentEntries.map((e) => e.id)).toEqual([kept.id]);
+
+    const viaGet = await mcpToolCall(app, "agent_entry_get", {
+      projectId: project.id,
+      entryId: hidden.id,
+    });
+    expect(viaGet.isError).toBe(true);
+    expect(viaGet.content[0]?.text).not.toContain("should not be readable");
+
+    type TreeNode = {
+      id: string;
+      branches: Array<{ branch: string }>;
+      usage: { entryCount: number; totalTokens: number };
+    };
+    const tree = (await (
+      await app.request(`/api/agent-project/${project.id}/tree`)
+    ).json()) as { nodes: TreeNode[] };
+    const node = tree.nodes.find((n) => n.id === task.id);
+    expect(node?.branches).toEqual([{ branch: "feat/kept" }]);
+    expect(node?.usage).toMatchObject({ entryCount: 1, totalTokens: 10 });
+  });
+
+  it("keeps a deleted entry usable as a paging cursor", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    const base = Date.now() - 10 * 60_000;
+    const oldest = await seedEntry(member.workspace.id, project.id, {
+      summary: "oldest",
+      createdAt: new Date(base),
+    });
+    const middle = await seedEntry(member.workspace.id, project.id, {
+      summary: "middle",
+      createdBy: member.user.id,
+      createdAt: new Date(base + 60_000),
+    });
+    await seedEntry(member.workspace.id, project.id, {
+      summary: "newest",
+      createdAt: new Date(base + 120_000),
+    });
+
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    const page = (await (
+      await app.request(`/api/agent-entry/${project.id}?limit=2`)
+    ).json()) as EntryList;
+    expect(page.nextBefore).toBe(middle.id);
+
+    expect((await del(app, project.id, middle.id)).status).toBe(200);
+
+    const next = (await (
+      await app.request(
+        `/api/agent-entry/${project.id}?limit=2&before=${middle.id}`,
+      )
+    ).json()) as EntryList;
+    expect(next.entries.map((e) => e.id)).toEqual([oldest.id]);
+  });
+
+  it("shows deleted entries to project:update with includeDeleted=true, and refuses the flag to others", async () => {
+    const member = await createWorkspaceMember({
+      userName: "Admin",
+      role: "admin",
+    });
+    // A plain member authors entries but has no project:update either.
+    const viewer = await addMember(member.workspace.id, "member", "Member");
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    const live = await seedEntry(member.workspace.id, project.id, {
+      summary: "live",
+      createdAt: new Date(Date.now() - 120_000),
+    });
+    const gone = await seedEntry(member.workspace.id, project.id, {
+      summary: "gone",
+      body: "hidden body",
+      createdBy: member.user.id,
+      createdAt: new Date(Date.now() - 60_000),
+    });
+
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+    expect((await del(app, project.id, gone.id)).status).toBe(200);
+
+    const list = (await (
+      await app.request(`/api/agent-entry/${project.id}?includeDeleted=true`)
+    ).json()) as EntryList;
+    expect(list.entries.map((e) => [e.id, e.deletedAt !== null])).toEqual([
+      [gone.id, true],
+      [live.id, false],
+    ]);
+
+    const detailResponse = await app.request(
+      `/api/agent-entry/${project.id}/${gone.id}?includeDeleted=true`,
+    );
+    expect(detailResponse.status).toBe(200);
+    const detail = (await detailResponse.json()) as EntryDetail & {
+      deletedAt: string | null;
+      deletedBy: string | null;
+    };
+    expect(detail).toMatchObject({
+      id: gone.id,
+      body: "hidden body",
+      deletedBy: member.user.id,
+    });
+    expect(detail.deletedAt).not.toBeNull();
+
+    // `false` is the default and needs no permission.
+    const explicitFalse = await app.request(
+      `/api/agent-entry/${project.id}?includeDeleted=false`,
+    );
+    expect(explicitFalse.status).toBe(200);
+    expect(
+      ((await explicitFalse.json()) as EntryList).entries.map((e) => e.id),
+    ).toEqual([live.id]);
+
+    mockAuthenticatedSession(viewer);
+    const viewerApp = createApp().app;
+
+    for (const path of [
+      `/api/agent-entry/${project.id}?includeDeleted=true`,
+      `/api/agent-entry/${project.id}/${gone.id}?includeDeleted=true`,
+    ]) {
+      const response = await viewerApp.request(path);
+      expect(response.status, path).toBe(403);
+      await expect(response.text()).resolves.toBe(
+        "includeDeleted requires project:update",
+      );
+    }
+    // The gate is on the flag, not the row: the viewer still gets the default view.
+    const viewerList = (await (
+      await viewerApp.request(`/api/agent-entry/${project.id}`)
+    ).json()) as EntryList;
+    expect(viewerList.entries.map((e) => e.id)).toEqual([live.id]);
+    expect(
+      (await viewerApp.request(`/api/agent-entry/${project.id}/${gone.id}`))
+        .status,
+    ).toBe(404);
+  });
+
+  it("restores with project:update only, and only a deleted entry", async () => {
+    const author = await createWorkspaceMember({
+      userName: "Admin",
+      role: "admin",
+    });
+    const viewer = await addMember(author.workspace.id, "member", "Member");
+    const { project } = await createProjectFixture({
+      workspaceId: author.workspace.id,
+    });
+    const entry = await seedEntry(author.workspace.id, project.id, {
+      createdBy: viewer.id,
+      summary: "viewer's note",
+    });
+
+    // The author could hide it, but cannot bring it back on their own.
+    mockAuthenticatedSession(viewer);
+    const viewerApp = createApp().app;
+    expect((await del(viewerApp, project.id, entry.id)).status).toBe(200);
+    const refused = await restore(viewerApp, project.id, entry.id);
+    expect(refused.status).toBe(403);
+    await expect(refused.text()).resolves.toBe("Insufficient permissions");
+
+    mockAuthenticatedSession(author.user);
+    const { app } = createApp();
+    const restored = await restore(app, project.id, entry.id);
+    expect(restored.status).toBe(200);
+    expect((await restored.json()) as DeleteResult).toEqual({
+      id: entry.id,
+      deletedAt: null,
+    });
+
+    const [persisted] = await db
+      .select({
+        deletedAt: agentEntryTable.deletedAt,
+        deletedBy: agentEntryTable.deletedBy,
+        summary: agentEntryTable.summary,
+      })
+      .from(agentEntryTable)
+      .where(eq(agentEntryTable.id, entry.id));
+    expect(persisted).toEqual({
+      deletedAt: null,
+      deletedBy: null,
+      summary: "viewer's note",
+    });
+
+    const list = (await (
+      await app.request(`/api/agent-entry/${project.id}`)
+    ).json()) as EntryList;
+    expect(list.entries.map((e) => e.id)).toEqual([entry.id]);
+    expect(
+      (await app.request(`/api/agent-entry/${project.id}/${entry.id}`)).status,
+    ).toBe(200);
+
+    // Not deleted any more: a second restore is "not found".
+    expect((await restore(app, project.id, entry.id)).status).toBe(404);
+  });
+
+  it("rejects delete and restore from outside the workspace and when unauthenticated", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    const entry = await seedEntry(member.workspace.id, project.id, {
+      createdBy: member.user.id,
+    });
+
+    mockAnonymousSession();
+    const anonymous = createApp().app;
+    expect((await del(anonymous, project.id, entry.id)).status).toBe(401);
+    expect((await restore(anonymous, project.id, entry.id)).status).toBe(401);
+
+    const outsider = await createWorkspaceMember();
+    mockAuthenticatedSession(outsider.user);
+    const app = createApp().app;
+    expect((await del(app, project.id, entry.id)).status).toBe(403);
+    expect((await restore(app, project.id, entry.id)).status).toBe(403);
+
+    const [persisted] = await db
+      .select({ deletedAt: agentEntryTable.deletedAt })
+      .from(agentEntryTable)
+      .where(eq(agentEntryTable.id, entry.id));
+    expect(persisted?.deletedAt).toBeNull();
   });
 });

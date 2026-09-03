@@ -33,6 +33,25 @@ vi.mock("react-i18next", () => ({
 const mocks = vi.hoisted(() => ({
   download: vi.fn(),
   entries: vi.fn(),
+  restore: vi.fn(),
+  canUpdateProjects: vi.fn(() => false),
+}));
+vi.mock("@/hooks/use-workspace-permission", () => ({
+  useWorkspacePermission: () => ({
+    canUpdateProjects: () => mocks.canUpdateProjects(),
+  }),
+}));
+vi.mock("@/components/providers/auth-provider/hooks/use-auth", () => ({
+  useAuth: () => ({ user: { id: "viewer" } }),
+}));
+vi.mock("@/hooks/mutations/agent-layer/use-delete-agent-entry", () => ({
+  useDeleteAgentEntry: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+vi.mock("@/hooks/mutations/agent-layer/use-restore-agent-entry", () => ({
+  useRestoreAgentEntry: () => ({
+    mutateAsync: mocks.restore,
+    isPending: false,
+  }),
 }));
 vi.mock("@/lib/download-agent-artifact", () => ({
   downloadAgentArtifact: mocks.download,
@@ -168,7 +187,7 @@ const nodes: AgentTreeNode[] = [
   node({ id: "t3", number: 3, title: "Task three done", done: true }),
 ];
 
-function renderTree(canWrite?: boolean) {
+function renderTree(canWrite?: boolean, showDeleted?: boolean) {
   const onOpenEntry = vi.fn();
   render(
     <TaskTimelineTree
@@ -177,6 +196,7 @@ function renderTree(canWrite?: boolean) {
       projectId="p"
       projectSlug="KAN"
       canWrite={canWrite}
+      showDeleted={showDeleted}
       onOpenEntry={onOpenEntry}
     />,
   );
@@ -185,6 +205,8 @@ function renderTree(canWrite?: boolean) {
 
 beforeEach(() => {
   mocks.download.mockReset().mockResolvedValue(undefined);
+  mocks.restore.mockReset().mockResolvedValue({ id: "e1", deletedAt: null });
+  mocks.canUpdateProjects.mockReset().mockReturnValue(false);
   mocks.entries.mockReset().mockReturnValue({
     isPending: false,
     isError: false,
@@ -342,7 +364,7 @@ describe("TaskTimelineTree", () => {
 
     fireEvent.click(toggle);
 
-    expect(mocks.entries).toHaveBeenCalledWith("p", undefined, "t1");
+    expect(mocks.entries).toHaveBeenCalledWith("p", undefined, "t1", false);
     const entries = within(taskOne).getByTestId("task-entries");
     const row = within(entries).getByTestId("entry-row");
     expect(row).toHaveTextContent("Wired the upload flow");
@@ -385,6 +407,79 @@ describe("TaskTimelineTree", () => {
     fireEvent.click(composer);
     expect(within(writable).queryByTestId("entry-composer")).toBeNull();
     expect(within(writable).getByTestId("compose-entry")).toBeInTheDocument();
+  });
+
+  it("lists deleted rows under the toggle, dimmed, with a restore for project:update", () => {
+    mocks.canUpdateProjects.mockReturnValue(true);
+    mocks.entries.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: {
+        pages: [
+          {
+            entries: [
+              {
+                id: "e1",
+                taskId: "t1",
+                kind: "work",
+                summary: "Wired the upload flow",
+                createdAt: "2026-09-03T00:00:00.000Z",
+                hasDecision: false,
+                coreChanged: null,
+                repo: null,
+                branch: null,
+                effort: null,
+                agentLabel: null,
+                usage: null,
+                deletedAt: null,
+                actor: null,
+                author: { userId: "viewer", name: "Me" },
+              },
+              {
+                id: "e0",
+                taskId: "t1",
+                kind: "work",
+                summary: "Mistaken note",
+                createdAt: "2026-09-02T00:00:00.000Z",
+                hasDecision: false,
+                coreChanged: null,
+                repo: null,
+                branch: null,
+                effort: null,
+                agentLabel: null,
+                usage: null,
+                deletedAt: "2026-09-02T01:00:00.000Z",
+                actor: null,
+                author: { userId: "viewer", name: "Me" },
+              },
+            ],
+            nextBefore: null,
+          },
+        ],
+      },
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+      refetch: vi.fn(),
+    });
+    renderTree(false, true);
+    const taskOne = screen.getAllByTestId("tree-root")[1];
+    fireEvent.click(within(taskOne).getAllByTestId("entries-toggle")[0]);
+
+    expect(mocks.entries).toHaveBeenCalledWith("p", undefined, "t1", true);
+    const rows = within(taskOne).getAllByTestId("entry-row");
+    expect(rows.map((row) => row.dataset.deleted)).toEqual(["false", "true"]);
+    const deletedLi = rows[1].closest("li") as HTMLElement;
+    expect(within(deletedLi).queryByTestId("entry-delete")).toBeNull();
+    fireEvent.click(within(deletedLi).getByTestId("entry-restore"));
+    expect(mocks.restore).toHaveBeenCalledWith({
+      projectId: "p",
+      entryId: "e0",
+    });
+    // The live row by the viewer still offers delete.
+    expect(
+      within(rows[0].closest("li") as HTMLElement).getByTestId("entry-delete"),
+    ).toBeInTheDocument();
   });
 
   it("shows the empty ledger state for a task without entries", () => {

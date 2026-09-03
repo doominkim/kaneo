@@ -230,7 +230,7 @@ export function registerAgentTools(
     "agent_brief",
     {
       description:
-        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries, live claims, and the 20 most recently updated document titles (slug/title/updatedAt — deliverables, not a knowledge base; judge them by author and age; documentsTotal shows what was cut). Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
+        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries (deleted ones hidden), live claims, and the 20 most recently updated document titles (slug/title/updatedAt — deliverables, not a knowledge base; judge them by author and age; documentsTotal shows what was cut). Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
       inputSchema: z.object({
         projectId: z.string(),
         entries: z.number().int().min(1).max(20).default(5),
@@ -339,7 +339,7 @@ export function registerAgentTools(
     "agent_log_tail",
     {
       description:
-        "Recent ledger entries, newest first, human and agent interleaved (`author` = human, `actor` = agent). Summaries only — call agent_entry_get for a specific entry's body and decision. To page, pass the previous result's nextBefore as `before`.",
+        "Recent ledger entries, newest first, human and agent interleaved (`author` = human, `actor` = agent); entries a person deleted are hidden. Summaries only — call agent_entry_get for a specific entry's body and decision. To page, pass the previous result's nextBefore as `before`.",
       inputSchema: z.object({
         projectId: z.string(),
         limit: z.number().int().min(1).max(50).default(10),
@@ -372,7 +372,7 @@ export function registerAgentTools(
     "agent_entry_get",
     {
       description:
-        "One ledger entry in full, including body and decision. Deliberately one at a time — this is where the expensive fields live.",
+        "One ledger entry in full, including body and decision. Deliberately one at a time — this is where the expensive fields live. A deleted entry reads as not found.",
       inputSchema: z.object({ projectId: z.string(), entryId: z.string() }),
     },
     (args) =>

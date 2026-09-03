@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import { actorSelection, liftActor } from "../../agent-entry/actor-response";
 import type {
   EntryRefs,
@@ -97,6 +97,8 @@ async function getTree(projectId: string): Promise<Tree> {
         asc(schema.taskRelationTable.id),
       ),
     // Narrow projection: refs and usage are small, body/decision are not.
+    // Soft-deleted entries drop out of the rollups the same way they drop out
+    // of the listing: a hidden appearance should not still count or branch.
     db
       .select({
         taskId: agentEntryTable.taskId,
@@ -113,6 +115,7 @@ async function getTree(projectId: string): Promise<Tree> {
         and(
           eq(agentEntryTable.projectId, projectId),
           isNotNull(agentEntryTable.taskId),
+          isNull(agentEntryTable.deletedAt),
         ),
       )
       .orderBy(desc(agentEntryTable.createdAt), desc(agentEntryTable.id)),

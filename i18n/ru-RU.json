@@ -2395,7 +2395,15 @@
 			"showDefinition": "Show definition",
 			"supersededBy": "Retired — see {{id}} instead.",
 			"termsEmpty": "No terms match.",
-			"termsEmptyHint": "Propose a term, or widen the filters."
+			"termsEmptyHint": "Propose a term, or widen the filters.",
+			"delete": "Delete",
+			"deleted": "\"{{term}}\" deleted.",
+			"deleteDescription": "Removes the proposal for good. Only proposed terms can be deleted; a reviewed term is retired instead so a tombstone remains.",
+			"deleteFailed": "Could not delete the term.",
+			"deleteForbidden": "workspace:update is required to delete a term.",
+			"deleteRefused": "The term cannot be deleted.",
+			"deleteTitle": "Delete \"{{term}}\"?",
+			"deleting": "Deleting…"
 		},
 		"nav": {
 			"docs": "Docs",
@@ -2465,7 +2473,23 @@
 			"task": "Task",
 			"title": "Timeline",
 			"projectEntries": "Project notes",
-			"projectEntriesEmpty": "No project-level notes yet."
+			"projectEntriesEmpty": "No project-level notes yet.",
+			"cancel": "Cancel",
+			"delete": "Delete",
+			"deleted": "Deleted",
+			"deleteDescription": "The entry is hidden from the timeline, the tree and the agent brief. It is kept in full; a project maintainer can restore it.",
+			"deleteFailed": "Could not delete the entry.",
+			"deleteForbidden": "Only the author or a project:update holder can delete this entry.",
+			"deleteNotFound": "The entry no longer exists or is already deleted.",
+			"deleteTitle": "Delete this entry?",
+			"deleting": "Deleting…",
+			"entryDeleted": "Entry deleted.",
+			"entryRestored": "Entry restored.",
+			"restore": "Restore",
+			"restoreFailed": "Could not restore the entry.",
+			"restoreForbidden": "project:update is required to restore an entry.",
+			"restoreNotFound": "The entry no longer exists or is not deleted.",
+			"showDeleted": "Show deleted entries"
 		},
 		"confidence": {
 			"confirmed": "Confirmed",

@@ -48,3 +48,7 @@ export const resolveResultSchema = z
 export const termListSchema = z
   .object({ terms: z.array(termSchema) })
   .openapi("AgentTermList");
+
+export const termDeleteResultSchema = z
+  .object({ id: z.string(), canonical: z.string() })
+  .openapi("AgentTermDeleteResult");

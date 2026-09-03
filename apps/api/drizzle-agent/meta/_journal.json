@@ -43,6 +43,13 @@
       "when": 1788405287529,
       "tag": "0005_agent_term_actor",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788415048503,
+      "tag": "0006_agent_entry_deleted_at",
+      "breakpoints": true
     }
   ]
 }

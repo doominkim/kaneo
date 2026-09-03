@@ -10,12 +10,31 @@ import type {
  */
 export const agentLayerKeys = {
   tree: (projectId: string) => ["agent-tree", projectId] as const,
-  entries: (projectId: string, kind?: AgentEntryKind, taskId?: string) =>
-    ["agent-entries", projectId, kind ?? "all", taskId ?? "all"] as const,
+  // The trailing segment keeps the maintainer's "with deleted" view apart
+  // from the default one; both sit under the same prefix, so the mutations'
+  // `["agent-entries", projectId]` invalidation reaches either.
+  entries: (
+    projectId: string,
+    kind?: AgentEntryKind,
+    taskId?: string,
+    includeDeleted = false,
+  ) =>
+    [
+      "agent-entries",
+      projectId,
+      kind ?? "all",
+      taskId ?? "all",
+      includeDeleted ? "with-deleted" : "live",
+    ] as const,
   latestEntry: (projectId: string) =>
     ["agent-entries", projectId, "latest"] as const,
-  entry: (projectId: string, entryId: string) =>
-    ["agent-entry", projectId, entryId] as const,
+  entry: (projectId: string, entryId: string, includeDeleted = false) =>
+    [
+      "agent-entry",
+      projectId,
+      entryId,
+      includeDeleted ? "with-deleted" : "live",
+    ] as const,
   leases: (projectId: string) => ["agent-leases", projectId] as const,
   documents: (projectId: string) => ["agent-documents", projectId] as const,
   document: (projectId: string, slug: string) =>

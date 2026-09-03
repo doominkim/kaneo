@@ -14,6 +14,7 @@ import { TaskTimelineTree } from "@/components/agent-layer/task-timeline-tree";
 import ProjectLayout from "@/components/common/project-layout";
 import PageTitle from "@/components/page-title";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { useAgentTaskIndex } from "@/hooks/queries/agent-layer/use-agent-task-index";
 import useGetProject from "@/hooks/queries/project/use-get-project";
 import { useWorkspacePermission } from "@/hooks/use-workspace-permission";
@@ -29,10 +30,15 @@ function RouteComponent() {
   const { projectId, workspaceId } = Route.useParams();
   const { data: project } = useGetProject({ id: projectId, workspaceId });
   const { tree, taskNumberById } = useAgentTaskIndex(projectId);
-  const { canUpdateTasks } = useWorkspacePermission();
+  const { canUpdateTasks, canUpdateProjects } = useWorkspacePermission();
   const canWrite = canUpdateTasks();
+  // project:update is what the API demands for `includeDeleted`; the toggle
+  // is hidden (and forced off) for everyone else so the listing never 403s.
+  const canSeeDeleted = canUpdateProjects();
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
+  const [showDeletedRequested, setShowDeletedRequested] = useState(false);
+  const showDeleted = canSeeDeleted && showDeletedRequested;
 
   return (
     <ProjectLayout
@@ -50,18 +56,36 @@ function RouteComponent() {
             <h1 className="text-sm font-semibold text-foreground">
               {t("agentLayer:timeline.title")}
             </h1>
-            {canWrite && !composing ? (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                data-testid="compose-project-entry"
-                onClick={() => setComposing(true)}
-              >
-                <PenLine />
-                {t("agentLayer:composer.open")}
-              </Button>
-            ) : null}
+            <div className="flex items-center gap-3">
+              {canSeeDeleted ? (
+                <label
+                  htmlFor="show-deleted-toggle"
+                  className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground"
+                >
+                  <Switch
+                    id="show-deleted-toggle"
+                    checked={showDeleted}
+                    onCheckedChange={(checked) =>
+                      setShowDeletedRequested(checked)
+                    }
+                    data-testid="show-deleted-toggle"
+                  />
+                  {t("agentLayer:timeline.showDeleted")}
+                </label>
+              ) : null}
+              {canWrite && !composing ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  data-testid="compose-project-entry"
+                  onClick={() => setComposing(true)}
+                >
+                  <PenLine />
+                  {t("agentLayer:composer.open")}
+                </Button>
+              ) : null}
+            </div>
           </div>
           {canWrite && composing ? (
             <div className="mb-4 space-y-1.5">
@@ -77,6 +101,7 @@ function RouteComponent() {
           <ProjectEntries
             projectId={projectId}
             projectSlug={project?.slug}
+            showDeleted={showDeleted}
             onOpenEntry={setSelectedEntryId}
           />
           {tree.isPending ? (
@@ -98,6 +123,7 @@ function RouteComponent() {
               projectId={projectId}
               projectSlug={project?.slug}
               canWrite={canWrite}
+              showDeleted={showDeleted}
               onOpenEntry={setSelectedEntryId}
             />
           )}
@@ -110,6 +136,7 @@ function RouteComponent() {
         projectSlug={project?.slug}
         entryId={selectedEntryId}
         taskNumberById={taskNumberById}
+        includeDeleted={showDeleted}
         onClose={() => setSelectedEntryId(null)}
       />
     </ProjectLayout>

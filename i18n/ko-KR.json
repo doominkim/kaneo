@@ -2243,7 +2243,23 @@
 			"refsPrs": "PR",
 			"refsFiles": "파일",
 			"coreChangedList": "변경된 코어 경로",
-			"task": "태스크"
+			"task": "태스크",
+			"delete": "삭제",
+			"deleteTitle": "이 기록을 삭제할까요?",
+			"deleteDescription": "타임라인·트리·에이전트 brief에서 숨겨집니다. 내용은 그대로 보관되며 프로젝트 관리자가 복구할 수 있습니다.",
+			"deleting": "삭제 중…",
+			"entryDeleted": "기록을 삭제했습니다.",
+			"deleteFailed": "기록을 삭제하지 못했습니다.",
+			"deleteForbidden": "작성자 본인이거나 project:update 권한이 있어야 삭제할 수 있습니다.",
+			"deleteNotFound": "기록이 없거나 이미 삭제되었습니다.",
+			"restore": "복구",
+			"entryRestored": "기록을 복구했습니다.",
+			"restoreFailed": "기록을 복구하지 못했습니다.",
+			"restoreForbidden": "기록을 복구하려면 project:update 권한이 필요합니다.",
+			"restoreNotFound": "기록이 없거나 삭제된 상태가 아닙니다.",
+			"deleted": "삭제됨",
+			"showDeleted": "삭제된 항목 보기",
+			"cancel": "취소"
 		},
 		"composer": {
 			"open": "기록 남기기",
@@ -2408,7 +2424,15 @@
 			"proposing": "제안 중…",
 			"proposed": "\"{{term}}\"을(를) 제안했습니다.",
 			"proposeConflict": "같은 정식 명칭의 용어가 이미 있습니다.",
-			"proposeFailed": "용어를 제안하지 못했습니다."
+			"proposeFailed": "용어를 제안하지 못했습니다.",
+			"delete": "삭제",
+			"deleteTitle": "\"{{term}}\"을(를) 삭제할까요?",
+			"deleteDescription": "제안을 완전히 삭제합니다. 제안됨 상태의 용어만 삭제할 수 있고, 검토를 거친 용어는 흔적이 남도록 퇴역 처리합니다.",
+			"deleting": "삭제 중…",
+			"deleted": "\"{{term}}\"을(를) 삭제했습니다.",
+			"deleteFailed": "용어를 삭제하지 못했습니다.",
+			"deleteRefused": "용어를 삭제할 수 없습니다.",
+			"deleteForbidden": "용어를 삭제하려면 workspace:update 권한이 필요합니다."
 		},
 		"confidence": {
 			"proposed": "제안됨",

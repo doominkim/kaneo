@@ -1,7 +1,10 @@
 import { Link } from "@tanstack/react-router";
+import { RotateCcw, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/public-project/markdown-renderer";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
@@ -13,6 +16,13 @@ import { useAgentEntry } from "@/hooks/queries/agent-layer/use-agent-entry";
 import { formatDateTime } from "@/lib/format";
 import { AgentLayerErrorState, AgentLayerSkeleton } from "./agent-layer-state";
 import { BranchChip, formatTokens, KindBadge } from "./chips";
+import {
+  canDeleteEntry,
+  type DeletableEntry,
+  EntryDeleteDialog,
+  useEntryPermissions,
+  useRestoreEntry,
+} from "./entry-actions";
 import { EntryAuthor } from "./entry-author";
 
 type EntryDetailSheetProps = {
@@ -21,6 +31,11 @@ type EntryDetailSheetProps = {
   projectSlug?: string;
   entryId: string | null;
   taskNumberById: Map<string, number | null>;
+  /**
+   * Set when the list that opened the sheet shows deleted rows; without it a
+   * deleted entry's detail reads as 404. Requires project:update on the API.
+   */
+  includeDeleted?: boolean;
   onClose: () => void;
 };
 
@@ -53,13 +68,20 @@ export function EntryDetailSheet({
   projectSlug,
   entryId,
   taskNumberById,
+  includeDeleted = false,
   onClose,
 }: EntryDetailSheetProps) {
   const { t } = useTranslation();
-  const query = useAgentEntry(projectId, entryId);
+  const query = useAgentEntry(projectId, entryId, includeDeleted);
   const entry = query.data;
   const decision = entry ? parseDecision(entry.decision) : null;
   const refs = entry?.refs ?? null;
+  const permissions = useEntryPermissions();
+  const { restore, isPending: restoring } = useRestoreEntry(projectId);
+  const [pendingDelete, setPendingDelete] = useState<DeletableEntry | null>(
+    null,
+  );
+  const deleted = Boolean(entry?.deletedAt);
 
   return (
     <Sheet open={Boolean(entryId)} onOpenChange={(open) => !open && onClose()}>
@@ -80,9 +102,48 @@ export function EntryDetailSheet({
                 <EntryAuthor entry={entry} />
                 <span aria-hidden="true">·</span>
                 <span>{formatDateTime(entry.createdAt)}</span>
+                {deleted && entry.deletedAt ? (
+                  <Badge
+                    variant="secondary"
+                    size="sm"
+                    data-testid="entry-deleted-badge"
+                    title={formatDateTime(entry.deletedAt)}
+                  >
+                    {t("agentLayer:timeline.deleted")}
+                  </Badge>
+                ) : null}
               </>
             ) : null}
           </SheetDescription>
+          {entry && canDeleteEntry(entry, permissions) ? (
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => setPendingDelete(entry)}
+                data-testid="entry-delete"
+              >
+                <Trash2 />
+                {t("agentLayer:timeline.delete")}
+              </Button>
+            </div>
+          ) : entry && deleted && permissions.canUpdateProjects ? (
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                disabled={restoring}
+                onClick={() => restore(entry.id)}
+                data-testid="entry-restore"
+              >
+                <RotateCcw />
+                {t("agentLayer:timeline.restore")}
+              </Button>
+            </div>
+          ) : null}
         </SheetHeader>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 pb-6 text-sm">
@@ -207,6 +268,12 @@ export function EntryDetailSheet({
           ) : null}
         </div>
       </SheetContent>
+      <EntryDeleteDialog
+        projectId={projectId}
+        entry={pendingDelete}
+        onClose={() => setPendingDelete(null)}
+        onDeleted={onClose}
+      />
     </Sheet>
   );
 }

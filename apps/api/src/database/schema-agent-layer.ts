@@ -91,8 +91,10 @@ export const agentActorTable = pgTable(
  * expose comment writes), which is what keeps a task page from growing without
  * bound.
  *
- * Append-only is enforced at the application layer for now: no update/delete
- * endpoint is exposed. A DB-level trigger can be added later if needed.
+ * Append-only is enforced at the application layer: no update endpoint is
+ * exposed, and "delete" is a soft delete (`deletedAt`/`deletedBy`) that hides
+ * the row without touching any other column. A DB-level trigger can be added
+ * later if needed.
  *
  * `taskId` is intentionally NULLABLE — investigation, design discussion and
  * abandoned attempts must be recordable without inventing a task first. This is
@@ -177,6 +179,18 @@ export const agentEntryTable = pgTable(
     compaction: text("compaction").notNull().default("full"),
 
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+
+    /*
+     * Soft delete (0006). "Hide, never edit": a deleted row keeps every field
+     * and only stops being read. Default reads filter on `deleted_at IS NULL`;
+     * restore clears both columns. `deletedBy` is SET NULL like the other
+     * user references, so the row survives the deleter's account.
+     */
+    deletedAt: timestamp("deleted_at", { mode: "date" }),
+    deletedBy: text("deleted_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
   },
   (table) => [
     index("agent_entry_project_createdAt_idx").on(

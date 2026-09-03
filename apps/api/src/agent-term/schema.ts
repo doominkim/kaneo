@@ -1,6 +1,7 @@
 import { z } from "../openapi";
 
 export const workspaceIdParam = z.object({ workspaceId: z.string() });
+export const termParams = workspaceIdParam.extend({ termId: z.string() });
 
 export const resolveQuery = z.object({
   term: z.string().min(1).openapi({

@@ -32,6 +32,8 @@ type ListInput = {
   /** An exact task id, or NO_TASK_FILTER for the project-level rows. */
   taskId?: string;
   kind?: string;
+  /** Show soft-deleted rows too. The route gates this on project:update. */
+  includeDeleted?: boolean;
 };
 
 /**
@@ -48,7 +50,9 @@ type ListInput = {
  * rather than round-tripped through the client: PostgreSQL stores microseconds,
  * a JS Date carries milliseconds, and a timestamp cursor would silently skip
  * every row inside the truncated window. The ledger is append-only, so a
- * cursor id never disappears underneath a caller.
+ * cursor id never disappears underneath a caller — a soft-deleted row is
+ * still a valid cursor, which is why the cursor lookup does not filter on
+ * `deletedAt` even though the page itself does.
  */
 async function listEntries(input: ListInput) {
   // `and()` drops undefined members, so `or()`'s nullable return can be
@@ -95,6 +99,7 @@ async function listEntries(input: ListInput) {
     conditions.push(eq(agentEntryTable.taskId, input.taskId));
   }
   if (input.kind) conditions.push(eq(agentEntryTable.kind, input.kind));
+  if (!input.includeDeleted) conditions.push(isNull(agentEntryTable.deletedAt));
 
   const rows = await db
     .select({
@@ -109,6 +114,7 @@ async function listEntries(input: ListInput) {
       agentLabel: agentEntryTable.agentLabel,
       usage: agentEntryTable.usage,
       createdAt: agentEntryTable.createdAt,
+      deletedAt: agentEntryTable.deletedAt,
       actorId: agentActorTable.id,
       actorProvider: agentActorTable.provider,
       actorModel: agentActorTable.model,
@@ -135,6 +141,7 @@ async function listEntries(input: ListInput) {
     agentLabel: r.agentLabel,
     usage: (r.usage as EntryUsage | null) ?? null,
     createdAt: r.createdAt,
+    deletedAt: r.deletedAt,
     ...shapeAuthorship(
       {
         id: r.actorId,

@@ -22,6 +22,8 @@ export type GetAgentEntriesRequest = {
   before?: string;
   kind?: AgentEntryKind;
   taskId?: string;
+  /** Requires project:update on the API (403 otherwise); send only when granted. */
+  includeDeleted?: boolean;
 };
 
 async function getAgentEntries({
@@ -30,6 +32,7 @@ async function getAgentEntries({
   before,
   kind,
   taskId,
+  includeDeleted = false,
 }: GetAgentEntriesRequest): Promise<AgentEntryList> {
   const response = await client["agent-entry"][":projectId"].$get({
     param: { projectId },
@@ -38,6 +41,7 @@ async function getAgentEntries({
       ...(before ? { before } : {}),
       ...(kind ? { kind } : {}),
       ...(taskId ? { taskId } : {}),
+      ...(includeDeleted ? { includeDeleted: "true" as const } : {}),
     },
   });
 

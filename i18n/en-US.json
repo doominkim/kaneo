@@ -2250,7 +2250,23 @@
 			"refsPrs": "Pull requests",
 			"refsFiles": "Files",
 			"coreChangedList": "Core paths changed",
-			"task": "Task"
+			"task": "Task",
+			"delete": "Delete",
+			"deleteTitle": "Delete this entry?",
+			"deleteDescription": "The entry is hidden from the timeline, the tree and the agent brief. It is kept in full; a project maintainer can restore it.",
+			"deleting": "Deleting…",
+			"entryDeleted": "Entry deleted.",
+			"deleteFailed": "Could not delete the entry.",
+			"deleteForbidden": "Only the author or a project:update holder can delete this entry.",
+			"deleteNotFound": "The entry no longer exists or is already deleted.",
+			"restore": "Restore",
+			"entryRestored": "Entry restored.",
+			"restoreFailed": "Could not restore the entry.",
+			"restoreForbidden": "project:update is required to restore an entry.",
+			"restoreNotFound": "The entry no longer exists or is not deleted.",
+			"deleted": "Deleted",
+			"showDeleted": "Show deleted entries",
+			"cancel": "Cancel"
 		},
 		"composer": {
 			"open": "Add note",
@@ -2415,7 +2431,15 @@
 			"proposing": "Proposing…",
 			"proposed": "\"{{term}}\" proposed.",
 			"proposeConflict": "A term with this canonical name already exists.",
-			"proposeFailed": "Could not propose the term."
+			"proposeFailed": "Could not propose the term.",
+			"delete": "Delete",
+			"deleteTitle": "Delete \"{{term}}\"?",
+			"deleteDescription": "Removes the proposal for good. Only proposed terms can be deleted; a reviewed term is retired instead so a tombstone remains.",
+			"deleting": "Deleting…",
+			"deleted": "\"{{term}}\" deleted.",
+			"deleteFailed": "Could not delete the term.",
+			"deleteRefused": "The term cannot be deleted.",
+			"deleteForbidden": "workspace:update is required to delete a term."
 		},
 		"confidence": {
 			"proposed": "Proposed",

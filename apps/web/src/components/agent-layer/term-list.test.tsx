@@ -7,12 +7,14 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentLayerApiError } from "@/fetchers/agent-layer/api-error";
 import type { AgentTerm } from "@/fetchers/agent-layer/get-agent-terms";
 import { TermList } from "./term-list";
 
 const mocks = vi.hoisted(() => ({
   terms: vi.fn(),
   review: vi.fn(),
+  remove: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
 }));
@@ -44,6 +46,9 @@ vi.mock("@/hooks/queries/agent-layer/use-agent-terms", () => ({
 }));
 vi.mock("@/hooks/mutations/agent-layer/use-confirm-agent-term", () => ({
   useConfirmAgentTerm: () => ({ mutateAsync: mocks.review, isPending: false }),
+}));
+vi.mock("@/hooks/mutations/agent-layer/use-delete-agent-term", () => ({
+  useDeleteAgentTerm: () => ({ mutateAsync: mocks.remove, isPending: false }),
 }));
 
 function term(overrides: Partial<AgentTerm> & { id: string }): AgentTerm {
@@ -95,7 +100,11 @@ const terms: AgentTerm[] = [
 
 beforeEach(() => {
   mocks.review.mockReset().mockResolvedValue(terms[0]);
+  mocks.remove
+    .mockReset()
+    .mockResolvedValue({ id: "t1", canonical: "급여코드" });
   mocks.toastSuccess.mockReset();
+  mocks.toastError.mockReset();
   mocks.terms.mockReset().mockReturnValue({
     isPending: false,
     isError: false,
@@ -221,6 +230,65 @@ describe("TermList", () => {
         confidence: "disputed",
       }),
     );
+  });
+
+  it("offers delete only on proposed rows, and only with workspace:update", () => {
+    render(<TermList workspaceId="ws" canReview={false} />);
+    expect(screen.queryByTestId("delete-term")).not.toBeInTheDocument();
+    cleanup();
+
+    render(<TermList workspaceId="ws" canReview />);
+    const rows = screen.getAllByTestId("term-row");
+    expect(within(rows[0]).getByTestId("delete-term")).toBeInTheDocument();
+    expect(within(rows[1]).queryByTestId("delete-term")).toBeNull();
+    expect(within(rows[2]).queryByTestId("delete-term")).toBeNull();
+  });
+
+  it("deletes a proposed term through the dialog and shows the 409 reason verbatim", async () => {
+    render(<TermList workspaceId="ws" canReview />);
+
+    fireEvent.click(
+      within(screen.getAllByTestId("term-row")[0]).getByTestId("delete-term"),
+    );
+    const dialog = await screen.findByTestId("delete-term-dialog");
+    expect(dialog).toHaveTextContent(
+      "agentLayer:knowledge.deleteTitle term=급여코드",
+    );
+    expect(mocks.remove).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByTestId("delete-term-submit"));
+    await waitFor(() =>
+      expect(mocks.remove).toHaveBeenCalledWith({
+        workspaceId: "ws",
+        termId: "t1",
+      }),
+    );
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "agentLayer:knowledge.deleted term=급여코드",
+    );
+    await waitFor(() =>
+      expect(screen.queryByTestId("delete-term-dialog")).toBeNull(),
+    );
+
+    const reason =
+      "Only proposed terms can be deleted; this one is confirmed. Retire it instead so a tombstone remains.";
+    mocks.remove.mockRejectedValueOnce(new AgentLayerApiError(409, reason));
+    fireEvent.click(
+      within(screen.getAllByTestId("term-row")[0]).getByTestId("delete-term"),
+    );
+    fireEvent.click(
+      within(await screen.findByTestId("delete-term-dialog")).getByTestId(
+        "delete-term-submit",
+      ),
+    );
+    await waitFor(() =>
+      expect(mocks.toastError).toHaveBeenCalledWith(
+        "agentLayer:knowledge.deleteRefused",
+        { description: reason },
+      ),
+    );
+    // The dialog stays open on failure so the user sees what was refused.
+    expect(screen.getByTestId("delete-term-dialog")).toBeInTheDocument();
   });
 
   it("shows the empty state when no term matches", () => {

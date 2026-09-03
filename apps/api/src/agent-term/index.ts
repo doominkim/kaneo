@@ -8,15 +8,22 @@ import {
 import { requireWorkspacePermission } from "../utils/require-workspace-permission";
 import { workspaceAccess } from "../utils/workspace-access-middleware";
 import confirmTerm from "./controllers/confirm-term";
+import deleteTerm from "./controllers/delete-term";
 import listTerms from "./controllers/list-terms";
 import proposeTerm from "./controllers/propose-term";
 import resolveTerm from "./controllers/resolve-term";
-import { resolveResultSchema, termListSchema, termSchema } from "./response";
+import {
+  resolveResultSchema,
+  termDeleteResultSchema,
+  termListSchema,
+  termSchema,
+} from "./response";
 import {
   confirmTermBody,
   listTermsQuery,
   proposeTermBody,
   resolveQuery,
+  termParams,
   workspaceIdParam,
 } from "./schema";
 
@@ -103,6 +110,32 @@ const confirmRoute = createRoute({
   },
 });
 
+const deleteRoute = createRoute({
+  method: "delete",
+  operationId: "deleteAgentTerm",
+  path: "/{workspaceId}/{termId}",
+  tags: ["Agent Layer"],
+  summary: "Delete a proposed term",
+  description:
+    "Hard-deletes a term that is still `proposed` — nothing has relied on it yet. A `confirmed` or `disputed` term is refused with 409: retire it instead so a tombstone stays resolvable. Also 409 when another term names it in `supersededBy`. Requires workspace:update, the same gate as review.",
+  middleware: [
+    workspaceAccess.fromParam("workspaceId"),
+    requireWorkspacePermission({ workspace: ["update"] }),
+  ] as const,
+  request: { params: termParams },
+  responses: {
+    200: jsonResponse(
+      "The deleted term's id and canonical",
+      termDeleteResultSchema,
+    ),
+    403: errorResponse("No workspace access, or missing workspace:update"),
+    404: errorResponse("Term not found in this workspace"),
+    409: errorResponse(
+      "Term is not `proposed` (retire it instead), or another term supersedes to it",
+    ),
+  },
+});
+
 const agentTerm = apiRouter<BaseVariables & { workspaceId: string }>()
   .openapi(resolveRoute, async (c) =>
     c.json(
@@ -137,6 +170,10 @@ const agentTerm = apiRouter<BaseVariables & { workspaceId: string }>()
       await confirmTerm(c.req.valid("param").workspaceId, termId, confidence),
       200,
     );
+  })
+  .openapi(deleteRoute, async (c) => {
+    const { workspaceId, termId } = c.req.valid("param");
+    return c.json(await deleteTerm(workspaceId, termId), 200);
   });
 
 export default agentTerm;

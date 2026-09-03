@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
 import { userTable } from "../../database/schema";
@@ -19,8 +19,15 @@ import {
  * workspace-access middleware authorized, so an entry outside that project must
  * be invisible here, or authorizing against one's own project would unlock
  * every entry in the instance.
+ *
+ * A soft-deleted row is "not found" unless `includeDeleted` is set, which the
+ * route only grants to project:update callers.
  */
-async function getEntry(projectId: string, entryId: string) {
+async function getEntry(
+  projectId: string,
+  entryId: string,
+  includeDeleted = false,
+) {
   const [row] = await db
     .select({
       entry: agentEntryTable,
@@ -34,6 +41,7 @@ async function getEntry(projectId: string, entryId: string) {
       and(
         eq(agentEntryTable.id, entryId),
         eq(agentEntryTable.projectId, projectId),
+        includeDeleted ? undefined : isNull(agentEntryTable.deletedAt),
       ),
     )
     .limit(1);

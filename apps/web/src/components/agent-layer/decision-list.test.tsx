@@ -10,6 +10,19 @@ import { DecisionList } from "./decision-list";
 
 const mocks = vi.hoisted(() => ({ entries: vi.fn() }));
 
+vi.mock("@/hooks/use-workspace-permission", () => ({
+  useWorkspacePermission: () => ({ canUpdateProjects: () => false }),
+}));
+vi.mock("@/components/providers/auth-provider/hooks/use-auth", () => ({
+  useAuth: () => ({ user: { id: "viewer" } }),
+}));
+vi.mock("@/hooks/mutations/agent-layer/use-delete-agent-entry", () => ({
+  useDeleteAgentEntry: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+vi.mock("@/lib/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
     t: (key: string, options?: { value?: unknown }) =>

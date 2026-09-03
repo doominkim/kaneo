@@ -10,12 +10,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { isAgentLayerStatus } from "@/fetchers/agent-layer/api-error";
 import type {
   AgentTerm,
   AgentTermConfidence,
   AgentTermState,
 } from "@/fetchers/agent-layer/get-agent-terms";
 import { useConfirmAgentTerm } from "@/hooks/mutations/agent-layer/use-confirm-agent-term";
+import { useDeleteAgentTerm } from "@/hooks/mutations/agent-layer/use-delete-agent-term";
 import { useAgentTerms } from "@/hooks/queries/agent-layer/use-agent-terms";
 import { cn } from "@/lib/cn";
 import { toast } from "@/lib/toast";
@@ -52,8 +54,10 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
   );
   const [state, setState] = useState<AgentTermState | undefined>(undefined);
   const [pending, setPending] = useState<PendingReview | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AgentTerm | null>(null);
   const query = useAgentTerms(workspaceId, confidence, state);
   const review = useConfirmAgentTerm();
+  const remove = useDeleteAgentTerm();
 
   const handleReview = async () => {
     if (!pending) return;
@@ -73,6 +77,33 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
     } catch (cause) {
       toast.error(t("agentLayer:knowledge.reviewFailed"), {
         description: cause instanceof Error ? cause.message : undefined,
+      });
+    }
+  };
+
+  // 409 carries the API's own reason (reviewed term, or another term's
+  // `supersededBy` points here); it is shown verbatim rather than mapped.
+  const handleDelete = async () => {
+    if (!pendingDelete) return;
+    try {
+      await remove.mutateAsync({ workspaceId, termId: pendingDelete.id });
+      toast.success(
+        t("agentLayer:knowledge.deleted", { term: pendingDelete.canonical }),
+      );
+      setPendingDelete(null);
+    } catch (cause) {
+      if (isAgentLayerStatus(cause, 409)) {
+        toast.error(t("agentLayer:knowledge.deleteRefused"), {
+          description: cause instanceof Error ? cause.message : undefined,
+        });
+        return;
+      }
+      toast.error(t("agentLayer:knowledge.deleteFailed"), {
+        description: isAgentLayerStatus(cause, 403)
+          ? t("agentLayer:knowledge.deleteForbidden")
+          : cause instanceof Error
+            ? cause.message
+            : undefined,
       });
     }
   };
@@ -122,6 +153,8 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
               onReview={(reviewed, next) =>
                 setPending({ term: reviewed, confidence: next })
               }
+              canDelete={canReview}
+              onDelete={setPendingDelete}
             />
           ))}
         </ul>
@@ -174,6 +207,50 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
                 : pending?.confidence === "disputed"
                   ? t("agentLayer:knowledge.dispute")
                   : t("agentLayer:knowledge.confirm")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={Boolean(pendingDelete)}
+        onOpenChange={(open) =>
+          !open && !remove.isPending && setPendingDelete(null)
+        }
+      >
+        <AlertDialogContent data-testid="delete-term-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("agentLayer:knowledge.deleteTitle", {
+                term: pendingDelete?.canonical,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("agentLayer:knowledge.deleteDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose
+              render={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={remove.isPending}
+                />
+              }
+            >
+              {t("agentLayer:knowledge.cancel")}
+            </AlertDialogClose>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={remove.isPending}
+              onClick={handleDelete}
+              data-testid="delete-term-submit"
+            >
+              {remove.isPending
+                ? t("agentLayer:knowledge.deleting")
+                : t("agentLayer:knowledge.delete")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

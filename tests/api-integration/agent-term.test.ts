@@ -832,4 +832,155 @@ describe("API integration: agent terms", () => {
       expect(persisted?.confidence).toBe("proposed");
     });
   });
+
+  describe("deleting", () => {
+    function remove(
+      app: ReturnType<typeof createApp>["app"],
+      workspaceId: string,
+      termId: string,
+    ) {
+      return app.request(`/api/agent-term/${workspaceId}/${termId}`, {
+        method: "DELETE",
+      });
+    }
+
+    async function seedTerm(
+      workspaceId: string,
+      overrides: Partial<typeof agentTermTable.$inferInsert> = {},
+    ) {
+      const [term] = await db
+        .insert(agentTermTable)
+        .values({
+          workspaceId,
+          canonical: `Term ${randomUUID()}`,
+          aliases: [],
+          notToConfuseWith: [],
+          anchors: [],
+          confidence: "proposed",
+          ...overrides,
+        })
+        .returning();
+      return term;
+    }
+
+    async function stillThere(termId: string) {
+      const [row] = await db
+        .select({ id: agentTermTable.id })
+        .from(agentTermTable)
+        .where(eq(agentTermTable.id, termId));
+      return row !== undefined;
+    }
+
+    it("hard-deletes a proposed term for workspace:update", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const term = await seedTerm(admin.workspace.id, { canonical: "Draft" });
+
+      mockAuthenticatedSession(admin.user);
+      const { app } = createApp();
+
+      const response = await remove(app, admin.workspace.id, term.id);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        id: term.id,
+        canonical: "Draft",
+      });
+      expect(await stillThere(term.id)).toBe(false);
+
+      // Gone means gone: a second delete is "not found".
+      expect((await remove(app, admin.workspace.id, term.id)).status).toBe(404);
+    });
+
+    it("refuses a confirmed or disputed term with 409 and points at retirement", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const confirmed = await seedTerm(admin.workspace.id, {
+        confidence: "confirmed",
+      });
+      const disputed = await seedTerm(admin.workspace.id, {
+        confidence: "disputed",
+      });
+
+      mockAuthenticatedSession(admin.user);
+      const { app } = createApp();
+
+      const response = await remove(app, admin.workspace.id, confirmed.id);
+      expect(response.status).toBe(409);
+      await expect(response.text()).resolves.toBe(
+        "Only proposed terms can be deleted; this one is confirmed. Retire it instead so a tombstone remains.",
+      );
+      expect((await remove(app, admin.workspace.id, disputed.id)).status).toBe(
+        409,
+      );
+
+      expect(await stillThere(confirmed.id)).toBe(true);
+      expect(await stillThere(disputed.id)).toBe(true);
+    });
+
+    it("refuses a term another term supersedes to", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const replacement = await seedTerm(admin.workspace.id, {
+        canonical: "Ledger",
+      });
+      await seedTerm(admin.workspace.id, {
+        canonical: "Work log",
+        state: "retired",
+        supersededBy: replacement.id,
+      });
+
+      mockAuthenticatedSession(admin.user);
+      const { app } = createApp();
+
+      const response = await remove(app, admin.workspace.id, replacement.id);
+      expect(response.status).toBe(409);
+      await expect(response.text()).resolves.toBe(
+        'Term is referenced as the replacement of "Work log" and cannot be deleted',
+      );
+      expect(await stillThere(replacement.id)).toBe(true);
+    });
+
+    it("blocks a viewer and a member (workspace:update required)", async () => {
+      for (const role of ["viewer", "member"]) {
+        const caller = await createWorkspaceMember({ role });
+        const term = await seedTerm(caller.workspace.id);
+
+        mockAuthenticatedSession(caller.user);
+        const { app } = createApp();
+
+        const response = await remove(app, caller.workspace.id, term.id);
+        expect(response.status, role).toBe(403);
+        await expect(response.text()).resolves.toBe("Insufficient permissions");
+        expect(await stillThere(term.id)).toBe(true);
+      }
+    });
+
+    it("reports a term from another workspace as not found and leaves it", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const other = await createWorkspaceMember({ role: "admin" });
+      const foreign = await seedTerm(other.workspace.id);
+
+      mockAuthenticatedSession(admin.user);
+      const { app } = createApp();
+
+      const response = await remove(app, admin.workspace.id, foreign.id);
+      expect(response.status).toBe(404);
+      expect(await stillThere(foreign.id)).toBe(true);
+    });
+
+    it("rejects unauthenticated and outside-workspace callers", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const term = await seedTerm(admin.workspace.id);
+
+      mockAnonymousSession();
+      expect(
+        (await remove(createApp().app, admin.workspace.id, term.id)).status,
+      ).toBe(401);
+
+      const outsider = await createWorkspaceMember({ role: "admin" });
+      mockAuthenticatedSession(outsider.user);
+      expect(
+        (await remove(createApp().app, admin.workspace.id, term.id)).status,
+      ).toBe(403);
+
+      expect(await stillThere(term.id)).toBe(true);
+    });
+  });
 });

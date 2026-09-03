@@ -7,12 +7,19 @@ export type AgentEntryDetail = InferResponseType<
   200
 >;
 
+/**
+ * `includeDeleted` is only honoured for project:update holders (403
+ * otherwise), so the flag is sent solely when the caller asked for it — a
+ * plain `includeDeleted=false` would be harmless but is noise on the wire.
+ */
 async function getAgentEntry(
   projectId: string,
   entryId: string,
+  includeDeleted = false,
 ): Promise<AgentEntryDetail> {
   const response = await client["agent-entry"][":projectId"][":entryId"].$get({
     param: { projectId, entryId },
+    query: includeDeleted ? { includeDeleted: "true" } : {},
   });
 
   if (!response.ok) {

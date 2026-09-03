@@ -107,6 +107,7 @@ async function appendEntry(input: AppendInput) {
     agentLabel: entry.agentLabel,
     usage: (entry.usage as EntryUsage | null) ?? null,
     createdAt: entry.createdAt,
+    deletedAt: entry.deletedAt,
     ...shapeAuthorship(actor, author),
   };
 }

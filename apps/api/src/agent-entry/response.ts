@@ -1,4 +1,4 @@
-import { responseTimestamp, z } from "../openapi";
+import { nullableResponseTimestamp, responseTimestamp, z } from "../openapi";
 import { actorResponseSchema } from "./actor-response";
 import { refsBody, usageBody } from "./schema";
 
@@ -57,6 +57,10 @@ export const entrySummarySchema = z
     agentLabel: z.string().nullable(),
     usage: usageBody.nullable(),
     createdAt: responseTimestamp,
+    deletedAt: nullableResponseTimestamp.openapi({
+      description:
+        "When the entry was soft-deleted, or null. Non-null only appears on listings requested with `includeDeleted=true`.",
+    }),
     actor: actorField,
     author: authorField,
   })
@@ -93,7 +97,27 @@ export const entryDetailSchema = z
     compaction: z.string(),
     sessionId: z.string().nullable(),
     createdAt: responseTimestamp,
+    deletedAt: nullableResponseTimestamp.openapi({
+      description:
+        "When the entry was soft-deleted, or null. A deleted entry is only returned with `includeDeleted=true`.",
+    }),
+    deletedBy: z.string().nullable().openapi({
+      description:
+        "User id of whoever soft-deleted the entry; null when not deleted, or when that account was since removed.",
+    }),
     actor: actorField,
     author: authorField,
   })
   .openapi("AgentEntryDetail");
+
+/**
+ * Delete and restore answer with the same shape: the id and the current
+ * `deletedAt` (set after a delete, null after a restore), so a client can
+ * patch its cached row instead of refetching the page.
+ */
+export const entryDeleteResultSchema = z
+  .object({
+    id: z.string(),
+    deletedAt: nullableResponseTimestamp,
+  })
+  .openapi("AgentEntryDeleteResult");

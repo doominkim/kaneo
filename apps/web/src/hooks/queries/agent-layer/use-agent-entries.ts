@@ -14,14 +14,16 @@ export function useAgentEntries(
   projectId: string,
   kind?: AgentEntryKind,
   taskId?: string,
+  includeDeleted = false,
 ) {
   return useInfiniteQuery({
-    queryKey: agentLayerKeys.entries(projectId, kind, taskId),
+    queryKey: agentLayerKeys.entries(projectId, kind, taskId, includeDeleted),
     queryFn: ({ pageParam }) =>
       getAgentEntries({
         projectId,
         kind,
         taskId,
+        includeDeleted,
         limit: AGENT_ENTRIES_PAGE_SIZE,
         before: pageParam ?? undefined,
       }),

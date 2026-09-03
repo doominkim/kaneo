@@ -2,6 +2,23 @@ import { z } from "../openapi";
 
 export const projectIdParam = z.object({ projectId: z.string() });
 export const entryIdParam = z.object({ entryId: z.string() });
+export const entryParams = projectIdParam.extend(entryIdParam.shape);
+
+/**
+ * Query flag as the wire carries it: `includeDeleted=true`. Parsed to a
+ * boolean here so controllers never compare strings. `z.coerce.boolean()` is
+ * deliberately not used — it would read `"false"` as true.
+ */
+export const includeDeletedQuery = z
+  .enum(["true", "false"])
+  .optional()
+  .transform((value) => value === "true")
+  .openapi({
+    description:
+      "Set to `true` to include soft-deleted entries (`deletedAt` set). Requires project:update; other callers get a 403. Default: deleted entries are hidden.",
+  });
+
+export const getEntryQuery = z.object({ includeDeleted: includeDeletedQuery });
 
 const decisionBody = z
   .object({
@@ -147,6 +164,7 @@ export const listEntriesQuery = z.object({
       "Exact task id, or the literal `none` for entries not tied to any task (project-level notes, task_id IS NULL). Omit for every entry of the project.",
   }),
   kind: z.enum(["work", "investigation", "decision", "handoff"]).optional(),
+  includeDeleted: includeDeletedQuery,
 });
 
 /**

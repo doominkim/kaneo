@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { useAgentEntries } from "@/hooks/queries/agent-layer/use-agent-entries";
@@ -6,6 +7,12 @@ import {
   AgentLayerErrorState,
   AgentLayerSkeleton,
 } from "./agent-layer-state";
+import {
+  canDeleteEntry,
+  type DeletableEntry,
+  EntryDeleteDialog,
+  useEntryPermissions,
+} from "./entry-actions";
 import { EntryRow } from "./entry-row";
 
 type DecisionListProps = {
@@ -25,6 +32,10 @@ export function DecisionList({
   const { t } = useTranslation();
   const query = useAgentEntries(projectId, "decision");
   const entries = query.data?.pages.flatMap((page) => page.entries) ?? [];
+  const permissions = useEntryPermissions();
+  const [pendingDelete, setPendingDelete] = useState<DeletableEntry | null>(
+    null,
+  );
 
   return (
     <div className="space-y-3" data-testid="decision-list">
@@ -51,6 +62,11 @@ export function DecisionList({
                 entry.taskId ? taskNumberById.get(entry.taskId) : undefined
               }
               onOpen={() => onOpenEntry(entry.id)}
+              onDelete={
+                canDeleteEntry(entry, permissions)
+                  ? () => setPendingDelete(entry)
+                  : undefined
+              }
             />
           ))}
         </ol>
@@ -67,6 +83,11 @@ export function DecisionList({
           </Button>
         </div>
       ) : null}
+      <EntryDeleteDialog
+        projectId={projectId}
+        entry={pendingDelete}
+        onClose={() => setPendingDelete(null)}
+      />
     </div>
   );
 }

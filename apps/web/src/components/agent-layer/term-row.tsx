@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/public-project/markdown-renderer";
@@ -99,10 +99,22 @@ type TermRowProps = {
   term: AgentTerm;
   canReview?: boolean;
   onReview?: (term: AgentTerm, confidence: "confirmed" | "disputed") => void;
+  /**
+   * workspace:update. Only a `proposed` term is offered for deletion: a
+   * reviewed one is retired instead (the API answers 409 otherwise).
+   */
+  canDelete?: boolean;
+  onDelete?: (term: AgentTerm) => void;
 };
 
 /** One lexicon entry (DESIGN.md §4.4); shared by the list and the resolver. */
-export function TermRow({ term, canReview = false, onReview }: TermRowProps) {
+export function TermRow({
+  term,
+  canReview = false,
+  onReview,
+  canDelete = false,
+  onDelete,
+}: TermRowProps) {
   const { t } = useTranslation();
   const [showDefinition, setShowDefinition] = useState(false);
   const anchors = parseAnchors(term.anchors);
@@ -154,6 +166,20 @@ export function TermRow({ term, canReview = false, onReview }: TermRowProps) {
                 {t("agentLayer:knowledge.dispute")}
               </Button>
             </>
+          ) : null}
+          {canDelete && term.confidence === "proposed" ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => onDelete?.(term)}
+              aria-label={t("agentLayer:knowledge.delete")}
+              title={t("agentLayer:knowledge.delete")}
+              data-testid="delete-term"
+            >
+              <Trash2 />
+            </Button>
           ) : null}
         </span>
       </div>

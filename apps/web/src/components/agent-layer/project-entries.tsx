@@ -1,14 +1,24 @@
 import { NotebookPen } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { NO_TASK_FILTER } from "@/fetchers/agent-layer/get-agent-entries";
 import { useAgentEntries } from "@/hooks/queries/agent-layer/use-agent-entries";
 import { AgentLayerErrorState, AgentLayerSkeleton } from "./agent-layer-state";
+import {
+  canDeleteEntry,
+  type DeletableEntry,
+  EntryDeleteDialog,
+  useEntryPermissions,
+  useRestoreEntry,
+} from "./entry-actions";
 import { EntryRow } from "./entry-row";
 
 type ProjectEntriesProps = {
   projectId: string;
   projectSlug?: string;
+  /** Maintainer's view: also list soft-deleted rows (needs project:update). */
+  showDeleted?: boolean;
   onOpenEntry: (entryId: string) => void;
 };
 
@@ -21,11 +31,22 @@ type ProjectEntriesProps = {
 export function ProjectEntries({
   projectId,
   projectSlug,
+  showDeleted = false,
   onOpenEntry,
 }: ProjectEntriesProps) {
   const { t } = useTranslation();
-  const query = useAgentEntries(projectId, undefined, NO_TASK_FILTER);
+  const query = useAgentEntries(
+    projectId,
+    undefined,
+    NO_TASK_FILTER,
+    showDeleted,
+  );
   const entries = query.data?.pages.flatMap((page) => page.entries) ?? [];
+  const permissions = useEntryPermissions();
+  const { restore } = useRestoreEntry(projectId);
+  const [pendingDelete, setPendingDelete] = useState<DeletableEntry | null>(
+    null,
+  );
 
   return (
     <section
@@ -63,6 +84,16 @@ export function ProjectEntries({
               projectSlug={projectSlug}
               showTask={false}
               onOpen={() => onOpenEntry(entry.id)}
+              onDelete={
+                canDeleteEntry(entry, permissions)
+                  ? () => setPendingDelete(entry)
+                  : undefined
+              }
+              onRestore={
+                entry.deletedAt && permissions.canUpdateProjects
+                  ? () => restore(entry.id)
+                  : undefined
+              }
             />
           ))}
         </ol>
@@ -80,6 +111,11 @@ export function ProjectEntries({
           </Button>
         </div>
       ) : null}
+      <EntryDeleteDialog
+        projectId={projectId}
+        entry={pendingDelete}
+        onClose={() => setPendingDelete(null)}
+      />
     </section>
   );
 }
