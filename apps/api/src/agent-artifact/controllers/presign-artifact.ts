@@ -1,26 +1,38 @@
 import { createId } from "@paralleldrive/cuid2";
-import { and, eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
-import db, { schema } from "../../database";
+import db from "../../database";
 import { agentArtifactTable } from "../../database/schema-agent-layer";
 import { buildArtifactKey, normalizeArtifactContentType } from "../policy";
 import { createArtifactUploadUrl, toStorageKey } from "../storage";
+import { assertTaskInProject } from "./assert-task-in-project";
+
+/** Exactly one is set; the other column is written as NULL. */
+export type ArtifactUploader = { userId: string } | { actorId: string };
 
 type PresignInput = {
   workspaceId: string;
   projectId: string;
-  userId: string;
+  uploader: ArtifactUploader;
   name: string;
   contentType: string;
   size: number;
   taskId?: string | null;
 };
 
+export function uploaderColumns(uploader: ArtifactUploader) {
+  return "userId" in uploader
+    ? { uploadedBy: uploader.userId, actorId: null }
+    : { uploadedBy: null, actorId: uploader.actorId };
+}
+
 /**
  * Step one of two. The row is inserted now, unfinalized, so that finalize can
  * check the object against exactly what was declared here instead of trusting
  * a second copy of size/contentType from the client. Unfinalized rows are
  * invisible to every read path; see the schema comment for the orphan story.
+ *
+ * Attribution is decided here, not at finalize: the HTTP route passes the
+ * human (`userId`), the MCP path passes the agent (`actorId`).
  *
  * Storage is asked to sign only after the row exists, so a storage outage
  * cannot leave a signed URL without a record — the reverse (a row without a
@@ -34,23 +46,7 @@ async function presignArtifact(input: PresignInput) {
     });
   }
 
-  if (input.taskId) {
-    const [task] = await db
-      .select({ id: schema.taskTable.id })
-      .from(schema.taskTable)
-      .where(
-        and(
-          eq(schema.taskTable.id, input.taskId),
-          eq(schema.taskTable.projectId, input.projectId),
-        ),
-      )
-      .limit(1);
-    if (!task) {
-      throw new HTTPException(400, {
-        message: "taskId does not belong to this project",
-      });
-    }
-  }
+  await assertTaskInProject(input.projectId, input.taskId);
 
   const artifactId = createId();
   const name = input.name.trim();
@@ -85,9 +81,11 @@ async function presignArtifact(input: PresignInput) {
       contentType,
       size: input.size,
       storageKey,
-      uploadedBy: input.userId,
-      actorId: null,
+      ...uploaderColumns(input.uploader),
       finalizedAt: null,
+      // Set by the app, not `defaultNow()`: the DB session time zone is not
+      // guaranteed to be UTC (KAN-9), and `createdAt` orders the listing.
+      createdAt: new Date(),
     })
     .returning({ id: agentArtifactTable.id });
   if (!row) {

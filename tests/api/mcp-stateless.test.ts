@@ -72,7 +72,11 @@ afterEach(() => {
 
 describe("MCP 2026-07-28 stateless HTTP", () => {
   it("serves tools/list on independent HTTP requests without session IDs", async () => {
-    const handler = createModernMcpHandler("test-token", "http://api.test");
+    const handler = createModernMcpHandler(
+      "test-token",
+      "http://api.test",
+      "test-user",
+    );
 
     const first = await handler.fetch(modernRequest("tools/list", 1));
     const second = await handler.fetch(modernRequest("tools/list", 2));
@@ -99,7 +103,11 @@ describe("MCP 2026-07-28 stateless HTTP", () => {
       },
     );
     vi.stubGlobal("fetch", apiFetch);
-    const handler = createModernMcpHandler("test-token", "http://api.test");
+    const handler = createModernMcpHandler(
+      "test-token",
+      "http://api.test",
+      "test-user",
+    );
 
     const responses = await Promise.all(
       [1, 2, 3, 4].map((id) =>
@@ -137,7 +145,11 @@ describe("MCP 2026-07-28 stateless HTTP", () => {
   });
 
   it("rejects a modern request without the required per-request metadata", async () => {
-    const handler = createModernMcpHandler("test-token", "http://api.test");
+    const handler = createModernMcpHandler(
+      "test-token",
+      "http://api.test",
+      "test-user",
+    );
     const request = new Request("http://mcp.test/mcp", {
       method: "POST",
       headers: {
@@ -174,7 +186,11 @@ describe("MCP 2026-07-28 stateless HTTP", () => {
       },
     );
     vi.stubGlobal("fetch", apiFetch);
-    const handler = createModernMcpHandler("test-token", "http://api.test");
+    const handler = createModernMcpHandler(
+      "test-token",
+      "http://api.test",
+      "test-user",
+    );
 
     const response = await handler.fetch(
       modernRequest("tools/call", 1, {
@@ -352,7 +368,11 @@ describe("MCP 2026-07-28 stateless HTTP", () => {
   });
 
   it("returns a tool error rather than throwing when arguments fail validation", async () => {
-    const handler = createModernMcpHandler("test-token", "http://api.test");
+    const handler = createModernMcpHandler(
+      "test-token",
+      "http://api.test",
+      "test-user",
+    );
 
     const response = await handler.fetch(
       modernRequest("tools/call", 1, {

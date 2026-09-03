@@ -2,8 +2,17 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { registerAgentTools } from "./agent-tools";
 import { registerMcpTools, toMcpToolRegistrar } from "./tools";
 
-/** Create a stateless MCP 2026 handler with a fresh server per request. */
-export function createModernMcpHandler(token: string, apiUrl: string) {
+/**
+ * Create a stateless MCP 2026 handler with a fresh server per request.
+ *
+ * `userId` is the owner of `token` as resolved by the caller's bearer check;
+ * the agent tools that write in-process (agent-direct) act as that user.
+ */
+export function createModernMcpHandler(
+  token: string,
+  apiUrl: string,
+  userId: string,
+) {
   return createMcpHandler(
     () => {
       const server = new McpServer({
@@ -13,7 +22,7 @@ export function createModernMcpHandler(token: string, apiUrl: string) {
       const registrar = toMcpToolRegistrar(server);
       registerMcpTools(registrar, apiUrl, token);
       // Agent Layer tools (fork) — registered alongside, tools.ts untouched.
-      registerAgentTools(registrar, apiUrl, token);
+      registerAgentTools(registrar, apiUrl, token, userId);
       return server;
     },
     { legacy: "reject" },

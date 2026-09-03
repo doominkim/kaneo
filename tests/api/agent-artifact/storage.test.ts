@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   HeadObjectCommand,
+  PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +12,7 @@ import {
   deleteArtifactObject,
   getArtifactDownloadTtlSeconds,
   headArtifactObject,
+  putArtifactObject,
   toStorageKey,
 } from "../../../apps/api/src/agent-artifact/storage";
 
@@ -132,6 +134,41 @@ describe("agent artifact storage", () => {
       contentType: "text/html",
     });
     expect(send.mock.calls[2]?.[0]).toBeInstanceOf(HeadObjectCommand);
+  });
+
+  it("writes text as UTF-8 bytes with the bare content type", async () => {
+    const send = vi.spyOn(S3Client.prototype, "send");
+    send.mockResolvedValueOnce({} as never);
+
+    const result = await putArtifactObject({
+      storageKey: "agent-artifacts/ws/p/a/report.md",
+      contentType: "text/markdown",
+      body: "# 리포트\n",
+    });
+
+    expect(result).toEqual({ size: 12 });
+    const command = send.mock.calls[0]?.[0] as PutObjectCommand;
+    expect(command).toBeInstanceOf(PutObjectCommand);
+    expect(command.input).toMatchObject({
+      Bucket: "kaneo",
+      Key: "agent-artifacts/ws/p/a/report.md",
+      ContentType: "text/markdown",
+      ContentLength: 12,
+    });
+    expect(Buffer.from(command.input.Body as Uint8Array).toString("utf8")).toBe(
+      "# 리포트\n",
+    );
+
+    send.mockRejectedValueOnce(
+      Object.assign(new Error("denied"), { name: "AccessDenied" }),
+    );
+    await expect(
+      putArtifactObject({
+        storageKey: "k",
+        contentType: "text/plain",
+        body: "x",
+      }),
+    ).rejects.toThrow("denied");
   });
 
   it("ignores NotFound on delete", async () => {

@@ -6,6 +6,7 @@ import {
   type ArtifactContentType,
   type Disposition,
   resolveDisposition,
+  resolveResponseContentType,
 } from "../policy";
 import { createArtifactDownloadUrl } from "../storage";
 
@@ -38,15 +39,14 @@ async function getArtifactUrl(input: {
     throw new HTTPException(404, { message: "Artifact not found" });
   }
 
+  const contentType = row.contentType as ArtifactContentType;
+  const disposition = resolveDisposition(contentType, input.disposition);
   try {
     return await createArtifactDownloadUrl({
       storageKey: row.storageKey,
-      contentType: row.contentType,
+      contentType: resolveResponseContentType(contentType, disposition),
       name: row.name,
-      disposition: resolveDisposition(
-        row.contentType as ArtifactContentType,
-        input.disposition,
-      ),
+      disposition,
     });
   } catch (error) {
     throw new HTTPException(503, {

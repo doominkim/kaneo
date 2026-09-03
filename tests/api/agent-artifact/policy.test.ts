@@ -4,9 +4,13 @@ import {
   buildArtifactKey,
   buildContentDisposition,
   hasPathSeparator,
+  MAX_TEXT_ARTIFACT_BYTES,
   normalizeArtifactContentType,
+  normalizeTextArtifactContentType,
   resolveDisposition,
+  resolveResponseContentType,
   sanitizeArtifactName,
+  TEXT_ARTIFACT_CONTENT_TYPES,
 } from "../../../apps/api/src/agent-artifact/policy";
 
 describe("artifact content type allowlist", () => {
@@ -111,6 +115,52 @@ describe("buildContentDisposition", () => {
   it("never emits an empty fallback filename", () => {
     expect(buildContentDisposition("attachment", "리포트")).toBe(
       `attachment; filename="file"; filename*=UTF-8''%EB%A6%AC%ED%8F%AC%ED%8A%B8`,
+    );
+  });
+});
+
+describe("text artifact subset", () => {
+  it("is the four text types, 200KB, normalized like the full allowlist", () => {
+    expect(TEXT_ARTIFACT_CONTENT_TYPES).toEqual([
+      "text/html",
+      "text/markdown",
+      "text/plain",
+      "application/json",
+    ]);
+    expect(MAX_TEXT_ARTIFACT_BYTES).toBe(200 * 1024);
+    expect(normalizeTextArtifactContentType(" Text/Markdown ")).toBe(
+      "text/markdown",
+    );
+    expect(normalizeTextArtifactContentType("application/pdf")).toBeNull();
+    expect(normalizeTextArtifactContentType("application/zip")).toBeNull();
+    expect(
+      normalizeTextArtifactContentType("text/html; charset=utf-8"),
+    ).toBeNull();
+  });
+});
+
+describe("resolveResponseContentType", () => {
+  it("adds charset=utf-8 for inline text and json only", () => {
+    expect(resolveResponseContentType("text/html", "inline")).toBe(
+      "text/html; charset=utf-8",
+    );
+    expect(resolveResponseContentType("text/markdown", "inline")).toBe(
+      "text/markdown; charset=utf-8",
+    );
+    expect(resolveResponseContentType("text/plain", "inline")).toBe(
+      "text/plain; charset=utf-8",
+    );
+    expect(resolveResponseContentType("application/json", "inline")).toBe(
+      "application/json; charset=utf-8",
+    );
+    expect(resolveResponseContentType("application/pdf", "inline")).toBe(
+      "application/pdf",
+    );
+    expect(resolveResponseContentType("text/html", "attachment")).toBe(
+      "text/html",
+    );
+    expect(resolveResponseContentType("application/zip", "attachment")).toBe(
+      "application/zip",
     );
   });
 });

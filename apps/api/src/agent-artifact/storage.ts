@@ -102,6 +102,31 @@ export async function createArtifactUploadUrl(input: {
   };
 }
 
+/**
+ * Server-side write for text artifacts (`agent_artifact_put_text`). The
+ * stored `Content-Type` is the bare allowlist literal, the same value the
+ * presigned path enforces, so every read path can treat the two alike.
+ */
+export async function putArtifactObject(input: {
+  storageKey: string;
+  contentType: string;
+  body: string;
+}): Promise<{ size: number }> {
+  const config = assertStorageConfigured();
+  const client = getClient(config);
+  const bytes = Buffer.from(input.body, "utf8");
+  await client.send(
+    new PutObjectCommand({
+      Bucket: config.bucket,
+      Key: input.storageKey,
+      Body: bytes,
+      ContentType: input.contentType,
+      ContentLength: bytes.length,
+    }),
+  );
+  return { size: bytes.length };
+}
+
 function isNotFound(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const record = error as { name?: unknown; Code?: unknown; code?: unknown };

@@ -7,6 +7,7 @@ const storage = vi.hoisted(() => ({
   headArtifactObject: vi.fn(),
   createArtifactDownloadUrl: vi.fn(),
   deleteArtifactObject: vi.fn(),
+  putArtifactObject: vi.fn(),
 }));
 
 vi.mock("../../apps/api/src/agent-artifact/storage", async (importOriginal) => {
@@ -19,7 +20,10 @@ vi.mock("../../apps/api/src/agent-artifact/storage", async (importOriginal) => {
 
 import { ArtifactObjectMissingError } from "../../apps/api/src/agent-artifact/storage";
 import db, { schema } from "../../apps/api/src/database";
-import { agentArtifactTable } from "../../apps/api/src/database/schema-agent-layer";
+import {
+  agentActorTable,
+  agentArtifactTable,
+} from "../../apps/api/src/database/schema-agent-layer";
 import { createApp } from "../../apps/api/src/index";
 import { mockAnonymousSession, mockAuthenticatedSession } from "./helpers/auth";
 import { resetTestDatabase } from "./helpers/database";
@@ -27,6 +31,7 @@ import {
   createProjectFixture,
   createWorkspaceMember,
 } from "./helpers/fixtures";
+import { mcpToolCall, toolJson } from "./helpers/mcp";
 
 type Artifact = {
   id: string;
@@ -150,6 +155,11 @@ describe("API integration: agent artifacts", () => {
       }),
     );
     storage.deleteArtifactObject.mockResolvedValue(undefined);
+    storage.putArtifactObject.mockImplementation(
+      async ({ body }: { body: string }) => ({
+        size: Buffer.byteLength(body, "utf8"),
+      }),
+    );
 
     process.env.S3_ENDPOINT = "https://storage.example.test";
     process.env.S3_BUCKET = "kaneo";
@@ -333,6 +343,10 @@ describe("API integration: agent artifacts", () => {
       actorId: null,
       finalizedAt: null,
     });
+    // Stamped by the app clock, not the DB session's (KAN-9).
+    expect(Math.abs(pending.createdAt.getTime() - Date.now())).toBeLessThan(
+      5_000,
+    );
     const app = createApp().app;
     expect(
       await (await app.request(`/api/agent-artifact/${project.id}`)).json(),
@@ -568,17 +582,46 @@ describe("API integration: agent artifacts", () => {
     const payload = (await inline.json()) as { url: string; expiresAt: string };
     expect(payload.url).toContain("disposition=inline");
     expect(new Date(payload.expiresAt).getTime()).toBeGreaterThan(Date.now());
+    // Inline text carries a charset so the browser does not guess one.
     expect(storage.createArtifactDownloadUrl).toHaveBeenLastCalledWith({
       storageKey: `agent-artifacts/${member.workspace.id}/${project.id}/${html.id}/report.html`,
-      contentType: "text/html",
+      contentType: "text/html; charset=utf-8",
       name: "report.html",
       disposition: "inline",
     });
 
-    // Default is attachment.
+    // Default is attachment, served under the bare stored type.
     await url(html.id);
     expect(storage.createArtifactDownloadUrl).toHaveBeenLastCalledWith(
-      expect.objectContaining({ disposition: "attachment" }),
+      expect.objectContaining({
+        contentType: "text/html",
+        disposition: "attachment",
+      }),
+    );
+
+    const json = await uploadArtifact(project.id, {
+      name: "data.json",
+      contentType: "application/json",
+      size: 2,
+    });
+    await url(json.id, "?disposition=inline");
+    expect(storage.createArtifactDownloadUrl).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        contentType: "application/json; charset=utf-8",
+        disposition: "inline",
+      }),
+    );
+    const pdf = await uploadArtifact(project.id, {
+      name: "doc.pdf",
+      contentType: "application/pdf",
+      size: 3,
+    });
+    await url(pdf.id, "?disposition=inline");
+    expect(storage.createArtifactDownloadUrl).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        contentType: "application/pdf",
+        disposition: "inline",
+      }),
     );
 
     // zip: inline is requested but never granted.
@@ -727,5 +770,207 @@ describe("API integration: agent artifacts", () => {
     ).toEqual(["delete"]);
     expect(spec.components.schemas).toHaveProperty("AgentArtifact");
     expect(spec.components.schemas).toHaveProperty("AgentArtifactPresign");
+  });
+
+  describe("MCP path (agent_artifact_put_text / presign / finalize)", () => {
+    const identity = { provider: "anthropic", model: "claude-opus-5" };
+
+    it("put_text writes the object server-side and finalizes with the agent as uploader", async () => {
+      const member = await createWorkspaceMember();
+      const { project, columns } = await createProjectFixture({
+        workspaceId: member.workspace.id,
+      });
+      const task = await seedTask(project.id, columns.todo.id);
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      const text = "<h1>리포트</h1>\n";
+      const result = await mcpToolCall(app, "agent_artifact_put_text", {
+        projectId: project.id,
+        name: "Session Report.html",
+        contentType: "text/html",
+        text,
+        taskId: task.id,
+        ...identity,
+        sessionId: "s1",
+      });
+      expect(result.isError, result.content[0]?.text).toBeUndefined();
+      const artifact = toolJson<Artifact>(result);
+      expect(artifact.actorId).toEqual(expect.any(String));
+      expect(artifact).toEqual({
+        id: expect.any(String),
+        projectId: project.id,
+        taskId: task.id,
+        name: "Session Report.html",
+        contentType: "text/html",
+        size: Buffer.byteLength(text, "utf8"),
+        uploadedBy: null,
+        actorId: artifact.actorId,
+        createdAt: expect.any(String),
+      });
+      expect(artifact).not.toHaveProperty("storageKey");
+
+      const storageKey = `agent-artifacts/${member.workspace.id}/${project.id}/${artifact.id}/Session-Report.html`;
+      expect(storage.putArtifactObject).toHaveBeenCalledTimes(1);
+      expect(storage.putArtifactObject).toHaveBeenCalledWith({
+        storageKey,
+        contentType: "text/html",
+        body: text,
+      });
+      expect(storage.createArtifactUploadUrl).not.toHaveBeenCalled();
+      expect(storage.headArtifactObject).not.toHaveBeenCalled();
+
+      const [row] = await db
+        .select()
+        .from(agentArtifactTable)
+        .where(eq(agentArtifactTable.id, artifact.id));
+      expect(row).toMatchObject({
+        workspaceId: member.workspace.id,
+        storageKey,
+        uploadedBy: null,
+        actorId: artifact.actorId,
+      });
+      expect(row.finalizedAt).toBeInstanceOf(Date);
+      const [actor] = await db
+        .select()
+        .from(agentActorTable)
+        .where(eq(agentActorTable.id, artifact.actorId as string));
+      expect(actor).toMatchObject({
+        workspaceId: member.workspace.id,
+        onBehalfOf: member.user.id,
+        provider: "anthropic",
+        model: "claude-opus-5",
+      });
+
+      // Visible to the human surfaces immediately.
+      const listed = (await (
+        await app.request(`/api/agent-artifact/${project.id}?taskId=${task.id}`)
+      ).json()) as { artifacts: Artifact[] };
+      expect(listed.artifacts).toEqual([artifact]);
+      expect(
+        (
+          await app.request(
+            `/api/agent-artifact/${project.id}/${artifact.id}/url?disposition=inline`,
+          )
+        ).status,
+      ).toBe(200);
+    });
+
+    it("put_text rejects non-text types, foreign tasks and viewers; a storage failure leaves no row", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const { project } = await createProjectFixture({
+        workspaceId: admin.workspace.id,
+      });
+      const args = {
+        projectId: project.id,
+        name: "r.md",
+        contentType: "text/markdown",
+        text: "# r",
+        ...identity,
+      };
+
+      const viewer = await addUser(admin.workspace.id, "viewer");
+      mockAuthenticatedSession(viewer);
+      const forbidden = await mcpToolCall(
+        createApp().app,
+        "agent_artifact_put_text",
+        args,
+      );
+      expect(toolJson(forbidden)).toEqual({
+        error: "403 Insufficient permissions",
+      });
+
+      mockAuthenticatedSession(admin.user);
+      const { app } = createApp();
+      const pdf = await mcpToolCall(app, "agent_artifact_put_text", {
+        ...args,
+        contentType: "application/pdf",
+      });
+      expect(pdf.isError).toBe(true);
+      const foreign = await mcpToolCall(app, "agent_artifact_put_text", {
+        ...args,
+        taskId: "task-missing",
+      });
+      expect(toolJson(foreign)).toEqual({
+        error: "400 taskId does not belong to this project",
+      });
+
+      storage.putArtifactObject.mockRejectedValueOnce(
+        Object.assign(new Error("denied"), { name: "AccessDenied" }),
+      );
+      const failed = await mcpToolCall(app, "agent_artifact_put_text", args);
+      expect(toolJson(failed)).toEqual({ error: "503 denied" });
+
+      expect(await db.select().from(agentArtifactTable)).toEqual([]);
+    });
+
+    it("presign records the agent at presign and HTTP finalize keeps it", async () => {
+      const member = await createWorkspaceMember();
+      const { project } = await createProjectFixture({
+        workspaceId: member.workspace.id,
+      });
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      const result = await mcpToolCall(app, "agent_artifact_presign", {
+        projectId: project.id,
+        name: "bundle.zip",
+        contentType: "application/zip",
+        size: 500,
+        ...identity,
+      });
+      expect(result.isError, result.content[0]?.text).toBeUndefined();
+      const p = toolJson<Presign & { howTo: string }>(result);
+      expect(p.storageKey).toBe(
+        `agent-artifacts/${member.workspace.id}/${project.id}/${p.artifactId}/bundle.zip`,
+      );
+      expect(p.headers).toEqual({ "Content-Type": "application/zip" });
+      expect(p.howTo).toContain("-H 'Content-Type: application/zip'");
+      expect(p.howTo).toContain(p.uploadUrl);
+      expect(p.howTo).toContain("agent_artifact_finalize");
+
+      const [pending] = await db
+        .select()
+        .from(agentArtifactTable)
+        .where(eq(agentArtifactTable.id, p.artifactId));
+      expect(pending).toMatchObject({
+        uploadedBy: null,
+        actorId: expect.any(String),
+        finalizedAt: null,
+        size: 500,
+      });
+
+      // Finalize through the tool (which is the HTTP route) with the same
+      // human token: the agent attribution from presign must survive.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = new URL(String(input));
+          return app.request(`${url.pathname}${url.search}`, init);
+        }),
+      );
+      storage.headArtifactObject.mockResolvedValueOnce({
+        contentLength: 500,
+        contentType: "application/zip",
+      });
+      const finalized = toolJson<Artifact>(
+        await mcpToolCall(app, "agent_artifact_finalize", {
+          projectId: project.id,
+          artifactId: p.artifactId,
+          storageKey: p.storageKey,
+        }),
+      );
+      expect(finalized).toMatchObject({
+        id: p.artifactId,
+        uploadedBy: null,
+        actorId: pending.actorId,
+      });
+      vi.unstubAllGlobals();
+
+      const listed = (await (
+        await app.request(`/api/agent-artifact/${project.id}`)
+      ).json()) as { artifacts: Artifact[] };
+      expect(listed.artifacts).toEqual([finalized]);
+    });
   });
 });

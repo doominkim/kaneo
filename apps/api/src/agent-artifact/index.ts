@@ -152,7 +152,7 @@ const agentArtifact = apiRouter<BaseVariables & { workspaceId: string }>()
         ...c.req.valid("json"),
         projectId: c.req.valid("param").projectId,
         workspaceId: c.get("workspaceId"),
-        userId: c.get("userId"),
+        uploader: { userId: c.get("userId") },
       }),
       200,
     ),
@@ -162,7 +162,6 @@ const agentArtifact = apiRouter<BaseVariables & { workspaceId: string }>()
       await finalizeArtifact({
         ...c.req.valid("json"),
         projectId: c.req.valid("param").projectId,
-        userId: c.get("userId"),
       }),
       200,
     ),

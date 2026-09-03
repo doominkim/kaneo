@@ -1,4 +1,21 @@
 import { z } from "zod";
+import {
+  ALLOWED_ARTIFACT_CONTENT_TYPES,
+  hasPathSeparator,
+  MAX_ARTIFACT_BYTES,
+  MAX_ARTIFACT_NAME_LENGTH,
+  MAX_TEXT_ARTIFACT_BYTES,
+  TEXT_ARTIFACT_CONTENT_TYPES,
+} from "../agent-artifact/policy";
+import {
+  MAX_DOCUMENT_BODY_BYTES,
+  SLUG_PATTERN,
+} from "../agent-document/schema";
+import {
+  presignArtifactAsAgent,
+  putDocumentAsAgent,
+  putTextArtifactAsAgent,
+} from "./agent-direct";
 import type { McpToolRegistrar } from "./tools";
 
 /**
@@ -76,6 +93,16 @@ type BoardResponse = {
   data?: { columns?: BoardColumn[]; name?: string };
 };
 type DocumentSummary = { slug: string; title: string; updatedAt: string };
+type DocumentDetail = {
+  id: string;
+  slug: string;
+  title: string;
+  taskId: string | null;
+  updatedBy: string | null;
+  actorId: string | null;
+  updatedAt: string;
+  body: string;
+};
 
 const BRIEF_TASK_CAP = 20;
 const BRIEF_DOCUMENT_CAP = 20;
@@ -132,12 +159,58 @@ function shapeBoard(board: BoardResponse) {
   };
 }
 
+const DOC_GET_CHUNK_BYTES = 8 * 1024;
+
+/**
+ * A byte window over the body that never splits a UTF-8 sequence: the start
+ * is moved forward and the end backward off continuation bytes (10xxxxxx).
+ * `nextOffset` is therefore always a valid `offset` for the next call.
+ */
+function sliceBody(body: string, requestedOffset: number) {
+  const bytes = Buffer.from(body, "utf8");
+  const total = bytes.length;
+  let start = Math.min(requestedOffset, total);
+  const isContinuation = (i: number) => ((bytes[i] ?? 0) & 0xc0) === 0x80;
+  while (start < total && isContinuation(start)) start += 1;
+  let end = Math.min(start + DOC_GET_CHUNK_BYTES, total);
+  while (end < total && end > start && isContinuation(end)) end -= 1;
+  return {
+    body: bytes.subarray(start, end).toString("utf8"),
+    bodyBytes: total,
+    offset: start,
+    nextOffset: end < total ? end : null,
+    truncated: end < total,
+  };
+}
+
+/** Bytes, not characters — the same budget the HTTP schema enforces. */
+const utf8String = (max: number, label: string) =>
+  z.string().refine((value) => Buffer.byteLength(value, "utf8") <= max, {
+    message: `${label} must be at most ${max / 1024}KB`,
+  });
+
+const artifactName = z
+  .string()
+  .min(1)
+  .max(MAX_ARTIFACT_NAME_LENGTH)
+  .refine((v) => v.trim().length > 0 && !hasPathSeparator(v), {
+    message: "name must be non-blank and contain no path separators",
+  });
+
+/** Who the write is attributed to; identity is (workspace, user, model). */
+const agentIdentity = {
+  provider: z.string(),
+  model: z.string(),
+  sessionId: z.string().nullable().optional(),
+};
+
 /* -------------------------------------------------------------------------- */
 
 export function registerAgentTools(
   server: McpToolRegistrar,
   baseUrl: string,
   token: string,
+  userId: string,
 ): void {
   const api = new Api(baseUrl, token);
   const reg = <S extends z.ZodObject>(
@@ -394,6 +467,136 @@ export function registerAgentTools(
           method: "POST",
           body: JSON.stringify(args),
         }),
+      ),
+  );
+
+  reg(
+    "agent_doc_get",
+    {
+      description:
+        "One document: meta plus up to 8KB of body from byte `offset`. If `truncated`, call again with offset=nextOffset.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        slug: z.string(),
+        offset: z.number().int().min(0).default(0),
+      }),
+    },
+    (args) =>
+      guard(async () => {
+        const doc = await api.json<DocumentDetail>(
+          `/api/agent-document/${encodeURIComponent(args.projectId)}/${encodeURIComponent(args.slug)}`,
+        );
+        return {
+          id: doc.id,
+          slug: doc.slug,
+          title: doc.title,
+          taskId: doc.taskId,
+          updatedBy: doc.updatedBy,
+          actorId: doc.actorId,
+          updatedAt: doc.updatedAt,
+          ...sliceBody(doc.body, args.offset),
+        };
+      }),
+  );
+
+  reg(
+    "agent_doc_put",
+    {
+      description:
+        "Create or replace the document at (project, slug) as this agent. The deliverable path for reports and design packets: markdown body <=200KB, full overwrite, no lease needed.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        slug: z.string().regex(SLUG_PATTERN),
+        title: z.string().min(1).max(200),
+        body: utf8String(MAX_DOCUMENT_BODY_BYTES, "body"),
+        taskId: z.string().nullable().optional(),
+        ...agentIdentity,
+      }),
+    },
+    (args) =>
+      guard(async () => {
+        const doc = await putDocumentAsAgent({ ...args, userId });
+        // Not the body: the caller just sent it.
+        return {
+          id: doc.id,
+          slug: doc.slug,
+          title: doc.title,
+          taskId: doc.taskId,
+          actorId: doc.actorId,
+          updatedAt: doc.updatedAt,
+        };
+      }),
+  );
+
+  reg(
+    "agent_artifact_put_text",
+    {
+      description:
+        "Store text (<=200KB) as a finalized artifact in one call; the server uploads it. For bigger or binary files use agent_artifact_presign.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        name: artifactName,
+        contentType: z.enum(TEXT_ARTIFACT_CONTENT_TYPES),
+        text: utf8String(MAX_TEXT_ARTIFACT_BYTES, "text"),
+        taskId: z.string().nullable().optional(),
+        ...agentIdentity,
+      }),
+    },
+    (args) => guard(() => putTextArtifactAsAgent({ ...args, userId })),
+  );
+
+  reg(
+    "agent_artifact_presign",
+    {
+      description:
+        "Start an upload (<=10MiB): returns a presigned PUT URL. Upload the bytes yourself as shown in `howTo`, then call agent_artifact_finalize. The bytes never pass through MCP.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        name: artifactName,
+        contentType: z.enum(ALLOWED_ARTIFACT_CONTENT_TYPES),
+        size: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_ARTIFACT_BYTES)
+          .describe("Exact byte length; verified at finalize"),
+        taskId: z.string().nullable().optional(),
+        ...agentIdentity,
+      }),
+    },
+    (args) =>
+      guard(async () => {
+        const presigned = await presignArtifactAsAgent({ ...args, userId });
+        return {
+          ...presigned,
+          howTo: `curl -sS -f -T <file> -H 'Content-Type: ${args.contentType}' '${presigned.uploadUrl}' then agent_artifact_finalize({projectId, artifactId, storageKey}) before expiresAt`,
+        };
+      }),
+  );
+
+  reg(
+    "agent_artifact_finalize",
+    {
+      description:
+        "Verify the uploaded object and make the artifact visible. Idempotent. Pass artifactId and storageKey exactly as presign returned them.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        artifactId: z.string(),
+        storageKey: z.string(),
+      }),
+    },
+    (args) =>
+      guard(() =>
+        api.json(
+          `/api/agent-artifact/${encodeURIComponent(args.projectId)}/finalize`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              artifactId: args.artifactId,
+              storageKey: args.storageKey,
+            }),
+          },
+        ),
       ),
   );
 }

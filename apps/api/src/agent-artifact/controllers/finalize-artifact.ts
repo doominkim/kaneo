@@ -9,14 +9,15 @@ type FinalizeInput = {
   projectId: string;
   artifactId: string;
   storageKey: string;
-  userId: string;
 };
 
 const MISMATCH_MESSAGE = "Uploaded file does not match the finalize request.";
 
 /**
  * Step two. Verifies the object in storage against the row written at presign
- * and stamps `finalizedAt`. Idempotent: a second call on a finalized artifact
+ * and stamps `finalizedAt`. Attribution (`uploadedBy`/`actorId`) is left as
+ * presign wrote it: rewriting it here would re-attribute an agent's upload to
+ * whichever human token happened to finalize it. Idempotent: a second call on a finalized artifact
  * returns it without another HeadObject, so a client that lost the first
  * response can safely retry. A mismatch leaves the row pending — the client
  * may re-upload to the same URL until it expires and finalize again.
@@ -68,7 +69,7 @@ async function finalizeArtifact(input: FinalizeInput) {
 
   const [finalized] = await db
     .update(agentArtifactTable)
-    .set({ finalizedAt: new Date(), uploadedBy: input.userId, actorId: null })
+    .set({ finalizedAt: new Date() })
     .where(eq(agentArtifactTable.id, row.id))
     .returning();
   if (!finalized) {

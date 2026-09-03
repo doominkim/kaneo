@@ -220,7 +220,11 @@ mcp.all("/mcp", async (c) => {
   }
 
   if (!(await isLegacyRequest(c.req.raw.clone()))) {
-    const modern = createModernMcpHandler(authResult.token, internalApiUrl);
+    const modern = createModernMcpHandler(
+      authResult.token,
+      internalApiUrl,
+      authResult.userId,
+    );
     return modern.fetch(c.req.raw);
   }
 
@@ -340,7 +344,11 @@ mcp.all("/mcp", async (c) => {
   }
 
   if (!(await isLegacyRequest(c.req.raw.clone()))) {
-    const modern = createModernMcpHandler(authResult.token, internalApiUrl);
+    const modern = createModernMcpHandler(
+      authResult.token,
+      internalApiUrl,
+      authResult.userId,
+    );
     return modern.fetch(c.req.raw);
   }
 

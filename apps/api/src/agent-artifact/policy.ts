@@ -5,6 +5,12 @@
  */
 
 export const MAX_ARTIFACT_BYTES = 10 * 1024 * 1024;
+/**
+ * Cap for text written through the MCP `agent_artifact_put_text` tool, whose
+ * bytes ride inside the MCP JSON request. Same figure as a document body:
+ * anything larger goes through presign so it never enters the model context.
+ */
+export const MAX_TEXT_ARTIFACT_BYTES = 200 * 1024;
 export const MAX_ARTIFACT_NAME_LENGTH = 200;
 export const ARTIFACT_KEY_ROOT = "agent-artifacts";
 
@@ -28,6 +34,20 @@ export type ArtifactContentType =
 export type Disposition = "inline" | "attachment";
 
 /**
+ * Types the server may write on the agent's behalf from an in-band string.
+ * Binary types are excluded because a string cannot carry them faithfully.
+ */
+export const TEXT_ARTIFACT_CONTENT_TYPES = [
+  "text/html",
+  "text/markdown",
+  "text/plain",
+  "application/json",
+] as const;
+
+export type TextArtifactContentType =
+  (typeof TEXT_ARTIFACT_CONTENT_TYPES)[number];
+
+/**
  * Types a browser may render inline. `application/zip` is deliberately absent:
  * there is nothing to render, and forcing `attachment` keeps a click from
  * ever handing an archive to a browser plugin.
@@ -48,6 +68,16 @@ export function normalizeArtifactContentType(
     normalized,
   )
     ? (normalized as ArtifactContentType)
+    : null;
+}
+
+export function normalizeTextArtifactContentType(
+  value: string,
+): TextArtifactContentType | null {
+  const normalized = normalizeArtifactContentType(value);
+  return normalized &&
+    (TEXT_ARTIFACT_CONTENT_TYPES as readonly string[]).includes(normalized)
+    ? (normalized as TextArtifactContentType)
     : null;
 }
 
@@ -109,6 +139,23 @@ export function resolveDisposition(
     return "inline";
   }
   return "attachment";
+}
+
+/**
+ * The `Content-Type` a download is served with. Objects are stored under the
+ * bare allowlist literal; when a text type is rendered inline the browser
+ * needs a charset or it guesses one, and a guessed charset turns a UTF-8
+ * report into mojibake. Attachments are saved as bytes, so no parameter.
+ */
+export function resolveResponseContentType(
+  contentType: ArtifactContentType,
+  disposition: Disposition,
+) {
+  const isText =
+    contentType.startsWith("text/") || contentType === "application/json";
+  return disposition === "inline" && isText
+    ? `${contentType}; charset=utf-8`
+    : contentType;
 }
 
 /**
