@@ -4,17 +4,17 @@
 >
 > [DESIGN.md](./DESIGN.md)는 구현 전 설계 snapshot일 수 있다. 현재 운영 상태의 정본은 이 문서의 실측과 Git/Argo 런타임 확인이다.
 
-## 현재 상태 — 산출물 보관함·타임라인·MCP 문서/산출물 도구(`agent.9`)까지 운영 반영 완료
+## 현재 상태 — 사람 뷰 5탭 전체·프로젝트 설정·core_paths 판정(`agent.10`)까지 운영 반영 완료
 
 Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-prod`는 해당 이미지와 S3 첨부 스토리지를 사용 중이다. 첨부 UI의 실제 로그인 사용자 업로드만 아직 브라우저 환경 문제로 확인하지 못했다. **다음 작업의 첫 순서는 로그인한 Kaneo에서 파일 하나를 올리고, 다운로드·삭제까지 확인하는 것**이다.
 
 | 대상 | 확정 상태 | 근거 |
 |---|---|---|
-| Kaneo 코드 | `agent-layer`의 `39fdbb87` push 완료 | `git` 원격 브랜치 확인 |
-| 이미지 | `ghcr.io/doominkim/kaneo:2.22.0-agent.9` 빌드 성공 | [GitHub Actions run 33701915623](https://github.com/doominkim/kaneo/actions/runs/33701915623) |
-| GitOps manifest | platform `main`의 `9821cb0` | 이미지 태그 `agent.9`, SealedSecret과 공개 S3 환경값 포함 |
+| Kaneo 코드 | `agent-layer`의 `ac79a839` push 완료 | `git` 원격 브랜치 확인 |
+| 이미지 | `ghcr.io/doominkim/kaneo:2.22.0-agent.10` 빌드 성공 | [GitHub Actions run 33707478033](https://github.com/doominkim/kaneo/actions/runs/33707478033) |
+| GitOps manifest | platform `main`의 `559d0ea` | 이미지 태그 `agent.10`, SealedSecret과 공개 S3 환경값 포함 |
 | TLS vhost | sandbox `main`의 `5dc74e2` | `files.kit.io.kr` 전용 nginx vhost |
-| Argo / Pod | `kaneo-prod` Synced, Healthy, image `agent.9`, 1/1 Ready, restart 0, 기본·agent-layer(0001·0002) 마이그레이션 로그 정상 | 운영 클러스터 실측 (2026-09-03 10:10 KST) |
+| Argo / Pod | `kaneo-prod` Synced, Healthy, image `agent.10`, 1/1 Ready, restart 0, agent-layer 마이그레이션 0000~0003 적용 | 운영 클러스터 실측 (2026-09-03 11:35 KST) |
 | MinIO HTTPS | `https://files.kit.io.kr/minio/health/live` 200 | SAN=`files.kit.io.kr`, 만료 `2026-12-01` |
 
 관련 Linear: [SAN-244 — Kaneo Agent Layer 운영 배포 및 핵심 실측](https://linear.app/c2fuzg/issue/SAN-244/kaneo-agent-layer-운영-배포-및-핵심-실측). 현재 상태는 In Progress이며, 아래 남은 실측/MCP/web 작업을 닫은 뒤 완료 처리한다.
@@ -151,7 +151,9 @@ DESIGN §6 개정(`f7f4cb0b`)에 따라 1a를 `agent.8`로 배포했다. API(`a5
 
 2026-09-03 `agent.9`(`cf1912a0`, `2a5b9792`, `39fdbb87`): 사용자 피드백으로 탭을 개요·타임라인·태스크·지식·문서로 재구성(메모 탭 제거). 문서 탭은 산출물·파일 보관함(`agent_artifact`, presign→PUT→finalize, html/md/txt/json sandbox 뷰어, zip 다운로드), 타임라인은 세로 트리(task 펼치면 원장 entry), 개요에 사람이 쓰는 설명(`agent_document` slug `overview`). MCP 도구 5개 추가(`agent_doc_get/put`, `agent_artifact_put_text/presign/finalize`, 에이전트 attribution은 API 프로세스 내 직접 호출로만). 툴 개수 상한은 정의 크기 예산(개별 2560B·합계 12288B, 실측 9258B)으로 대체. **Claude Code는 MCP 도구 스키마를 세션 시작 시 캐시하므로 새 도구는 새 세션에서만 보인다.**
 
-남은 단계는 Kaneo KAN-6 본문이 정본이다: 1b(`agent_project`·서버 측 core_paths·지식 탭·entry 요약 `refs.branch`), 1c(using-kaneo handoff 형식·업로드 규칙, SubagentStop usage 훅, 아카이브 cron 게이트), MCP 경로 viewer 403·교차 workspace integration 테스트 추가.
+2026-09-03 `agent.10`(`6262a7d8`, `ac79a839`): 1b 완료 — `agent_project` 설정(`drizzle-agent/0003`, core_paths·활성 task 임계치·아카이브 일수, 설정 → 프로젝트 → 에이전트 레이어), `core_paths` 서버 판정(picomatch, `coreChanged` 입력 제거, `refs` 배열 상한), 지식 탭(용어사전 resolve/confirm/propose, 결정 목록), 임계치 배너, entry 요약 `repo/branch` 칩. 1c 중 스킬 갱신은 `~/.agents` `7fdcd38`(using-kaneo: handoff 4단락, refs.branch 필수, effort/label/usage, 문서·산출물 도구·curl 업로드 규칙).
+
+KAN-6에 남은 것: 새 세션에서 MCP `agent_artifact_put_text` 운영 실측, SubagentStop usage 자동 기록 훅(설계·승인 필요), 30일 아카이브 cron(승인 게이트, `done_archive_days` 0=off 스위치 결정 필요), MCP 경로 viewer 403·교차 workspace integration 테스트, 설정 폼 Save 버튼 disabled 조건 정리.
 
 ## 운영 호스트 침해 (2026-09-02 발견)
 
@@ -191,7 +193,7 @@ fika.ing(Mac Studio, macOS 15.6.1, k3s·PostgreSQL 17·MinIO·Redis 호스트)�
 
 ## 오래된 정보 폐기
 
-- `2.22.0-agent.2`~`agent.8`은 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.9`다.
-- `apps/kaneo/prod.yaml`은 미커밋/빈 `sealedEnv` 상태가 아니다. `9821cb0`가 운영에 반영되었다.
+- `2.22.0-agent.2`~`agent.9`는 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.10`이다.
+- `apps/kaneo/prod.yaml`은 미커밋/빈 `sealedEnv` 상태가 아니다. `559d0ea`가 운영에 반영되었다.
 - TLS 발급/배포는 pending이 아니다. `files.kit.io.kr`은 정상 HTTPS다.
 - 운영 DB/auth/S3 secret은 Bitwarden과 SealedSecret으로 이미 주입되어 있다. 값을 문서나 명령 출력에 적지 않는다.
