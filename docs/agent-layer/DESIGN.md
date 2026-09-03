@@ -3,6 +3,7 @@
 > Kaneo tracking fork 위에 얹는 **멀티 에이전트 작업 원장** 레이어.
 > 작성 2026-09-01 · 상태: 설계 확정 전 (구현 착수 전)
 > 개정 2026-09-02 — 사람 뷰 5탭, 개요=파생 이력 뷰(핸드오프 + 타임라인 트리), `agent_document`·`agent_project` 테이블, entry에 `refs.branch`·`effort`·`usage`, core_paths 서버 측 판정, MCP 툴 10개 (KAN-6)
+> 개정 2026-09-03 — §2.3 면 분리 폐기 — 원장은 사람·AI 공용 노트, 작성자만 표시 (KAN-12)
 
 ---
 
@@ -44,14 +45,20 @@
 
 **틀린 KB는 KB 없는 것보다 나쁘다.** KB가 없으면 모델이 코드를 읽어 정확한 답을 찾는다(느리지만 맞음). 낡은 KB는 확신에 찬 답을 주고, 모델은 코드 확인을 건너뛴다 → 조용히 틀린다.
 
-### 2.3 AI가 쓰는 면과 사람이 읽는 면을 절대 같은 곳에 두지 않는다
+### 2.3 노트는 하나, 작성자만 다르다
 
-Linear 실패의 단일 원인. AI는 append만 하고 compact를 안 한다. 사람은 길어지면 요약하지만 AI는 계속 덧붙인다.
+Linear 실패 자체는 실재한다. AI는 append만 하고 compact를 안 한다. 사람은 길어지면 요약하지만 AI는 계속 덧붙였고, 형식 없는 자유 텍스트 로그가 뒤섞여 사람이 읽을 수 없게 됐다.
 
 - 세로로 터짐 → task 페이지 무한 성장
 - 가로로 터짐 → 이슈 개수 무한 증가
 
-**프롬프트로 막을 수 없다. 구조로만 막힌다** (append할 데가 없으면 안 한다).
+**프롬프트로 막을 수 없다. 구조로만 막힌다.** 다만 여기서 말하는 구조는 **작성자를 가르는 것이 아니다**(2026-09-03 개정, KAN-11). 실제로 문제를 푼 것은 원장의 **형식**이다 — 고정된 `kind`·`summary`·`body`·`refs`·`decision`, append-only, 그리고 그 형식을 렌더하는 사람 뷰. 못 읽었던 원인은 형식의 부재였지 사람과 AI가 같은 곳에 썼다는 사실이 아니었다.
+
+그래서 **원장(`agent_entry`)은 사람과 에이전트가 함께 쓰는 하나의 노트 스트림**이다. 사람은 UI에서 쓰고 에이전트는 `agent_log_append`로 쓴다. 보이는 차이는 작성자 표시뿐이다.
+
+- Task 본문은 **명세**다. 진행 로그는 본문에 쌓지 않고 전부 원장으로 나간다.
+- 산출물은 문서·아티팩트 보관함이 받는다(§4.2, §6).
+- **코멘트는 upstream의 기능이며 이 레이어의 일부가 아니다.** "에이전트는 코멘트를 쓰지 않는다"는 규칙은 폐기한다 — 사람이 명시적으로 요청하면 에이전트도 task 코멘트를 쓸 수 있다.
 
 ### 2.4 원장은 append-only, 삭제 대신 압축
 
@@ -125,16 +132,15 @@ divergent fork가 되면 유지보수가 전부 우리 몫이 되고 upstream �
 
 ## 4. 데이터 모델
 
-### 4.1 면 분리
+### 4.1 작성 주체
 
-```
-comment (기존, 그대로)  →  사람 전용 면
-entry   (신규)          →  에이전트 전용 면
-```
+`agent_entry`는 사람과 에이전트가 공유하는 하나의 노트 스트림이다(§2.3). 행마다 작성자는 정확히 하나다.
 
-에이전트는 `comment`를 쓰지 않는다. **MCP 툴에 comment 쓰기를 넣지 않으면 구조적으로 강제된다.**
-사람은 `entry`를 직접 읽지 않는다. 렌더된 요약만 본다.
-Task 본문은 고정 크기를 유지하고, 증가는 전부 `entry`로 나간다.
+- 에이전트가 쓰면 `actor_id`(`agent_actor`)가 채워진다.
+- 사람이 UI에서 쓰면 `actor_id`는 NULL이고 사람 저자 컬럼이 채워진다. 스키마에 사람 저자 컬럼이 없으면 nullable `created_by`(FK `user`, `SET NULL`)를 `drizzle-agent/0004`로 추가한다.
+- 사람 뷰는 저자만 다르게 렌더한다 — 사람은 이름, 에이전트는 `provider/model`(+`agent_label`).
+
+Task 본문은 고정 크기(명세)를 유지하고, 증가는 전부 `entry`로 나간다.
 
 ### 4.2 추가 테이블 (기존 스키마 무수정)
 
@@ -151,7 +157,7 @@ Task 본문은 고정 크기를 유지하고, 증가는 전부 `entry`로 나간
 
 **모든 테이블에 `agent_` prefix를 붙인다.** upstream이 `entry`·`term` 같은 흔한 이름을 나중에 쓸 수 있고, prefix가 있어야 마이그레이션 범위를 이름으로 가를 수 있다.
 
-`agent_document`는 **에이전트가 만든 사람용 산출물**이 1차 용도다 — 세션 리포트, 설계 패킷처럼 원장 entry 한 건에 담기엔 크고 사람이 통째로 읽어야 하는 글. 사람도 같은 면에 쓴다. §2.3의 면 분리는 원장(`agent_entry`)과 코멘트 사이의 규율이며, 산출물 저장소는 그 축이 아니다 — 여기서 막아야 할 것은 무한 append이고 그것은 slug 단위 **덮어쓰기**로 막힌다.
+`agent_document`는 **에이전트가 만든 사람용 산출물**이 1차 용도다 — 세션 리포트, 설계 패킷처럼 원장 entry 한 건에 담기엔 크고 사람이 통째로 읽어야 하는 글. 사람도 같은 면에 쓴다. 여기서 막아야 할 것은 무한 append이고, 그것은 slug 단위 **덮어쓰기**로 막힌다.
 
 - 저자 출처: `updated_by`(사람)와 `actor_id`(에이전트) 중 **쓰기 한 번에 정확히 하나**만 채운다. 어느 쪽이 썼는지가 문서를 읽는 판단의 절반이다.
 - 본문은 덮어쓰기(+`updated_at`)다. §2.4 append-only는 원장의 원칙이지 산출물에 적용하지 않는다. 버전 이력이 필요해지면 `agent_document_revision`을 얹는다(§10).
@@ -305,7 +311,7 @@ artifact_presign(project, name, contentType, size, taskId?)    큰 파일·zip·
 artifact_finalize(project, artifactId, storageKey)             HeadObject 검증 후 확정(멱등)
 ```
 
-**툴 개수 상한은 두지 않는다(2026-09-03 개정).** 대신 정의 크기 예산으로 관리한다: `tools/list` 기준 `agent_*` 툴 정의(이름·설명·inputSchema) 합계 **12,288B 이하**, 툴 하나 **2,560B 이하**. `tests/api/mcp-agent-tools-budget.test.ts`가 실제 핸들러의 `tools/list`를 직렬화해 측정하고 초과 시 실패한다. 실측(2026-09-03, 13개 툴): 합계 **9,258B**, 최대 `agent_log_append` **2,148B** — 이 툴은 inputSchema만 1,695B(필드 14개·중첩 객체 3개)라 초안의 2KB로는 `decision.why`/`rejected`를 설명할 설명문이 들어가지 않아 2.5KB로 조정했다. 참고로 upstream 36개 툴 합계는 16,455B다. 근거: 툴 정의는 세션마다 상주하지만 하네스마다 비용 모델이 다르다 — Claude Code는 지연 로딩이라 개별 스키마 크기가 비용이고, Codex처럼 전체 스키마를 싣는 클라이언트는 개수×크기가 비용이다. 개수는 그 비용을 대표하지 못한다. comment 쓰기 툴은 여전히 넣지 않는다(§4.1). 산출물 바이트를 MCP JSON에 싣는 단일 업로드 툴(base64)은 기각 — 1MB html이 약 35만 토큰이 된다.
+**툴 개수 상한은 두지 않는다(2026-09-03 개정).** 대신 정의 크기 예산으로 관리한다: `tools/list` 기준 `agent_*` 툴 정의(이름·설명·inputSchema) 합계 **12,288B 이하**, 툴 하나 **2,560B 이하**. `tests/api/mcp-agent-tools-budget.test.ts`가 실제 핸들러의 `tools/list`를 직렬화해 측정하고 초과 시 실패한다. 실측(2026-09-03, 13개 툴): 합계 **9,258B**, 최대 `agent_log_append` **2,148B** — 이 툴은 inputSchema만 1,695B(필드 14개·중첩 객체 3개)라 초안의 2KB로는 `decision.why`/`rejected`를 설명할 설명문이 들어가지 않아 2.5KB로 조정했다. 참고로 upstream 36개 툴 합계는 16,455B다. 근거: 툴 정의는 세션마다 상주하지만 하네스마다 비용 모델이 다르다 — Claude Code는 지연 로딩이라 개별 스키마 크기가 비용이고, Codex처럼 전체 스키마를 싣는 클라이언트는 개수×크기가 비용이다. 개수는 그 비용을 대표하지 못한다. 산출물 바이트를 MCP JSON에 싣는 단일 업로드 툴(base64)은 기각 — 1MB html이 약 35만 토큰이 된다.
 `doc_put`·`artifact_put_text`·`artifact_presign`은 HTTP를 거치지 않고 프로세스 내에서 컨트롤러를 직접 호출한다(`apps/api/src/mcp/agent-direct.ts`). MCP가 API를 부를 때 쓰는 bearer는 사용자의 일반 세션 토큰이라 API 쪽에서 MCP 호출과 `curl`을 구분할 수 없고, 따라서 `actorId`를 HTTP 필드·헤더로 열면 누구나 에이전트 저자를 사칭할 수 있다. 직접 호출 경로에서도 인가는 HTTP와 같은 원시 함수(`validateWorkspaceAccess`, `hasWorkspacePermission`, `task:update`)로 다시 수행한다.
 `doc_put`은 산출물을 남기는 경로다 — 세션 리포트를 사람에게 넘기는 유일한 쓰기 면이며, 원장 entry를 부풀리는 대신 여기로 나간다. slug 단위 덮어쓰기라 무한 append가 구조적으로 불가능하고, task를 잡지 않는 조사·설계 세션도 써야 하므로 lease를 요구하지 않는다.
 `brief`에는 문서 목록(`slug`/`title`/`updatedAt`)만 싣고 본문은 `doc_get`으로만 나간다(§5.1 예산).
@@ -325,8 +331,8 @@ artifact_finalize(project, artifactId, storageKey)             HeadObject 검증
 
 | 탭 | 내용 |
 |---|---|
-| 개요 | 사람이 쓰는 프로젝트 설명(`agent_document` 예약 slug `overview`, 편집 `task:update`·삭제 `project:update`) + 최신 핸드오프 콜아웃 + 라이브 섹션(열림/완료·lease) |
-| 타임라인 | 태스크 타임라인 트리 — **세로**, 최신이 위, 자식은 들여쓰기. task를 펼치면 그 task의 원장 entry(최근 20 + 드릴다운)가 인라인으로 나온다 (2026-09-03: 메모 탭을 흡수) |
+| 개요 | 사람이 쓰는 프로젝트 설명(`agent_document` 예약 slug `overview`, 편집 `task:update`·삭제 `project:update`) + 최신 핸드오프 콜아웃(사람·에이전트 무관) + 라이브 섹션(열림/완료·lease) |
+| 타임라인 | 태스크 타임라인 트리 — **세로**, 최신이 위, 자식은 들여쓰기. task를 펼치면 그 task의 원장 entry(최근 20 + 드릴다운)가 인라인으로 나오고, 그 자리에서 사람이 직접 entry를 쓸 수 있다 (2026-09-03: 메모 탭을 흡수) |
 | 태스크 | 기존 Kaneo 뷰 (board/backlog/calendar/gantt). 상단 탭 아래 2단 스위처로 유지 |
 | 지식 | 용어사전(제안됨/확정/이의), 결정 목록 |
 | 문서 | 프로젝트를 진행하며 쌓이는 **산출물·파일 보관함**. `agent_artifact`(html 리포트·zip·pdf·md·json: 업로드·보기·다운로드·삭제)가 중심이고 `agent_document`(마크다운 텍스트, MCP `doc_put`이 남기는 산출물)는 같은 목록의 한 종류. 이름·종류·크기·연결 task·올린 주체·시각, task/날짜 그룹. 위키가 아니다 (2026-09-03 재정의) |
@@ -336,8 +342,8 @@ artifact_finalize(project, artifactId, storageKey)             HeadObject 검증
 
 **개요의 상태 부분은 파생 뷰다** (§6.3, §2.1) — 원본은 원장과 task다. 단 하나 예외로, 사람이 쓰는 **프로젝트 설명**을 상단에 둔다(2026-09-03): `agent_document` 예약 slug `overview`에 저장해 저자·시각이 보이고, 에이전트도 `doc_put`으로 같은 slug를 쓸 수 있다. 개요가 담는 것은 셋이다.
 
-1. **핸드오프 콜아웃** — 프로젝트의 최신 `kind: handoff` entry를 `summary` + `body`로 펼치고 actor와 시각을 함께 보여준다. handoff가 없으면 kind 무관 최신 entry로 폴백한다. "지금 어디까지 왔나"에 대한 답이 매번 같은 자리에 있다.
-2. **태스크 타임라인 트리 (타임라인 탭)** — `subtask` 관계의 대상이 **아닌** task를 부모로 보고 시간 순 **세로**(최신이 위)로 쌓으며, 자식은 들여쓰기로 아래에 붙는다. 산출물은 그것을 만든 task·subtask 아래 **잎**으로 달린다. task를 펼치면 그 task의 원장 entry 목록이 인라인으로 나온다(메모 탭 대체).
+1. **핸드오프 콜아웃** — 프로젝트의 최신 `kind: handoff` entry를 `summary` + `body`로 펼치고 작성자와 시각을 함께 보여준다. 작성자는 사람일 수도 에이전트일 수도 있다(§2.3) — 사람이면 이름을, 에이전트면 `provider/model`(+`agent_label`)을 적는다. handoff가 없으면 kind 무관 최신 entry로 폴백한다. "지금 어디까지 왔나"에 대한 답이 매번 같은 자리에 있다.
+2. **태스크 타임라인 트리 (타임라인 탭)** — `subtask` 관계의 대상이 **아닌** task를 부모로 보고 시간 순 **세로**(최신이 위)로 쌓으며, 자식은 들여쓰기로 아래에 붙는다. 산출물은 그것을 만든 task·subtask 아래 **잎**으로 달린다. task를 펼치면 그 task의 원장 entry 목록이 인라인으로 나온다(메모 탭 대체). 목록 위에는 **사람용 작성기**가 붙어 같은 스트림에 append 한다 — 행마다 작성자를 표시하며, 사람은 이름, 에이전트는 `provider/model`(+`agent_label`)이다.
 
 ```
 ● task 3                       (2026-09-03)
@@ -347,7 +353,7 @@ artifact_finalize(project, artifactId, storageKey)             HeadObject 검증
   ㄴ task 1-1 (feat/kpa-v2)
      ㄴ report.html   (보기 · 다운로드)
      ㄴ bundle.zip    (다운로드)
-     ▸ entries (12)
+     ▸ entries (12)   (작성자: 사람 이름 / provider·model·label)
 ```
 
    - 조립은 서버가 한다. 클라이언트가 task마다 관계·문서·첨부를 조회하면 N+1이므로 `GET /api/agent-project/{projectId}/tree`가 노드당 `id, number, title, status, isFinal, createdAt, completedAt?, branches[], actors[]{provider, model, effort, appearances}, usage{inputTokens, outputTokens, totalTokens}, documents[]{id, slug, title, authorKind, updatedAt}, attachments[]{id, name, contentType, size, url}, children[]`를 한 번에 내려준다. `done`은 §6.1대로 접는다.
@@ -448,11 +454,11 @@ entry N개에 같은 용어 반복 등장
 | 이슈 한도 | ✅ 유료 전환 |
 | 느림 / 토큰 과다 | ❌ 원격 API + 과다 응답 |
 | 이슈 과다 시 UI 과밀 | ❌ flat list 설계 |
-| AI의 무한 append로 사람이 못 읽음 | ❌ 쓰기면 = 읽기면 구조 |
+| AI의 무한 append로 사람이 못 읽음 | ❌ 형식 없는 자유 텍스트 로그 (원인은 작성자 혼재가 아니다, §2.3) |
 
 4개 중 3개가 구조적이라 유료 전환으로 풀리지 않는다.
 
-**주의: 같은 실패를 반복하지 않으려면 §5.1(응답 예산)과 §4.1(면 분리)이 반드시 지켜져야 한다.** Kaneo를 그대로 쓰면 같은 벽을 다시 만난다.
+**주의: 같은 실패를 반복하지 않으려면 §5.1(응답 예산)과 원장 형식(§2.3·§4.3)이 반드시 지켜져야 한다.** Kaneo를 그대로 쓰면 같은 벽을 다시 만난다.
 
 ---
 
@@ -468,7 +474,8 @@ entry N개에 같은 용어 반복 등장
 7. 문서 버전 이력 — Phase 1은 덮어쓰기. `agent_document_revision`은 컬럼 변경 없이 얹을 수 있으므로 필요해질 때 결정한다. 동시 편집은 마지막 저장 승리이며 `updatedAt` 조건부 PUT은 후속
 8. 산출물 첨부(HTML 리포트·zip·pdf) — **구현됨(1a', 2026-09-03)**: fork 전용 `agent_artifact`(`drizzle-agent/0002`; projectId, taskId nullable SET NULL, name, contentType, size, storageKey unique, uploadedBy/actorId, `finalizedAt` — presign 시 pending 행을 먼저 쓰고 finalize가 HeadObject로 size·contentType을 대조한 뒤 활성화. pending 행은 목록·트리·URL 어디에도 노출되지 않고 storageKey를 보존하므로 미완 업로드는 삭제 API로 정리할 수 있다). 라우트(`apps/api/src/agent-artifact`): `POST /api/agent-artifact/{projectId}/presign`(task:update, 10MiB, allowlist text/html·text/markdown·text/plain·application/json·application/pdf·application/zip) → `POST …/finalize`(task:update, 멱등; 객체 없음·불일치 400, 스토리지 오류 503) → `GET …/{projectId}?taskId=`(목록, 최신순) → `GET …/{projectId}/{artifactId}/url?disposition=inline|attachment`(기본 60s, `AGENT_ARTIFACT_URL_TTL_SECONDS`; inline은 html·md·txt·json·pdf만, zip은 항상 attachment; `response-content-type`을 저장값으로 고정) → `DELETE …/{projectId}/{artifactId}`(project:update, 객체 삭제 후 행 삭제). 키 배치 `agent-artifacts/<ws>/<project>/<artifactId>/<sanitized name>`. 트리의 `attachments` 잎은 여기서 채운다. upstream `asset`·image-upload 경로는 건드리지 않았다. 미결로 남는 것: 문서 본문 안의 이미지 삽입(에디터 업로드가 taskId 의존), 만료된 pending 행·객체 자동 정리 job
 9. 30일 아카이브 cron의 부작용 — 대량 상태 전이가 activity·알림·웹훅을 한꺼번에 발생시킨다. 배치 상한과 리더 락을 함께 설계하고 사용자 승인 뒤 켠다(Phase 1c)
-10. 문서가 사실상 KB로 읽힐 위험(§2.2) — 문서는 자격 게이트를 거치지 않은 산출물인데, 에이전트가 `doc_get`으로 읽으면 낡은 리포트가 KB처럼 작동한다. 저자 종류·`updatedAt` 노출과 툴 설명은 완화일 뿐 근본 해결이 아니다
+10. upstream task 코멘트를 타임라인 뷰에 함께 접어 보여줄지 — **표시 전용**이다(원장에 흡수하지 않고, 코멘트 쓰기는 여전히 upstream 기능이다). 사람·AI가 원장을 공유하게 되면서(§2.3) 코멘트만 다른 화면에 남는 것이 맞는지가 미결이다
+11. 문서가 사실상 KB로 읽힐 위험(§2.2) — 문서는 자격 게이트를 거치지 않은 산출물인데, 에이전트가 `doc_get`으로 읽으면 낡은 리포트가 KB처럼 작동한다. 저자 종류·`updatedAt` 노출과 툴 설명은 완화일 뿐 근본 해결이 아니다
 
 ---
 
