@@ -5,7 +5,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTreeNode } from "@/fetchers/agent-layer/get-agent-tree";
 import { TaskTimelineTree } from "./task-timeline-tree";
 
@@ -29,6 +29,23 @@ vi.mock("react-i18next", () => ({
     t: (key: string, options?: { value?: number }) =>
       options?.value !== undefined ? `${key}:${options.value}` : key,
   }),
+}));
+const mocks = vi.hoisted(() => ({
+  download: vi.fn(),
+  entries: vi.fn(),
+}));
+vi.mock("@/lib/download-agent-artifact", () => ({
+  downloadAgentArtifact: mocks.download,
+}));
+vi.mock("@/hooks/queries/agent-layer/use-agent-entries", () => ({
+  useAgentEntries: mocks.entries,
+}));
+vi.mock("@/lib/format", () => ({
+  formatRelativeTime: () => "2 hours ago",
+  formatDateTime: () => "Sep 3, 2026",
+}));
+vi.mock("@/lib/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
 vi.mock("@/lib/i18n/domain", () => ({
   getStatusLabel: (status: string) => status,
@@ -89,6 +106,22 @@ const nodes: AgentTreeNode[] = [
             updatedAt: "2026-09-01T00:00:00.000Z",
           },
         ],
+        attachments: [
+          {
+            id: "a1",
+            name: "report.html",
+            contentType: "text/html",
+            size: 2048,
+            createdAt: "2026-09-01T00:00:00.000Z",
+          },
+          {
+            id: "a2",
+            name: "bundle.zip",
+            contentType: "application/zip",
+            size: 1048576,
+            createdAt: "2026-09-01T00:00:00.000Z",
+          },
+        ],
       }),
       node({ id: "t1-2", number: 5, title: "Child done", done: true }),
     ],
@@ -98,28 +131,63 @@ const nodes: AgentTreeNode[] = [
 ];
 
 function renderTree() {
-  return render(
+  const onOpenEntry = vi.fn();
+  render(
     <TaskTimelineTree
       nodes={nodes}
       workspaceId="ws"
       projectId="p"
       projectSlug="KAN"
+      onOpenEntry={onOpenEntry}
     />,
   );
+  return { onOpenEntry };
 }
+
+beforeEach(() => {
+  mocks.download.mockReset().mockResolvedValue(undefined);
+  mocks.entries.mockReset().mockReturnValue({
+    isPending: false,
+    isError: false,
+    data: {
+      pages: [
+        {
+          entries: [
+            {
+              id: "e1",
+              taskId: "t1",
+              kind: "work",
+              summary: "Wired the upload flow",
+              createdAt: "2026-09-03T00:00:00.000Z",
+              usage: { totalTokens: 1200 },
+              hasDecision: false,
+              coreChanged: [],
+            },
+          ],
+          nextBefore: null,
+        },
+      ],
+    },
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    fetchNextPage: vi.fn(),
+    refetch: vi.fn(),
+  });
+});
 
 afterEach(() => {
   cleanup();
 });
 
 describe("TaskTimelineTree", () => {
-  it("lays out open roots in order and hides done roots behind a toggle", () => {
+  it("stacks open roots newest first and hides done roots behind a toggle", () => {
     renderTree();
 
+    expect(screen.getByTestId("task-timeline-tree").tagName).toBe("OL");
     const roots = screen.getAllByTestId("tree-root");
     expect(roots).toHaveLength(2);
-    expect(within(roots[0]).getByText("Task one")).toBeInTheDocument();
-    expect(within(roots[1]).getByText("Task two")).toBeInTheDocument();
+    expect(within(roots[0]).getByText("Task two")).toBeInTheDocument();
+    expect(within(roots[1]).getByText("Task one")).toBeInTheDocument();
     expect(screen.queryByText("Task three done")).not.toBeInTheDocument();
 
     // The child-level toggle inside "Task one" also reads "Done (1)"; the
@@ -128,7 +196,7 @@ describe("TaskTimelineTree", () => {
       .getAllByTestId("done-toggle")
       .find((toggle) => !toggle.closest('[data-testid="tree-root"]'));
     if (!rootToggle) throw new Error("root done toggle missing");
-    expect(rootToggle).toHaveTextContent("agentLayer:overview.doneCollapsed:1");
+    expect(rootToggle).toHaveTextContent("agentLayer:timeline.doneCollapsed:1");
     expect(rootToggle).toHaveAttribute("aria-expanded", "false");
 
     fireEvent.click(rootToggle);
@@ -141,7 +209,7 @@ describe("TaskTimelineTree", () => {
   it("nests children under their root and folds done children", () => {
     renderTree();
 
-    const [firstRoot] = screen.getAllByTestId("tree-root");
+    const firstRoot = screen.getAllByTestId("tree-root")[1];
     const children = within(firstRoot).getAllByTestId("tree-child");
     expect(children).toHaveLength(1);
     expect(within(children[0]).getByText("Child open")).toBeInTheDocument();
@@ -157,7 +225,7 @@ describe("TaskTimelineTree", () => {
   it("renders task links, branch chips, the top-model usage chip and document leaves", () => {
     renderTree();
 
-    const [firstRoot] = screen.getAllByTestId("tree-root");
+    const firstRoot = screen.getAllByTestId("tree-root")[1];
     const taskLink = within(firstRoot).getAllByRole("link")[0];
     expect(taskLink).toHaveAttribute(
       "href",
@@ -187,6 +255,72 @@ describe("TaskTimelineTree", () => {
     );
     expect(documentLink).toHaveTextContent("Session report");
 
-    expect(screen.queryByTestId("tree-attachment")).not.toBeInTheDocument();
+    const attachments = screen.getAllByTestId("tree-attachment");
+    expect(attachments).toHaveLength(2);
+
+    const [htmlLeaf, zipLeaf] = attachments;
+    expect(htmlLeaf.dataset.kind).toBe("html");
+    const viewerLink = within(htmlLeaf).getByRole("link");
+    expect(viewerLink).toHaveAttribute(
+      "href",
+      "/dashboard/workspace/$workspaceId/project/$projectId/docs/artifact/$artifactId",
+    );
+    expect(viewerLink).toHaveAttribute(
+      "data-params",
+      JSON.stringify({ workspaceId: "ws", projectId: "p", artifactId: "a1" }),
+    );
+    expect(htmlLeaf).toHaveTextContent("report.html");
+    expect(htmlLeaf).toHaveTextContent("2.0 KB");
+
+    expect(zipLeaf.dataset.kind).toBe("zip");
+    expect(within(zipLeaf).queryByRole("link")).not.toBeInTheDocument();
+    fireEvent.click(within(zipLeaf).getByRole("button"));
+    expect(mocks.download).toHaveBeenCalledWith("p", "a2");
+    expect(zipLeaf).toHaveTextContent("1.0 MB");
+  });
+
+  it("unfolds a task's own ledger entries and opens the detail drawer", () => {
+    const { onOpenEntry } = renderTree();
+
+    expect(mocks.entries).not.toHaveBeenCalled();
+    const taskOne = screen.getAllByTestId("tree-root")[1];
+    const toggle = within(taskOne).getAllByTestId("entries-toggle")[0];
+    expect(toggle).toHaveTextContent("agentLayer:timeline.entriesToggle:3");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(toggle);
+
+    expect(mocks.entries).toHaveBeenCalledWith("p", undefined, "t1");
+    const entries = within(taskOne).getByTestId("task-entries");
+    const row = within(entries).getByTestId("entry-row");
+    expect(row).toHaveTextContent("Wired the upload flow");
+    // Inside the task's own card the task key would be noise.
+    expect(row).not.toHaveTextContent("KAN-");
+
+    fireEvent.click(row);
+    expect(onOpenEntry).toHaveBeenCalledWith("e1");
+
+    fireEvent.click(toggle);
+    expect(
+      within(taskOne).queryByTestId("task-entries"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the empty ledger state for a task without entries", () => {
+    mocks.entries.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: { pages: [{ entries: [], nextBefore: null }] },
+      hasNextPage: false,
+      isFetchingNextPage: false,
+      fetchNextPage: vi.fn(),
+      refetch: vi.fn(),
+    });
+    renderTree();
+    const taskTwo = screen.getAllByTestId("tree-root")[0];
+    fireEvent.click(within(taskTwo).getByTestId("entries-toggle"));
+    expect(
+      within(taskTwo).getByText("agentLayer:timeline.entriesEmpty"),
+    ).toBeInTheDocument();
   });
 });

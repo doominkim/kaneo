@@ -70,7 +70,7 @@ export function EntryDetailSheet({
           <SheetTitle className="flex items-center gap-2">
             {entry ? <KindBadge kind={entry.kind} /> : null}
             <span className="min-w-0 truncate">
-              {entry?.summary ?? t("agentLayer:notes.detailTitle")}
+              {entry?.summary ?? t("agentLayer:timeline.detailTitle")}
             </span>
           </SheetTitle>
           <SheetDescription>
@@ -99,7 +99,7 @@ export function EntryDetailSheet({
                     params={{ workspaceId, projectId, taskId: entry.taskId }}
                     className="font-mono text-xs text-foreground/80 underline-offset-2 hover:underline"
                   >
-                    {t("agentLayer:notes.task")}{" "}
+                    {t("agentLayer:timeline.task")}{" "}
                     {projectSlug ? `${projectSlug}-` : "#"}
                     {taskNumberById.get(entry.taskId) ?? "?"}
                   </Link>
@@ -116,32 +116,32 @@ export function EntryDetailSheet({
                 ) : null}
               </div>
 
-              <Section title={t("agentLayer:notes.body")}>
+              <Section title={t("agentLayer:timeline.body")}>
                 {entry.body ? (
                   <MarkdownRenderer content={entry.body} />
                 ) : (
                   <p className="text-muted-foreground">
-                    {t("agentLayer:notes.noBody")}
+                    {t("agentLayer:timeline.noBody")}
                   </p>
                 )}
               </Section>
 
               {decision ? (
-                <Section title={t("agentLayer:notes.decision")}>
+                <Section title={t("agentLayer:timeline.decision")}>
                   <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
-                    <Term>{t("agentLayer:notes.decisionWhat")}</Term>
+                    <Term>{t("agentLayer:timeline.decisionWhat")}</Term>
                     <dd>{decision.what}</dd>
-                    <Term>{t("agentLayer:notes.decisionWhy")}</Term>
+                    <Term>{t("agentLayer:timeline.decisionWhy")}</Term>
                     <dd>{decision.why}</dd>
                     {decision.rejected ? (
                       <>
-                        <Term>{t("agentLayer:notes.decisionRejected")}</Term>
+                        <Term>{t("agentLayer:timeline.decisionRejected")}</Term>
                         <dd>{decision.rejected}</dd>
                       </>
                     ) : null}
                     {decision.reversible !== undefined ? (
                       <>
-                        <Term>{t("agentLayer:notes.reversible")}</Term>
+                        <Term>{t("agentLayer:timeline.reversible")}</Term>
                         <dd>
                           <Badge
                             variant={
@@ -150,8 +150,8 @@ export function EntryDetailSheet({
                             size="sm"
                           >
                             {decision.reversible
-                              ? t("agentLayer:notes.reversible")
-                              : t("agentLayer:notes.irreversible")}
+                              ? t("agentLayer:timeline.reversible")
+                              : t("agentLayer:timeline.irreversible")}
                           </Badge>
                         </dd>
                       </>
@@ -161,30 +161,30 @@ export function EntryDetailSheet({
               ) : null}
 
               {refs ? (
-                <Section title={t("agentLayer:notes.refs")}>
+                <Section title={t("agentLayer:timeline.refs")}>
                   <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
                     {refs.repo ? (
                       <>
-                        <Term>{t("agentLayer:notes.refsRepo")}</Term>
+                        <Term>{t("agentLayer:timeline.refsRepo")}</Term>
                         <dd className="font-mono text-xs">{refs.repo}</dd>
                       </>
                     ) : null}
                     {refs.branch ? (
                       <>
-                        <Term>{t("agentLayer:notes.refsBranch")}</Term>
+                        <Term>{t("agentLayer:timeline.refsBranch")}</Term>
                         <dd className="font-mono text-xs">{refs.branch}</dd>
                       </>
                     ) : null}
                     <RefList
-                      label={t("agentLayer:notes.refsCommits")}
+                      label={t("agentLayer:timeline.refsCommits")}
                       items={refs.commits}
                     />
                     <RefList
-                      label={t("agentLayer:notes.refsPrs")}
+                      label={t("agentLayer:timeline.refsPrs")}
                       items={refs.prs}
                     />
                     <RefList
-                      label={t("agentLayer:notes.refsFiles")}
+                      label={t("agentLayer:timeline.refsFiles")}
                       items={refs.files}
                     />
                   </dl>
@@ -192,7 +192,7 @@ export function EntryDetailSheet({
               ) : null}
 
               {entry.coreChanged && entry.coreChanged.length > 0 ? (
-                <Section title={t("agentLayer:notes.coreChangedList")}>
+                <Section title={t("agentLayer:timeline.coreChangedList")}>
                   <ul className="space-y-0.5 font-mono text-xs">
                     {entry.coreChanged.map((path) => (
                       <li key={path}>{path}</li>

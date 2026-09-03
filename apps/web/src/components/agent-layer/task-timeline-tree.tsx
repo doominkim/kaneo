@@ -4,86 +4,106 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
-  Paperclip,
+  NotebookPen,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type { AgentTreeNode } from "@/fetchers/agent-layer/get-agent-tree";
+import { useAgentEntries } from "@/hooks/queries/agent-layer/use-agent-entries";
 import { cn } from "@/lib/cn";
+import { downloadAgentArtifact } from "@/lib/download-agent-artifact";
 import { getStatusLabel } from "@/lib/i18n/domain";
+import { toast } from "@/lib/toast";
+import {
+  AgentLayerEmpty,
+  AgentLayerErrorState,
+  AgentLayerSkeleton,
+} from "./agent-layer-state";
+import {
+  ARTIFACT_KIND_ICONS,
+  artifactKindOf,
+  formatBytes,
+  isInlineViewable,
+} from "./artifact-kind";
 import { BranchChip, topModel, UsageChip } from "./chips";
+import { EntryRow } from "./entry-row";
 
 type TreeContext = {
   workspaceId: string;
   projectId: string;
   projectSlug?: string;
+  onOpenEntry: (entryId: string) => void;
 };
 
-type TaskTimelineTreeProps = TreeContext & {
+type TaskTimelineTreeProps = Omit<TreeContext, "onOpenEntry"> & {
   nodes: AgentTreeNode[];
+  onOpenEntry?: (entryId: string) => void;
 };
 
 /**
- * DESIGN.md §6 item 2: roots laid out horizontally in time order, children
- * indented below each root, documents and attachments as leaves. Done nodes
- * fold into one "Done (N)" toggle per sibling group (§6.1).
+ * Timeline tab: roots stacked vertically, newest first, children indented
+ * under their parent on a left rail. Documents and attachments hang as leaves;
+ * each node can unfold its own ledger entries. Done nodes fold into one
+ * "Done (N)" toggle per sibling group (§6.1).
  */
 export function TaskTimelineTree({
   nodes,
   workspaceId,
   projectId,
   projectSlug,
+  onOpenEntry,
 }: TaskTimelineTreeProps) {
-  const context = { workspaceId, projectId, projectSlug };
+  const context: TreeContext = {
+    workspaceId,
+    projectId,
+    projectSlug,
+    onOpenEntry: onOpenEntry ?? (() => {}),
+  };
   const [showDone, setShowDone] = useState(false);
-  const doneCount = nodes.filter((node) => node.done).length;
-  const visible = showDone ? nodes : nodes.filter((node) => !node.done);
+  // The API returns roots oldest first; the timeline reads top-down from now.
+  const ordered = useMemo(() => [...nodes].reverse(), [nodes]);
+  const doneCount = ordered.filter((node) => node.done).length;
+  const visible = showDone ? ordered : ordered.filter((node) => !node.done);
 
   return (
-    <div
+    <ol
       data-testid="task-timeline-tree"
-      className="overflow-x-auto overscroll-x-contain pb-2"
+      className="relative ml-1.5 space-y-4 border-l-2 border-border pl-5"
     >
-      <div className="relative flex min-w-max items-start gap-6 border-t-2 border-border pt-4">
-        {visible.map((node) => (
-          <div
-            key={node.id}
-            data-testid="tree-root"
-            className="relative w-72 shrink-0"
-          >
-            <span
-              aria-hidden="true"
-              className={cn(
-                "absolute -top-[calc(1rem+5px)] left-3 size-2 rounded-full border-2 border-background",
-                node.done ? "bg-muted-foreground/60" : "bg-primary",
-              )}
-            />
-            <NodeCard node={node} context={context} />
-            <ChildList nodes={node.children} context={context} depth={1} />
-          </div>
-        ))}
-        {doneCount > 0 ? (
+      {visible.map((node) => (
+        <li key={node.id} data-testid="tree-root" className="relative">
+          <span
+            aria-hidden="true"
+            className={cn(
+              "absolute -left-[calc(1.25rem+5px)] top-3.5 size-2 rounded-full border-2 border-background",
+              node.done ? "bg-muted-foreground/60" : "bg-primary",
+            )}
+          />
+          <NodeCard node={node} context={context} />
+          <ChildList nodes={node.children} context={context} />
+        </li>
+      ))}
+      {doneCount > 0 ? (
+        <li className="relative">
           <DoneToggle
             count={doneCount}
             expanded={showDone}
             onToggle={() => setShowDone((current) => !current)}
-            className="mt-1 w-40 shrink-0"
           />
-        ) : null}
-      </div>
-    </div>
+        </li>
+      ) : null}
+    </ol>
   );
 }
 
 function ChildList({
   nodes,
   context,
-  depth,
 }: {
   nodes: AgentTreeNode[];
   context: TreeContext;
-  depth: number;
 }) {
   const [showDone, setShowDone] = useState(false);
   if (nodes.length === 0) return null;
@@ -94,7 +114,7 @@ function ChildList({
   return (
     <ul
       data-testid="tree-children"
-      className="ml-4 mt-2 space-y-2 border-l border-border pl-3"
+      className="ml-3 mt-2 space-y-2 border-l border-border pl-3 sm:ml-4"
     >
       {visible.map((node) => (
         <li
@@ -103,11 +123,7 @@ function ChildList({
           className="relative before:absolute before:-left-3 before:top-4 before:h-px before:w-3 before:bg-border"
         >
           <NodeCard node={node} context={context} />
-          <ChildList
-            nodes={node.children}
-            context={context}
-            depth={depth + 1}
-          />
+          <ChildList nodes={node.children} context={context} />
         </li>
       ))}
       {doneCount > 0 ? (
@@ -152,11 +168,11 @@ function DoneToggle({
         <ChevronRight className="size-3.5" />
       )}
       <CheckCircle2 className="size-3.5" />
-      {t("agentLayer:overview.doneCollapsed", { value: count })}
+      {t("agentLayer:timeline.doneCollapsed", { value: count })}
       <span className="sr-only">
         {expanded
-          ? t("agentLayer:overview.hideDone")
-          : t("agentLayer:overview.showDone")}
+          ? t("agentLayer:timeline.hideDone")
+          : t("agentLayer:timeline.showDone")}
       </span>
     </button>
   );
@@ -171,6 +187,7 @@ function NodeCard({
 }) {
   const { t } = useTranslation();
   const { workspaceId, projectId, projectSlug } = context;
+  const [showEntries, setShowEntries] = useState(false);
   const usage = topModel(node.usage.byModel);
   const key = `${projectSlug ? `${projectSlug}-` : "#"}${node.number ?? "?"}`;
 
@@ -179,7 +196,7 @@ function NodeCard({
       data-testid="tree-node"
       data-done={node.done ? "true" : "false"}
       className={cn(
-        "rounded-lg border border-border/80 bg-background p-2.5 shadow-xs/5",
+        "max-w-3xl rounded-lg border border-border/80 bg-background p-2.5 shadow-xs/5",
         node.done && "opacity-70",
       )}
     >
@@ -220,7 +237,7 @@ function NodeCard({
       {node.documents.length > 0 ? (
         <ul
           className="mt-2 space-y-0.5"
-          aria-label={t("agentLayer:overview.documents")}
+          aria-label={t("agentLayer:timeline.documents")}
         >
           {node.documents.map((document) => (
             <li key={document.id} data-testid="tree-document">
@@ -240,22 +257,164 @@ function NodeCard({
       {node.attachments.length > 0 ? (
         <ul
           className="mt-1 space-y-0.5"
-          aria-label={t("agentLayer:overview.attachments")}
+          aria-label={t("agentLayer:timeline.attachments")}
         >
-          {/* Click behavior (sandboxed viewer / download) is wired in Phase 1a'. */}
           {node.attachments.map((attachment) => (
-            <li
+            <AttachmentLeaf
               key={attachment.id}
-              data-testid="tree-attachment"
-              className="flex items-center gap-1.5 truncate text-xs text-muted-foreground"
-              title={attachment.contentType}
-            >
-              <Paperclip className="size-3 shrink-0" />
-              <span className="truncate">{attachment.name}</span>
-            </li>
+              attachment={attachment}
+              context={context}
+            />
           ))}
         </ul>
       ) : null}
+
+      <button
+        type="button"
+        data-testid="entries-toggle"
+        aria-expanded={showEntries}
+        onClick={() => setShowEntries((current) => !current)}
+        className="mt-2 flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      >
+        {showEntries ? (
+          <ChevronDown className="size-3.5" />
+        ) : (
+          <ChevronRight className="size-3.5" />
+        )}
+        <NotebookPen className="size-3.5" />
+        {t("agentLayer:timeline.entriesToggle", {
+          value: node.usage.entryCount,
+        })}
+      </button>
+
+      {showEntries ? (
+        <TaskEntries
+          taskId={node.id}
+          projectId={projectId}
+          projectSlug={projectSlug}
+          onOpenEntry={context.onOpenEntry}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/** One task's ledger, newest first, 20 per page (§6: replaces the notes tab). */
+function TaskEntries({
+  taskId,
+  projectId,
+  projectSlug,
+  onOpenEntry,
+}: {
+  taskId: string;
+  projectId: string;
+  projectSlug?: string;
+  onOpenEntry: (entryId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const query = useAgentEntries(projectId, undefined, taskId);
+  const entries = query.data?.pages.flatMap((page) => page.entries) ?? [];
+
+  return (
+    <div className="mt-2" data-testid="task-entries">
+      {query.isPending ? (
+        <AgentLayerSkeleton rows={2} />
+      ) : query.isError ? (
+        <AgentLayerErrorState
+          error={query.error}
+          onRetry={() => query.refetch()}
+        />
+      ) : entries.length === 0 ? (
+        <AgentLayerEmpty title={t("agentLayer:timeline.entriesEmpty")} />
+      ) : (
+        <ol className="divide-y divide-border/70 rounded-md border border-border/80 bg-muted/20">
+          {entries.map((entry) => (
+            <EntryRow
+              key={entry.id}
+              entry={entry}
+              projectSlug={projectSlug}
+              showTask={false}
+              onOpen={() => onOpenEntry(entry.id)}
+            />
+          ))}
+        </ol>
+      )}
+      {query.hasNextPage ? (
+        <div className="mt-2 flex justify-center">
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={query.isFetchingNextPage}
+            onClick={() => query.fetchNextPage()}
+          >
+            {t("agentLayer:common.loadMore")}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * §6 click behaviour: html/pdf/md/txt/json open in the sandboxed viewer,
+ * zip downloads. Either way the bytes come straight from storage.
+ */
+function AttachmentLeaf({
+  attachment,
+  context,
+}: {
+  attachment: AgentTreeNode["attachments"][number];
+  context: TreeContext;
+}) {
+  const { t } = useTranslation();
+  const { workspaceId, projectId } = context;
+  const Icon = ARTIFACT_KIND_ICONS[artifactKindOf(attachment.contentType)];
+  const className =
+    "flex min-w-0 items-center gap-1.5 text-xs text-foreground/80 underline-offset-2 hover:underline";
+  const label = (
+    <>
+      <Icon className="size-3 shrink-0 text-muted-foreground" />
+      <span className="truncate">{attachment.name}</span>
+      <span className="shrink-0 tabular-nums text-muted-foreground">
+        {formatBytes(attachment.size)}
+      </span>
+    </>
+  );
+
+  const handleDownload = async () => {
+    try {
+      await downloadAgentArtifact(projectId, attachment.id);
+    } catch (cause) {
+      toast.error(t("agentLayer:docs.downloadFailed"), {
+        description: cause instanceof Error ? cause.message : undefined,
+      });
+    }
+  };
+
+  return (
+    <li
+      data-testid="tree-attachment"
+      data-kind={artifactKindOf(attachment.contentType)}
+      title={attachment.contentType}
+    >
+      {isInlineViewable(attachment.contentType) ? (
+        <Link
+          to="/dashboard/workspace/$workspaceId/project/$projectId/docs/artifact/$artifactId"
+          params={{ workspaceId, projectId, artifactId: attachment.id }}
+          className={className}
+        >
+          {label}
+        </Link>
+      ) : (
+        <button
+          type="button"
+          onClick={handleDownload}
+          className={cn(className, "w-full text-left")}
+          aria-label={`${t("agentLayer:docs.download")}: ${attachment.name}`}
+        >
+          {label}
+        </button>
+      )}
+    </li>
   );
 }

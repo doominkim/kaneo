@@ -1,8 +1,8 @@
 import {
   BookOpen,
   FileText,
+  GitCommitVertical,
   LayoutDashboard,
-  NotebookPen,
   SquareKanban,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -15,35 +15,35 @@ import { cn } from "@/lib/cn";
  */
 export type ProjectView =
   | "overview"
+  | "timeline"
   | "backlog"
   | "board"
   | "calendar"
   | "gantt"
   | "knowledge"
-  | "notes"
   | "docs";
 
 /** Top-level tab. The four task views collapse into one "tasks" section. */
 export type ProjectSection =
   | "overview"
+  | "timeline"
   | "tasks"
   | "knowledge"
-  | "notes"
   | "docs";
 
 export const PROJECT_VIEW_PATHS = {
   overview: "/dashboard/workspace/$workspaceId/project/$projectId/overview",
+  timeline: "/dashboard/workspace/$workspaceId/project/$projectId/timeline",
   backlog: "/dashboard/workspace/$workspaceId/project/$projectId/backlog",
   board: "/dashboard/workspace/$workspaceId/project/$projectId/board",
   calendar: "/dashboard/workspace/$workspaceId/project/$projectId/calendar",
   gantt: "/dashboard/workspace/$workspaceId/project/$projectId/gantt",
   knowledge: "/dashboard/workspace/$workspaceId/project/$projectId/knowledge",
-  notes: "/dashboard/workspace/$workspaceId/project/$projectId/notes",
   docs: "/dashboard/workspace/$workspaceId/project/$projectId/docs",
 } as const satisfies Record<ProjectView, string>;
 
 const VIEW_SEGMENT_PATTERN =
-  /\/project\/[^/]+\/(overview|knowledge|notes|docs|backlog|board|calendar|gantt)(?:\/|$)/;
+  /\/project\/[^/]+\/(overview|timeline|knowledge|docs|backlog|board|calendar|gantt)(?:\/|$)/;
 
 export function resolveProjectView(
   pathname: string,
@@ -79,6 +79,12 @@ const SECTIONS: Array<{
     labelKey: "agentLayer:nav.overview",
   },
   {
+    section: "timeline",
+    view: "timeline",
+    icon: GitCommitVertical,
+    labelKey: "agentLayer:nav.timeline",
+  },
+  {
     section: "tasks",
     view: "board",
     icon: SquareKanban,
@@ -89,12 +95,6 @@ const SECTIONS: Array<{
     view: "knowledge",
     icon: BookOpen,
     labelKey: "agentLayer:nav.knowledge",
-  },
-  {
-    section: "notes",
-    view: "notes",
-    icon: NotebookPen,
-    labelKey: "agentLayer:nav.notes",
   },
   {
     section: "docs",
@@ -110,7 +110,7 @@ type ProjectSectionTabsProps = {
   className?: string;
 };
 
-/** Desktop header: the five top-level tabs. */
+/** Desktop header: 개요 · 타임라인 · 태스크 · 지식 · 문서. */
 export function ProjectSectionTabs({
   activeView,
   onSelectView,

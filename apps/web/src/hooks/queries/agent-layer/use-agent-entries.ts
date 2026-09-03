@@ -10,13 +10,18 @@ export const AGENT_ENTRIES_PAGE_SIZE = 20;
  * The ledger is paged by an opaque `nextBefore` cursor rather than offsets, so
  * an infinite query is the natural fit: each page's cursor feeds the next.
  */
-export function useAgentEntries(projectId: string, kind?: AgentEntryKind) {
+export function useAgentEntries(
+  projectId: string,
+  kind?: AgentEntryKind,
+  taskId?: string,
+) {
   return useInfiniteQuery({
-    queryKey: agentLayerKeys.entries(projectId, kind),
+    queryKey: agentLayerKeys.entries(projectId, kind, taskId),
     queryFn: ({ pageParam }) =>
       getAgentEntries({
         projectId,
         kind,
+        taskId,
         limit: AGENT_ENTRIES_PAGE_SIZE,
         before: pageParam ?? undefined,
       }),
