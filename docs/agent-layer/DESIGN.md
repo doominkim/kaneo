@@ -298,14 +298,15 @@ task_list / task_save
 log_append / log_tail
 lease_acquire / leases
 resolve(term)
-doc_get(project, slug)  8KB 절단 + offset 이어읽기
-doc_put(project, slug)  title + body(≤200KB) 덮어쓰기. lease 불필요
+doc_get(project, slug, offset?)  8KB(바이트) 창 + nextOffset 이어읽기. UTF-8 문자 경계 보장
+doc_put(project, slug)  title + body(≤200KB) 덮어쓰기. lease 불필요. actorId 기록
 artifact_put_text(project, name, contentType, text, taskId?)   ≤200KB 텍스트(html/md/json/txt)를 서버가 S3에 쓰고 즉시 확정. actorId 기록
 artifact_presign(project, name, contentType, size, taskId?)    큰 파일·zip·pdf: presigned PUT URL 반환. 바이트는 MCP를 타지 않는다 — 에이전트가 curl -T 로 올린다
 artifact_finalize(project, artifactId, storageKey)             HeadObject 검증 후 확정(멱등)
 ```
 
-**툴 개수 상한은 두지 않는다(2026-09-03 개정).** 대신 정의 크기 예산으로 관리한다: `tools/list` 기준 `agent_*` 툴 정의(이름·설명·inputSchema) 합계 **12KB 이하**, 툴 하나 **2KB 이하**(초안, 실측 후 조정). CI가 `tools/list`를 직렬화해 측정하고 초과 시 실패한다. 근거: 툴 정의는 세션마다 상주하지만 하네스마다 비용 모델이 다르다 — Claude Code는 지연 로딩이라 개별 스키마 크기가 비용이고, Codex처럼 전체 스키마를 싣는 클라이언트는 개수×크기가 비용이다. 개수는 그 비용을 대표하지 못한다. comment 쓰기 툴은 여전히 넣지 않는다(§4.1). 산출물 바이트를 MCP JSON에 싣는 단일 업로드 툴(base64)은 기각 — 1MB html이 약 35만 토큰이 된다.
+**툴 개수 상한은 두지 않는다(2026-09-03 개정).** 대신 정의 크기 예산으로 관리한다: `tools/list` 기준 `agent_*` 툴 정의(이름·설명·inputSchema) 합계 **12,288B 이하**, 툴 하나 **2,560B 이하**. `tests/api/mcp-agent-tools-budget.test.ts`가 실제 핸들러의 `tools/list`를 직렬화해 측정하고 초과 시 실패한다. 실측(2026-09-03, 13개 툴): 합계 **9,258B**, 최대 `agent_log_append` **2,148B** — 이 툴은 inputSchema만 1,695B(필드 14개·중첩 객체 3개)라 초안의 2KB로는 `decision.why`/`rejected`를 설명할 설명문이 들어가지 않아 2.5KB로 조정했다. 참고로 upstream 36개 툴 합계는 16,455B다. 근거: 툴 정의는 세션마다 상주하지만 하네스마다 비용 모델이 다르다 — Claude Code는 지연 로딩이라 개별 스키마 크기가 비용이고, Codex처럼 전체 스키마를 싣는 클라이언트는 개수×크기가 비용이다. 개수는 그 비용을 대표하지 못한다. comment 쓰기 툴은 여전히 넣지 않는다(§4.1). 산출물 바이트를 MCP JSON에 싣는 단일 업로드 툴(base64)은 기각 — 1MB html이 약 35만 토큰이 된다.
+`doc_put`·`artifact_put_text`·`artifact_presign`은 HTTP를 거치지 않고 프로세스 내에서 컨트롤러를 직접 호출한다(`apps/api/src/mcp/agent-direct.ts`). MCP가 API를 부를 때 쓰는 bearer는 사용자의 일반 세션 토큰이라 API 쪽에서 MCP 호출과 `curl`을 구분할 수 없고, 따라서 `actorId`를 HTTP 필드·헤더로 열면 누구나 에이전트 저자를 사칭할 수 있다. 직접 호출 경로에서도 인가는 HTTP와 같은 원시 함수(`validateWorkspaceAccess`, `hasWorkspacePermission`, `task:update`)로 다시 수행한다.
 `doc_put`은 산출물을 남기는 경로다 — 세션 리포트를 사람에게 넘기는 유일한 쓰기 면이며, 원장 entry를 부풀리는 대신 여기로 나간다. slug 단위 덮어쓰기라 무한 append가 구조적으로 불가능하고, task를 잡지 않는 조사·설계 세션도 써야 하므로 lease를 요구하지 않는다.
 `brief`에는 문서 목록(`slug`/`title`/`updatedAt`)만 싣고 본문은 `doc_get`으로만 나간다(§5.1 예산).
 **문서는 산출물이지 KB가 아니다.** §2.2의 자격 게이트는 용어사전(`term`)에 적용되는 것이고 문서에는 적용하지 않는다 — 대신 문서는 저자 종류(사람/에이전트)와 `updatedAt`을 함께 실어 낡음이 보이게 한다. 툴 설명에도 명시한다.
