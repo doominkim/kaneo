@@ -374,11 +374,15 @@ core_paths:
   - "**/migrations/**"
 ```
 
-**판정 주체는 서버다.** 패턴은 `agent_project.core_paths`에 저장하고(사람이 프로젝트당 한 번, `project:update`), `agent_log_append`가 받은 `refs.files`와 API가 picomatch로 대조해 `core_changed`를 기록한다. 클라이언트가 보내던 `coreChanged` 입력은 제거한다 — 모델이 채우는 필드로 두면 없애려던 변덕이 그대로 남는다.
+**판정 주체는 서버다** (1b 구현, 2026-09-03). 패턴은 `agent_project.core_paths`에 저장하고(`PUT /api/agent-project/{projectId}`, `project:update`), `POST /api/agent-entry`(= `agent_log_append`)가 `refs.files`를 받으면 append 시점에 `apps/api/src/agent-project/core-paths.ts`가 `picomatch(core_paths, { dot: true })`로 대조해 `core_changed`에 기록한다. 클라이언트 입력 `coreChanged`는 HTTP·MCP 스키마 모두에서 제거했다 — 모델이 채우는 필드로 두면 없애려던 변덕이 그대로 남는다.
 
-- `null` = 판정하지 않음(`refs.files`가 없거나 패턴이 비어 있음), `[]` = 판정했으나 매칭 0건.
-- 입력 스키마에서 `coreChanged`를 지워도 구 클라이언트는 400 없이 무시된다(unknown key strip).
-- 기존 entry는 **백필하지 않는다.** 서버 판정 이전 값은 당시 클라이언트의 주장이며, 원장은 append-only다.
+- 값의 의미: `null` = 판정하지 않음(`refs.files` 자체가 없음), `[]` = 판정했으나 매칭 0건(패턴이 비어 있거나 설정 행이 없는 경우 포함).
+- 패턴 규칙(Zod): 최대 50개, 각 1–200자, 절대경로(`/`, `\`, `C:\`)와 `..` 세그먼트 금지. 저장 시 앞의 `./`를 벗기고 공백을 다듬고 중복을 제거한다.
+- 파일 규칙: `refs.files`는 자유 입력이므로 거부하지 않는다. 매칭 전에 `./`를 벗기고, 절대경로·`..` 포함 경로는 **매칭 대상에서 제외**한다(append 자체는 성공). `core_changed`에는 정규화된 경로가 입력 순서대로 중복 없이 들어가고, `refs`는 받은 그대로 저장한다.
+- `**`는 dotfile을 포함한다(`src/**`가 `src/.env.example`에 매칭).
+- glob 의미는 picomatch 기본(matchBase 꺼짐)이다: 슬래시 없는 `*.ts`는 **최상위 파일만** 매칭한다. 어디서든 매칭하려면 `**/*.ts`로 쓴다.
+- 판정은 append 시점에 한 번이다. 패턴을 바꿔도 기존 행은 **재판정·백필하지 않는다** — 서버 판정 이전 값은 당시 클라이언트의 주장이며, 원장은 append-only다.
+- 구 클라이언트가 보내는 `coreChanged`는 unknown key strip으로 400 없이 무시된다.
 
 ### 6.3 HTML은 캐시다
 
@@ -412,7 +416,7 @@ core_paths:
 | **0** | 스키마 확정 (4테이블, 마이그레이션 번호대, actor 모델) | 되돌리기 비싼 결정 완료 |
 | **1** | API 모듈 + 에이전트 MCP 툴셋 + 5탭 뷰 | **5탭 뷰 포함, dogfooding 시작**[^linear] |
 | 1a | `agent_document` API(`task_id` 포함) + `agent_entry`에 `effort`·`agent_label`·`usage` 컬럼 + 문서 탭 + 개요 탭(핸드오프 콜아웃 + `/tree` 엔드포인트 + 브랜치 라벨 + 모델·effort·토큰 롤업 + 산출물 잎·sandbox 뷰어) + 메모 탭 + 5탭 nav | 산출물 저장·열람, 개요에서 이력·비용 파악 |
-| 1b | `agent_project` + core_paths 서버 판정 + 지식 탭 + `workspace:update` capability | 결정론 판정, 용어 확정 UI |
+| 1b | `agent_project` + core_paths 서버 판정 + 지식 탭 + `workspace:update` capability. **API 완료(2026-09-03)**: `drizzle-agent/0003` `agent_project`, `GET`/`PUT /api/agent-project/{projectId}`, `/tree`의 `threshold`, append 시 서버 판정, entry 요약의 `repo`/`branch`. 웹(설정 UI·배너·브랜치 칩·지식 탭)은 미구현 | 결정론 판정, 용어 확정 UI |
 | 1c | MCP `agent_doc_get`/`agent_doc_put`, `using-kaneo` 핸드오프 entry 형식 4섹션(완료·진행 중·막힘·다음) 고정 + git 작업 시 `refs.branch` 필수, 하네스 훅으로 `usage` 자동 기록, 아카이브 cron 승인 게이트, 운영 반영 | 툴 10개 확정, 에이전트가 스스로 리포트를 남김 |
 | 2 | Linear export → entry 흡수 | 열린 이슈만 Task로, 닫힌 이슈는 entry 1개로 압축. 코멘트는 가져오지 않는다 |
 | 3 | 압축 계층 (§4.6) | entry가 쌓인 뒤 |
