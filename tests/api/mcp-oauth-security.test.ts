@@ -352,6 +352,31 @@ describe("MCP OAuth security", () => {
     expect(body.response_types).toEqual(["code"]);
   });
 
+  it.each(["client_secret_basic", "client_secret_post", "none"])(
+    "accepts token_endpoint_auth_method=%s and registers a public client",
+    async (method) => {
+      const response = await mcpRoutes.request("/mcp/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_name: "Secret-preferring MCP client",
+          redirect_uris: ["https://client.example/auth-method"],
+          token_endpoint_auth_method: method,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        client_id: string;
+        client_secret?: string;
+        token_endpoint_auth_method: string;
+      };
+      expect(body.token_endpoint_auth_method).toBe("none");
+      expect(body).not.toHaveProperty("client_secret");
+      expect(body.client_id).toBeTruthy();
+    },
+  );
+
   it("rejects registrations that omit the authorization_code grant", async () => {
     const response = await mcpRoutes.request("/mcp/register", {
       method: "POST",

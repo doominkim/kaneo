@@ -65,7 +65,9 @@ export async function registerMcpClient(input: ClientRegistrationInput) {
     client_id_issued_at: client.issuedAt,
     redirect_uris: client.redirectUris,
     client_name: client.clientName,
-    token_endpoint_auth_method: input.token_endpoint_auth_method ?? "none",
+    // Public clients only: whatever auth method was requested, none is what
+    // the token endpoint actually enforces, so that is what is registered.
+    token_endpoint_auth_method: "none",
     // Only the authorization_code grant is issued, so the response always
     // echoes the supported subset regardless of what the client asked for.
     grant_types: ["authorization_code"] as "authorization_code"[],

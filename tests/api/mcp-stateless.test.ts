@@ -99,7 +99,10 @@ describe("MCP 2026-07-28 stateless HTTP", () => {
         expect(new Headers(init?.headers).get("authorization")).toBe(
           "Bearer test-token",
         );
-        return Response.json({ user: { id: "test-user" } });
+        return Response.json({
+          user: { id: "test-user" },
+          session: { id: "sess", token: "leaked-session-token" },
+        });
       },
     );
     vi.stubGlobal("fetch", apiFetch);
@@ -126,6 +129,13 @@ describe("MCP 2026-07-28 stateless HTTP", () => {
     expect(
       bodies.every((body) => body.result.content[0].text.includes("test-user")),
     ).toBe(true);
+    // The fork's whoami guard is wired into the modern handler: the session
+    // token the API returns must never reach the MCP client.
+    expect(
+      bodies.some((body) =>
+        body.result.content[0].text.includes("leaked-session-token"),
+      ),
+    ).toBe(false);
   });
 
   it("validates bearer authentication on every modern POST", async () => {

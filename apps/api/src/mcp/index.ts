@@ -27,6 +27,7 @@ import {
   oauthErrorSchema,
 } from "./schemas";
 import { registerMcpTools, toMcpToolRegistrar } from "./tools";
+import { withSanitizedWhoami } from "./whoami";
 
 const publicApiUrl = (process.env.KANEO_API_URL || "http://localhost:1337")
   .replace(/\/api\/?$/, "")
@@ -49,7 +50,11 @@ function createMcpServerForUser(token: string): LegacyMcpServer {
     name: "kaneo-mcp",
     version: "1.0.0",
   });
-  registerMcpTools(toMcpToolRegistrar(server), internalApiUrl, token);
+  registerMcpTools(
+    withSanitizedWhoami(toMcpToolRegistrar(server)),
+    internalApiUrl,
+    token,
+  );
   return server;
 }
 

@@ -1,6 +1,7 @@
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { registerAgentTools } from "./agent-tools";
 import { registerMcpTools, toMcpToolRegistrar } from "./tools";
+import { withSanitizedWhoami } from "./whoami";
 
 /**
  * Create a stateless MCP 2026 handler with a fresh server per request.
@@ -20,7 +21,7 @@ export function createModernMcpHandler(
         version: "1.0.0",
       });
       const registrar = toMcpToolRegistrar(server);
-      registerMcpTools(registrar, apiUrl, token);
+      registerMcpTools(withSanitizedWhoami(registrar), apiUrl, token);
       // Agent Layer tools (fork) — registered alongside, tools.ts untouched.
       registerAgentTools(registrar, apiUrl, token, userId);
       return server;

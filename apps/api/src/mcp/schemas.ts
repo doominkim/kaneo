@@ -30,7 +30,15 @@ const redirectUriSchema = z
 export const clientRegistrationSchema = z.object({
   redirect_uris: z.array(redirectUriSchema).min(1),
   client_name: z.string().max(100).optional(),
-  token_endpoint_auth_method: z.literal("none").optional(),
+  // RFC 7591 section 3.2.1 lets the server replace requested metadata with
+  // what it supports. MCP clients are public clients here and no secret is
+  // ever issued, so any requested auth method is accepted on input and the
+  // registration always answers "none"; rejecting client_secret_basic /
+  // client_secret_post only locked out clients whose defaults differ.
+  token_endpoint_auth_method: z.string().max(64).optional().openapi({
+    description:
+      'Accepted for compatibility and replaced with "none": clients are public and no secret is issued.',
+  }),
   // RFC 7591 lets the server accept a registration request and answer with the
   // subset of metadata it actually supports, so extra values are tolerated on
   // input and dropped from the response instead of failing the whole request.

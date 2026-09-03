@@ -3,25 +3,39 @@ import {
   type McpToolRegistrar,
   registerMcpTools,
 } from "../../apps/api/src/mcp/tools";
+import { withSanitizedWhoami } from "../../apps/api/src/mcp/whoami";
 
 type ToolCallback = (args: unknown) => Promise<{
   content: Array<{ text: string }>;
   isError?: boolean;
 }>;
 
-function collectTools() {
+function collectTools(options: { sanitizeWhoami?: boolean } = {}) {
   const tools = new Map<string, ToolCallback>();
   const registrar: McpToolRegistrar = {
     registerTool: (name, _config, callback) => tools.set(name, callback),
   };
-  registerMcpTools(registrar, "http://api.test", "test-token");
+  registerMcpTools(
+    options.sanitizeWhoami ? withSanitizedWhoami(registrar) : registrar,
+    "http://api.test",
+    "test-token",
+  );
   return tools;
 }
 
 const tools = collectTools();
+// The API wires the upstream catalogue through the fork's whoami guard
+// (modern.ts and index.ts); this map mirrors that wiring.
+const guardedTools = collectTools({ sanitizeWhoami: true });
 
 function call(name: string, args: unknown = {}) {
   const tool = tools.get(name);
+  if (!tool) throw new Error(`Tool ${name} is not registered`);
+  return tool(args);
+}
+
+function callGuarded(name: string, args: unknown = {}) {
+  const tool = guardedTools.get(name);
   if (!tool) throw new Error(`Tool ${name} is not registered`);
   return tool(args);
 }
@@ -205,5 +219,104 @@ describe("MCP tool catalog", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Task not found");
+  });
+});
+
+const fullSession = {
+  session: {
+    id: "sess-1",
+    token: "secret-bearer-session-token",
+    userId: "u1",
+    expiresAt: "2026-10-01T00:00:00.000Z",
+    createdAt: "2026-09-01T00:00:00.000Z",
+    updatedAt: "2026-09-01T00:00:00.000Z",
+    ipAddress: "203.0.113.7",
+    userAgent: "curl/8",
+    activeOrganizationId: "ws-1",
+  },
+  user: {
+    id: "u1",
+    name: "Ada",
+    email: "ada@example.com",
+    role: "admin",
+    emailVerified: true,
+    image: null,
+    banned: false,
+    banReason: null,
+    banExpires: null,
+    isAnonymous: false,
+    locale: "en-US",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  },
+};
+
+describe("whoami guard", () => {
+  it("upstream whoami leaks the session token (the reason the guard exists)", async () => {
+    apiFetch.mockResolvedValueOnce(Response.json(fullSession));
+
+    const result = await call("whoami");
+
+    expect(lastRequest().url).toBe("http://api.test/api/auth/get-session");
+    expect(result.content[0].text).toContain("secret-bearer-session-token");
+  });
+
+  it("returns only the allowlisted user and session fields", async () => {
+    apiFetch.mockResolvedValueOnce(Response.json(fullSession));
+
+    const result = await callGuarded("whoami");
+
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      user: { id: "u1", name: "Ada", email: "ada@example.com", role: "admin" },
+      session: { id: "sess-1", expiresAt: "2026-10-01T00:00:00.000Z" },
+    });
+    expect(result.content[0].text).not.toContain("secret-bearer-session-token");
+    expect(result.content[0].text).not.toContain("203.0.113.7");
+    expect(result.content[0].text).not.toContain("curl/8");
+  });
+
+  it("nulls absent optional fields instead of inventing them", async () => {
+    apiFetch.mockResolvedValueOnce(
+      Response.json({ user: { id: "u2" }, session: { token: "t" } }),
+    );
+
+    const result = await callGuarded("whoami");
+
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      user: { id: "u2", name: null, email: null, role: null },
+      session: { id: null, expiresAt: null },
+    });
+  });
+
+  it("reports no active session rather than echoing a null payload", async () => {
+    apiFetch.mockResolvedValueOnce(Response.json(null));
+
+    const result = await callGuarded("whoami");
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("no active session");
+  });
+
+  it("passes upstream API failures through unchanged", async () => {
+    apiFetch.mockResolvedValueOnce(
+      Response.json({ message: "Unauthorized" }, { status: 401 }),
+    );
+
+    const result = await callGuarded("whoami");
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Unauthorized");
+  });
+
+  it("leaves every other tool untouched", async () => {
+    apiFetch.mockResolvedValueOnce(Response.json({ token: "not-a-session" }));
+
+    const result = await callGuarded("list_workspaces");
+
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      token: "not-a-session",
+    });
   });
 });
