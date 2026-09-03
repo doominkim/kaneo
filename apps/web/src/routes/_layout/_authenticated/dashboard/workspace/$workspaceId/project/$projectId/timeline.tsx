@@ -9,6 +9,7 @@ import {
 } from "@/components/agent-layer/agent-layer-state";
 import { EntryComposer } from "@/components/agent-layer/entry-composer";
 import { EntryDetailSheet } from "@/components/agent-layer/entry-detail-sheet";
+import { ProjectEntries } from "@/components/agent-layer/project-entries";
 import { TaskTimelineTree } from "@/components/agent-layer/task-timeline-tree";
 import ProjectLayout from "@/components/common/project-layout";
 import PageTitle from "@/components/page-title";
@@ -73,6 +74,11 @@ function RouteComponent() {
               </p>
             </div>
           ) : null}
+          <ProjectEntries
+            projectId={projectId}
+            projectSlug={project?.slug}
+            onOpenEntry={setSelectedEntryId}
+          />
           {tree.isPending ? (
             <AgentLayerSkeleton rows={5} />
           ) : tree.isError ? (

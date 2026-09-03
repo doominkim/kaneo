@@ -142,6 +142,15 @@ export const listEntriesQuery = z.object({
     description:
       "Opaque cursor: the `nextBefore` value from the previous page. Returns the entries older than that one; an unknown cursor is a 400.",
   }),
-  taskId: z.string().optional(),
+  taskId: z.string().optional().openapi({
+    description:
+      "Exact task id, or the literal `none` for entries not tied to any task (project-level notes, task_id IS NULL). Omit for every entry of the project.",
+  }),
   kind: z.enum(["work", "investigation", "decision", "handoff"]).optional(),
 });
+
+/**
+ * `taskId=none` selects the rows with no task. A task id can never collide
+ * with it: ids are generated (nanoid/uuid), and "none" is not one.
+ */
+export const NO_TASK_FILTER = "none";

@@ -1,4 +1,14 @@
-import { and, desc, eq, isNotNull, lt, or, type SQL, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
@@ -7,6 +17,7 @@ import {
   agentActorTable,
   agentEntryTable,
 } from "../../database/schema-agent-layer";
+import { NO_TASK_FILTER } from "../schema";
 import {
   type EntryRefs,
   type EntryUsage,
@@ -18,6 +29,7 @@ type ListInput = {
   projectId: string;
   limit: number;
   before?: string;
+  /** An exact task id, or NO_TASK_FILTER for the project-level rows. */
   taskId?: string;
   kind?: string;
 };
@@ -77,7 +89,11 @@ async function listEntries(input: ListInput) {
       ),
     );
   }
-  if (input.taskId) conditions.push(eq(agentEntryTable.taskId, input.taskId));
+  if (input.taskId === NO_TASK_FILTER) {
+    conditions.push(isNull(agentEntryTable.taskId));
+  } else if (input.taskId) {
+    conditions.push(eq(agentEntryTable.taskId, input.taskId));
+  }
   if (input.kind) conditions.push(eq(agentEntryTable.kind, input.kind));
 
   const rows = await db

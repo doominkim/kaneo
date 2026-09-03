@@ -347,7 +347,10 @@ export function registerAgentTools(
           .string()
           .optional()
           .describe("Opaque cursor: nextBefore from the previous page"),
-        taskId: z.string().optional(),
+        taskId: z
+          .string()
+          .optional()
+          .describe("Exact task id, or `none` for entries with no task"),
         kind: z
           .enum(["work", "investigation", "decision", "handoff"])
           .optional(),

@@ -2222,6 +2222,8 @@
 			"attachments": "첨부",
 			"entriesToggle": "기록 ({{value}})",
 			"entriesEmpty": "이 태스크에 남긴 기록이 없습니다.",
+			"projectEntries": "프로젝트 기록",
+			"projectEntriesEmpty": "프로젝트 단위 기록이 아직 없습니다.",
 			"filterAll": "전체",
 			"coreChanged": "코어 변경",
 			"hasDecision": "결정",

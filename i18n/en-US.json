@@ -2229,6 +2229,8 @@
 			"attachments": "Attachments",
 			"entriesToggle": "Ledger ({{value}})",
 			"entriesEmpty": "No ledger entries for this task.",
+			"projectEntries": "Project notes",
+			"projectEntriesEmpty": "No project-level notes yet.",
 			"filterAll": "All",
 			"coreChanged": "Core changed",
 			"hasDecision": "Decision",

@@ -2407,7 +2407,9 @@
 			"reversible": "Reversible",
 			"showDone": "Show",
 			"task": "Task",
-			"title": "Timeline"
+			"title": "Timeline",
+			"projectEntries": "Project notes",
+			"projectEntriesEmpty": "No project-level notes yet."
 		},
 		"confidence": {
 			"confirmed": "Confirmed",

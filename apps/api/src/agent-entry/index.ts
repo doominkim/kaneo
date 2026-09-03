@@ -51,7 +51,7 @@ const listEntriesRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "List ledger entries",
   description:
-    "Newest first, human and agent entries interleaved; each row carries `actor` (agent) or `author` (human). Returns summaries only — `body` and `decision` are excluded at the query level so the cost of a listing stays bounded. Fetch a single entry to read them. Page by passing the previous response's `nextBefore` as `before`.",
+    "Newest first, human and agent entries interleaved; each row carries `actor` (agent) or `author` (human). Returns summaries only — `body` and `decision` are excluded at the query level so the cost of a listing stays bounded. Fetch a single entry to read them. Page by passing the previous response's `nextBefore` as `before`. Filter with `kind` and `taskId`; `taskId=none` returns the project-level entries that have no task.",
   middleware: [workspaceAccess.fromProject("projectId")] as const,
   request: { params: projectIdParam, query: listEntriesQuery },
   responses: {

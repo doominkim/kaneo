@@ -529,6 +529,10 @@ describe("API integration: agent entries", () => {
   });
 
   describe("listing", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
     async function seedEntries(workspaceId: string, projectId: string) {
       const [actor] = await db
         .insert(agentActorTable)
@@ -722,6 +726,109 @@ describe("API integration: agent entries", () => {
       expect(
         scoped.entries.some((entry) => entry.summary === "other project entry"),
       ).toBe(false);
+    });
+
+    // A project-level note (the timeline header composer) has task_id NULL.
+    // The tree only lists entries under task nodes, so without this filter
+    // those rows are stored but never shown anywhere.
+    it("lists the project-level entries with taskId=none and keeps them out of a task filter", async () => {
+      const member = await createWorkspaceMember();
+      const { project, columns } = await createProjectFixture({
+        workspaceId: member.workspace.id,
+      });
+      const task = await seedTask(project.id, columns.todo.id, 1);
+      const base = Date.UTC(2026, 2, 1, 0, 0, 0, 0);
+      await db.insert(agentEntryTable).values([
+        {
+          workspaceId: member.workspace.id,
+          projectId: project.id,
+          taskId: null,
+          createdBy: member.user.id,
+          summary: "project note old",
+          createdAt: new Date(base),
+        },
+        {
+          workspaceId: member.workspace.id,
+          projectId: project.id,
+          taskId: task.id,
+          summary: "task scoped",
+          createdAt: new Date(base + 60_000),
+        },
+        {
+          workspaceId: member.workspace.id,
+          projectId: project.id,
+          taskId: null,
+          createdBy: member.user.id,
+          summary: "project note new",
+          createdAt: new Date(base + 120_000),
+        },
+      ]);
+
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      const projectLevel = (await (
+        await app.request(`/api/agent-entry/${project.id}?taskId=none`)
+      ).json()) as EntryList;
+      expect(projectLevel.entries.map((entry) => entry.summary)).toEqual([
+        "project note new",
+        "project note old",
+      ]);
+      expect(projectLevel.entries.every((entry) => entry.taskId === null)).toBe(
+        true,
+      );
+
+      const byTask = (await (
+        await app.request(`/api/agent-entry/${project.id}?taskId=${task.id}`)
+      ).json()) as EntryList;
+      expect(byTask.entries.map((entry) => entry.summary)).toEqual([
+        "task scoped",
+      ]);
+
+      const all = (await (
+        await app.request(`/api/agent-entry/${project.id}`)
+      ).json()) as EntryList;
+      expect(all.entries.map((entry) => entry.summary)).toEqual([
+        "project note new",
+        "task scoped",
+        "project note old",
+      ]);
+
+      // The sentinel pages like any other filter: the cursor stays inside it.
+      const firstPage = (await (
+        await app.request(`/api/agent-entry/${project.id}?taskId=none&limit=1`)
+      ).json()) as EntryList;
+      expect(firstPage.entries.map((entry) => entry.summary)).toEqual([
+        "project note new",
+      ]);
+      expect(firstPage.nextBefore).not.toBeNull();
+      const secondPage = (await (
+        await app.request(
+          `/api/agent-entry/${project.id}?taskId=none&limit=1&before=${encodeURIComponent(firstPage.nextBefore ?? "")}`,
+        )
+      ).json()) as EntryList;
+      expect(secondPage.entries.map((entry) => entry.summary)).toEqual([
+        "project note old",
+      ]);
+
+      // agent_log_tail forwards taskId unchanged; route its HTTP hop back in.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = new URL(String(input));
+          return app.request(`${url.pathname}${url.search}`, init);
+        }),
+      );
+      const viaMcp = toolJson<EntryList>(
+        await mcpToolCall(app, "agent_log_tail", {
+          projectId: project.id,
+          taskId: "none",
+        }),
+      );
+      expect(viaMcp.entries.map((entry) => entry.summary)).toEqual([
+        "project note new",
+        "project note old",
+      ]);
     });
 
     // PostgreSQL stores `created_at` to the microsecond while a JS Date carries

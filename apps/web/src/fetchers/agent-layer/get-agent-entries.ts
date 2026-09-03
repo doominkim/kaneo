@@ -4,6 +4,12 @@ import { throwAgentLayerError } from "./api-error";
 
 export type AgentEntryKind = "work" | "investigation" | "decision" | "handoff";
 
+/**
+ * `taskId` sentinel the API reads as "task_id IS NULL": the project-level
+ * notes written from the timeline header, which no task node can show.
+ */
+export const NO_TASK_FILTER = "none";
+
 export type AgentEntryList = InferResponseType<
   (typeof client)["agent-entry"][":projectId"]["$get"],
   200
