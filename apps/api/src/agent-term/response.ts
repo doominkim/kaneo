@@ -12,6 +12,9 @@ export const termSchema = z
     confidence: z.string(),
     state: z.string(),
     supersededBy: z.string().nullable(),
+    domainId: z.string().nullable().openapi({
+      description: "Domain page the term is filed under, or null.",
+    }),
     actorId: z.string().nullable().openapi({
       description:
         "agent_actor id of the model that proposed the term, or null when a person did.",

@@ -5,6 +5,7 @@ import db, { schema } from "../../apps/api/src/database";
 import {
   agentActorTable,
   agentDocumentTable,
+  agentDomainTable,
 } from "../../apps/api/src/database/schema-agent-layer";
 import { createApp } from "../../apps/api/src/index";
 import { mockAnonymousSession, mockAuthenticatedSession } from "./helpers/auth";
@@ -20,6 +21,7 @@ type DocumentSummary = {
   slug: string;
   title: string;
   taskId: string | null;
+  domainId: string | null;
   updatedBy: string | null;
   actorId: string | null;
   updatedAt: string;
@@ -478,6 +480,71 @@ describe("API integration: agent documents", () => {
     // Re-saving without taskId unlinks it — the body is a full replacement.
     const unlinked = await put(app, project.id, "linked");
     expect(((await unlinked.json()) as DocumentDetail).taskId).toBeNull();
+  });
+
+  it("files a document under a workspace domain page, refusing a foreign one", async () => {
+    const member = await createWorkspaceMember();
+    const other = await createWorkspaceMember({ userName: "Other" });
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    const [page] = await db
+      .insert(agentDomainTable)
+      .values({ workspaceId: member.workspace.id, slug: "billing", title: "B" })
+      .returning();
+    const [foreign] = await db
+      .insert(agentDomainTable)
+      .values({ workspaceId: other.workspace.id, slug: "foreign", title: "F" })
+      .returning();
+
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    const denied = await put(
+      app,
+      project.id,
+      "filed",
+      putBody({ domainId: foreign.id }),
+    );
+    expect(denied.status).toBe(400);
+    await expect(denied.text()).resolves.toBe(
+      "domainId does not belong to this workspace",
+    );
+    expect(await db.select().from(agentDocumentTable)).toEqual([]);
+
+    const filed = await put(
+      app,
+      project.id,
+      "filed",
+      putBody({ domainId: page.id }),
+    );
+    expect(filed.status).toBe(200);
+    expect(((await filed.json()) as DocumentDetail).domainId).toBe(page.id);
+    const list = (await (
+      await app.request(`/api/agent-document/${project.id}`)
+    ).json()) as DocumentList;
+    expect(list.documents[0]?.domainId).toBe(page.id);
+
+    // Agent overwrite carries its own domainId; omitting it unfiles.
+    const agent = toolJson<DocumentSummary & { domainId?: string }>(
+      await mcpToolCall(app, "agent_doc_put", {
+        projectId: project.id,
+        slug: "filed",
+        title: "Agent",
+        body: "b",
+        domainId: page.id,
+        provider: "anthropic",
+        model: "claude-opus-5",
+      }),
+    );
+    const [afterAgent] = await db
+      .select()
+      .from(agentDocumentTable)
+      .where(eq(agentDocumentTable.id, agent.id));
+    expect(afterAgent?.domainId).toBe(page.id);
+
+    const unfiled = await put(app, project.id, "filed");
+    expect(((await unfiled.json()) as DocumentDetail).domainId).toBeNull();
   });
 
   it("keeps slugs project-scoped: same slug in two projects, and no cross-project reads", async () => {

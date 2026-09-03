@@ -35,4 +35,8 @@ export const putDocumentBody = z.object({
     description:
       "Optional task this document was produced under. Must belong to the project. When set, the document hangs as a leaf under that task in the overview tree.",
   }),
+  domainId: z.string().nullable().optional().openapi({
+    description:
+      "Optional domain page to file the document under. Must belong to the project's workspace. Omitted or null unfiles it — the body is a full replacement.",
+  }),
 });

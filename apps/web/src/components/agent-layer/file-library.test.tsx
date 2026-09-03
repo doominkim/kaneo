@@ -108,6 +108,7 @@ const documents: AgentDocumentSummary[] = [
     slug: "session-report",
     title: "Session report",
     taskId: "t1",
+    domainId: null,
     updatedBy: "user-1",
     actorId: null,
     actor: null,

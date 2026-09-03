@@ -4,6 +4,8 @@ import { HTTPException } from "hono/http-exception";
 import presignArtifact from "../agent-artifact/controllers/presign-artifact";
 import putTextArtifact from "../agent-artifact/controllers/put-text-artifact";
 import putDocument from "../agent-document/controllers/put-document";
+import createDomain from "../agent-domain/controllers/create-domain";
+import updateDomain from "../agent-domain/controllers/update-domain";
 import resolveActor from "../agent-entry/controllers/resolve-actor";
 import db, { schema } from "../database";
 import { hasWorkspacePermission } from "../utils/require-workspace-permission";
@@ -29,12 +31,14 @@ import { validateWorkspaceAccess } from "../utils/validate-workspace-access";
  * validated with `auth.api.getSession`), so `apiKey` is intentionally unset.
  */
 
-type AgentPrincipal = {
+type AgentIdentity = {
   userId: string;
-  projectId: string;
   provider: string;
   model: string;
 };
+
+type AgentPrincipal = AgentIdentity & { projectId: string };
+type AgentWorkspacePrincipal = AgentIdentity & { workspaceId: string };
 
 export type AgentWriteAuthorization = {
   workspaceId: string;
@@ -42,6 +46,36 @@ export type AgentWriteAuthorization = {
 };
 
 const REQUIRED = { task: ["update"] };
+
+/**
+ * Workspace-scoped variant: the caller names the workspace directly (domain
+ * pages are workspace-level, there is no project to derive it from). Access
+ * and task:update are checked exactly as for a project write; a caller who
+ * is refused never gets an actor row minted.
+ */
+export async function authorizeAgentWorkspaceWrite(
+  principal: AgentWorkspacePrincipal,
+): Promise<AgentWriteAuthorization> {
+  await validateWorkspaceAccess(principal.userId, principal.workspaceId);
+
+  const c = new Context(new Request("http://kaneo.internal/mcp/agent-write"));
+  c.set("userId", principal.userId);
+  c.set("workspaceId", principal.workspaceId);
+  if (!(await hasWorkspacePermission(c, REQUIRED))) {
+    throw new HTTPException(403, { message: "Insufficient permissions" });
+  }
+
+  const actor = await resolveActor(
+    principal.workspaceId,
+    principal.userId,
+    principal.provider,
+    principal.model,
+  );
+  if (!actor) {
+    throw new HTTPException(500, { message: "Failed to resolve agent actor" });
+  }
+  return { workspaceId: principal.workspaceId, actorId: actor.id };
+}
 
 export async function authorizeAgentWrite(
   principal: AgentPrincipal,
@@ -57,26 +91,10 @@ export async function authorizeAgentWrite(
       message: "Workspace ID could not be determined",
     });
   }
-
-  await validateWorkspaceAccess(principal.userId, project.workspaceId);
-
-  const c = new Context(new Request("http://kaneo.internal/mcp/agent-write"));
-  c.set("userId", principal.userId);
-  c.set("workspaceId", project.workspaceId);
-  if (!(await hasWorkspacePermission(c, REQUIRED))) {
-    throw new HTTPException(403, { message: "Insufficient permissions" });
-  }
-
-  const actor = await resolveActor(
-    project.workspaceId,
-    principal.userId,
-    principal.provider,
-    principal.model,
-  );
-  if (!actor) {
-    throw new HTTPException(500, { message: "Failed to resolve agent actor" });
-  }
-  return { workspaceId: project.workspaceId, actorId: actor.id };
+  return authorizeAgentWorkspaceWrite({
+    ...principal,
+    workspaceId: project.workspaceId,
+  });
 }
 
 /**
@@ -100,6 +118,7 @@ export function putDocumentAsAgent(
     title: string;
     body: string;
     taskId?: string | null;
+    domainId?: string | null;
   },
 ) {
   return asToolCall(async () => {
@@ -111,6 +130,48 @@ export function putDocumentAsAgent(
       title: input.title,
       body: input.body,
       taskId: input.taskId,
+      domainId: input.domainId,
+      author: { actorId: auth.actorId },
+    });
+  });
+}
+
+/**
+ * Upsert of a domain page as an agent: with `domainId` the page's title/body
+ * are replaced, without it a new page is created under `parentId` (or at the
+ * root) with `slug`. Both branches attribute the write to the resolved actor.
+ */
+export function putDomainAsAgent(
+  input: AgentWorkspacePrincipal & {
+    domainId?: string | null;
+    parentId?: string | null;
+    slug?: string | null;
+    title: string;
+    body: string;
+  },
+) {
+  return asToolCall(async () => {
+    const auth = await authorizeAgentWorkspaceWrite(input);
+    if (input.domainId) {
+      return updateDomain({
+        workspaceId: auth.workspaceId,
+        domainId: input.domainId,
+        title: input.title,
+        body: input.body,
+        author: { actorId: auth.actorId },
+      });
+    }
+    if (!input.slug) {
+      throw new HTTPException(400, {
+        message: "slug is required when creating a page",
+      });
+    }
+    return createDomain({
+      workspaceId: auth.workspaceId,
+      parentId: input.parentId,
+      slug: input.slug,
+      title: input.title,
+      body: input.body,
       author: { actorId: auth.actorId },
     });
   });

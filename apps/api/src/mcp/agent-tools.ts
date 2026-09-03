@@ -12,8 +12,15 @@ import {
   SLUG_PATTERN,
 } from "../agent-document/schema";
 import {
+  DOMAIN_SLUG_PATTERN,
+  MAX_DOMAIN_BODY_BYTES,
+  MAX_DOMAIN_TITLE_LENGTH,
+} from "../agent-domain/schema";
+import { parseSlugPath, resolveSlugPath } from "../agent-domain/slug-path";
+import {
   presignArtifactAsAgent,
   putDocumentAsAgent,
+  putDomainAsAgent,
   putTextArtifactAsAgent,
 } from "./agent-direct";
 import type { McpToolRegistrar } from "./tools";
@@ -104,8 +111,30 @@ type DocumentDetail = {
   body: string;
 };
 
+type DomainNode = {
+  id: string;
+  parentId: string | null;
+  slug: string;
+  title: string;
+};
+type DomainPage = DomainNode & {
+  body: string;
+  updatedAt: string;
+  author: { userId: string; name: string } | null;
+  actor: { model: string } | null;
+  ancestors: DomainNode[];
+  children: DomainNode[];
+  terms: Array<{ canonical: string }>;
+  projects: Array<{ id: string; name: string }>;
+  documents: Array<{ projectId: string; slug: string; title: string }>;
+};
+type ProjectSettings = { domains?: Array<{ id: string; title: string }> };
+
 const BRIEF_TASK_CAP = 20;
 const BRIEF_DOCUMENT_CAP = 20;
+const BRIEF_DOMAIN_CAP = 10;
+const DOMAIN_LIST_CAP = 200;
+const DOMAIN_LINK_CAP = 20;
 
 /**
  * The HTTP listing is uncapped and slug-ordered; a booting session instead
@@ -156,6 +185,44 @@ function shapeBoard(board: BoardResponse) {
     openTotal: open.length,
     doneCount: done,
     truncated: open.length > BRIEF_TASK_CAP,
+  };
+}
+
+/**
+ * The page's links as names. A booting session needs to know what is filed
+ * here, not to page through it; ids come back only where the name alone
+ * cannot be acted on (a document needs its project and slug to be read).
+ */
+function shapeDomainPage(page: DomainPage, offset: number) {
+  const cap = <T>(items: T[]) => items.slice(0, DOMAIN_LINK_CAP);
+  return {
+    id: page.id,
+    parentId: page.parentId,
+    slug: page.slug,
+    path: [...page.ancestors.map((a) => a.slug), page.slug].join("/"),
+    title: page.title,
+    author: page.author?.name ?? null,
+    actor: page.actor?.model ?? null,
+    updatedAt: page.updatedAt,
+    ...sliceBody(page.body, offset),
+    children: cap(page.children).map((c) => ({
+      id: c.id,
+      slug: c.slug,
+      title: c.title,
+    })),
+    terms: cap(page.terms).map((t) => t.canonical),
+    projects: cap(page.projects).map((p) => ({ id: p.id, name: p.name })),
+    documents: cap(page.documents).map((d) => ({
+      projectId: d.projectId,
+      slug: d.slug,
+      title: d.title,
+    })),
+    linksTotal: {
+      children: page.children.length,
+      terms: page.terms.length,
+      projects: page.projects.length,
+      documents: page.documents.length,
+    },
   };
 }
 
@@ -230,7 +297,7 @@ export function registerAgentTools(
     "agent_brief",
     {
       description:
-        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries (deleted ones hidden), live claims, and the 20 most recently updated document titles (slug/title/updatedAt — deliverables, not a knowledge base; judge them by author and age; documentsTotal shows what was cut). Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
+        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries (deleted ones hidden), live claims, the 20 most recently updated document titles (slug/title/updatedAt — deliverables, not a knowledge base; judge them by author and age; documentsTotal shows what was cut), and the project's linked domain pages (`domains`, read them with agent_domain_get). Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
       inputSchema: z.object({
         projectId: z.string(),
         entries: z.number().int().min(1).max(20).default(5),
@@ -240,7 +307,7 @@ export function registerAgentTools(
       guard(async () => {
         // Fetched in parallel, then shaped. The cost the caller pays is the
         // shaped size, not the sum of the three responses.
-        const [board, log, leases, docs] = await Promise.all([
+        const [board, log, leases, docs, settings] = await Promise.all([
           api
             .json<BoardResponse>(
               `/api/task/tasks/${encodeURIComponent(args.projectId)}`,
@@ -261,6 +328,11 @@ export function registerAgentTools(
               `/api/agent-document/${encodeURIComponent(args.projectId)}`,
             )
             .catch(() => ({ documents: [] })),
+          api
+            .json<ProjectSettings>(
+              `/api/agent-project/${encodeURIComponent(args.projectId)}`,
+            )
+            .catch(() => ({}) as ProjectSettings),
         ]);
 
         return {
@@ -271,6 +343,11 @@ export function registerAgentTools(
           // Titles only; bodies are up to 200KB each and go through doc_get
           // (Phase 1c). `updatedAt` is there so a stale report looks stale.
           ...shapeDocuments(docs.documents ?? []),
+          // Where the project's meaning lives; titles only, the page itself
+          // is one agent_domain_get away.
+          domains: (settings.domains ?? [])
+            .slice(0, BRIEF_DOMAIN_CAP)
+            .map((d) => ({ id: d.id, title: d.title })),
         };
       }),
   );
@@ -425,6 +502,11 @@ export function registerAgentTools(
           )
           .default([]),
         sourceEntryId: z.string().nullable().optional(),
+        domainId: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("Domain page to file the term under"),
       }),
     },
     (args) =>
@@ -514,6 +596,11 @@ export function registerAgentTools(
         title: z.string().min(1).max(200),
         body: utf8String(MAX_DOCUMENT_BODY_BYTES, "body"),
         taskId: z.string().nullable().optional(),
+        domainId: z
+          .string()
+          .nullable()
+          .optional()
+          .describe("Domain page to file it under"),
         ...agentIdentity,
       }),
     },
@@ -528,6 +615,102 @@ export function registerAgentTools(
           taskId: doc.taskId,
           actorId: doc.actorId,
           updatedAt: doc.updatedAt,
+        };
+      }),
+  );
+
+  reg(
+    "agent_domain_list",
+    {
+      description:
+        "The workspace's domain knowledge pages as a flat tree (id/parentId/slug/title, up to 200): where business meaning, flows and vocabulary are written down. Read a page with agent_domain_get.",
+      inputSchema: z.object({ workspaceId: z.string() }),
+    },
+    (args) =>
+      guard(async () => {
+        const { domains } = await api.json<{ domains: DomainNode[] }>(
+          `/api/agent-domain/${encodeURIComponent(args.workspaceId)}`,
+        );
+        return {
+          domains: domains.slice(0, DOMAIN_LIST_CAP).map((d) => ({
+            id: d.id,
+            parentId: d.parentId,
+            slug: d.slug,
+            title: d.title,
+          })),
+          domainsTotal: domains.length,
+          truncated: domains.length > DOMAIN_LIST_CAP,
+        };
+      }),
+  );
+
+  reg(
+    "agent_domain_get",
+    {
+      description:
+        "One domain page by `domainId` or `slugPath` (root-to-child slugs, e.g. `billing/refunds`): meta, up to 8KB of body from byte `offset` (call again with offset=nextOffset while `truncated`), children, and the terms, projects and documents filed under it (names, 20 each).",
+      inputSchema: z
+        .object({
+          workspaceId: z.string(),
+          domainId: z.string().optional(),
+          slugPath: z.string().optional(),
+          offset: z.number().int().min(0).default(0),
+        })
+        .refine((v) => Boolean(v.domainId) !== Boolean(v.slugPath), {
+          message: "Pass exactly one of domainId or slugPath",
+        }),
+    },
+    (args) =>
+      guard(async () => {
+        const ws = encodeURIComponent(args.workspaceId);
+        let domainId = args.domainId;
+        if (!domainId) {
+          const segments = parseSlugPath(args.slugPath ?? "");
+          if (!segments) throw new Error("400 Invalid slugPath");
+          const { domains } = await api.json<{ domains: DomainNode[] }>(
+            `/api/agent-domain/${ws}`,
+          );
+          const found = resolveSlugPath(domains, segments);
+          if (!found) throw new Error(`404 No page at ${segments.join("/")}`);
+          domainId = found.id;
+        }
+        const page = await api.json<DomainPage>(
+          `/api/agent-domain/${ws}/${encodeURIComponent(domainId)}`,
+        );
+        return shapeDomainPage(page, args.offset);
+      }),
+  );
+
+  reg(
+    "agent_domain_put",
+    {
+      description:
+        "Write a domain page as this agent. With `domainId`: replace its title and body (full overwrite of the markdown, so read it first and merge). Without: create a page with `slug` under `parentId` (root when omitted). Domain pages are shared workspace knowledge, not session reports — keep them about the domain.",
+      inputSchema: z
+        .object({
+          workspaceId: z.string(),
+          domainId: z.string().optional(),
+          parentId: z.string().nullable().optional(),
+          slug: z.string().regex(DOMAIN_SLUG_PATTERN).optional(),
+          title: z.string().min(1).max(MAX_DOMAIN_TITLE_LENGTH),
+          body: utf8String(MAX_DOMAIN_BODY_BYTES, "body"),
+          ...agentIdentity,
+        })
+        .refine((v) => Boolean(v.domainId) || Boolean(v.slug), {
+          message: "slug is required when creating a page (no domainId)",
+        }),
+    },
+    (args) =>
+      guard(async () => {
+        const page = await putDomainAsAgent({ ...args, userId });
+        // Meta only: the caller just sent the body.
+        return {
+          id: page.id,
+          parentId: page.parentId,
+          slug: page.slug,
+          title: page.title,
+          actorId: page.actorId,
+          updatedAt: page.updatedAt,
         };
       }),
   );

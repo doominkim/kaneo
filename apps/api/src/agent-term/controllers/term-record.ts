@@ -22,6 +22,7 @@ export function toTermRecord(row: AgentTerm, actor: ActorResponse | null) {
     confidence: row.confidence,
     state: row.state,
     supersededBy: row.supersededBy,
+    domainId: row.domainId,
     actorId: row.actorId,
     actor,
     lastVerifiedAt: row.lastVerifiedAt,

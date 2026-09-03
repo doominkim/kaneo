@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
+import { assertDomainsInWorkspace } from "../../agent-domain/controllers/domain-lookup";
 import resolveActor from "../../agent-entry/controllers/resolve-actor";
 import db from "../../database";
 import { agentTermTable } from "../../database/schema-agent-layer";
@@ -13,6 +14,7 @@ type ProposeInput = {
   notToConfuseWith: string[];
   anchors: unknown[];
   sourceEntryId?: string | null;
+  domainId?: string | null;
   ownerId: string;
   /** Both set by an agent caller, both absent for a person proposing in the UI. */
   provider?: string | null;
@@ -50,6 +52,10 @@ async function proposeTerm(input: ProposeInput) {
     });
   }
 
+  if (input.domainId) {
+    await assertDomainsInWorkspace(input.workspaceId, [input.domainId]);
+  }
+
   // Resolved, not trusted: the caller names a provider/model, and the actor row
   // it maps to is keyed by (workspace, this human, model) exactly as the ledger
   // does it. No caller can name someone else's actor.
@@ -73,6 +79,7 @@ async function proposeTerm(input: ProposeInput) {
       notToConfuseWith: input.notToConfuseWith,
       anchors: input.anchors,
       sourceEntryId: input.sourceEntryId ?? null,
+      domainId: input.domainId ?? null,
       ownerId: input.ownerId,
       actorId: actor?.id ?? null,
       confidence: "proposed",

@@ -169,6 +169,15 @@ export const settingsSchema = z
     corePaths: z.array(z.string()),
     activeTaskThreshold: z.number().int(),
     doneArchiveDays: z.number().int(),
+    domainIds: z.array(z.string()).openapi({
+      description: "Ids of the linked domain pages, in title order.",
+    }),
+    domains: z
+      .array(z.object({ id: z.string(), slug: z.string(), title: z.string() }))
+      .openapi({
+        description:
+          "The same links with slug and title, so a settings form and a booting agent can show them without a second call.",
+      }),
     configured: z.boolean().openapi({
       description:
         "False when no settings row exists yet and the values shown are the defaults.",

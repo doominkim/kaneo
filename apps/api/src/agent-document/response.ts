@@ -14,6 +14,9 @@ export const documentSummarySchema = z
     slug: z.string(),
     title: z.string(),
     taskId: z.string().nullable(),
+    domainId: z.string().nullable().openapi({
+      description: "Domain page the document is filed under, or null.",
+    }),
     updatedBy: z.string().nullable().openapi({
       description:
         "User id of the human author, or null when an agent wrote it.",

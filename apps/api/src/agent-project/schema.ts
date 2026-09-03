@@ -7,6 +7,7 @@ import {
 
 export const projectIdParam = z.object({ projectId: z.string() });
 
+export const MAX_PROJECT_DOMAINS = 20;
 export const DEFAULT_ACTIVE_TASK_THRESHOLD = 20;
 export const DEFAULT_DONE_ARCHIVE_DAYS = 30;
 
@@ -31,5 +32,9 @@ export const putSettingsBody = z.object({
   doneArchiveDays: z.number().int().min(1).max(365).openapi({
     description:
       "Days a done task stays before the archive job (Phase 1c) may archive it. Stored now, not yet acted on. Default 30.",
+  }),
+  domainIds: z.array(z.string()).max(MAX_PROJECT_DOMAINS).optional().openapi({
+    description:
+      "Domain pages this project touches. Full replacement when present (duplicates collapsed); omitted leaves the links untouched. Every id must be a page of the project's workspace. At most 20.",
   }),
 });

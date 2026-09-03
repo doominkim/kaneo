@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import db, { schema } from "../../apps/api/src/database";
-import { agentProjectTable } from "../../apps/api/src/database/schema-agent-layer";
+import {
+  agentDomainTable,
+  agentProjectDomainTable,
+  agentProjectTable,
+} from "../../apps/api/src/database/schema-agent-layer";
 import { createApp } from "../../apps/api/src/index";
 import { mockAnonymousSession, mockAuthenticatedSession } from "./helpers/auth";
 import { resetTestDatabase } from "./helpers/database";
@@ -16,6 +20,8 @@ type Settings = {
   corePaths: string[];
   activeTaskThreshold: number;
   doneArchiveDays: number;
+  domainIds: string[];
+  domains: Array<{ id: string; slug: string; title: string }>;
   configured: boolean;
   updatedBy: string | null;
   updatedAt: string | null;
@@ -25,6 +31,8 @@ const DEFAULTS = {
   corePaths: [],
   activeTaskThreshold: 20,
   doneArchiveDays: 30,
+  domainIds: [],
+  domains: [],
   configured: false,
   updatedBy: null,
   updatedAt: null,
@@ -287,6 +295,97 @@ describe("API integration: agent project settings", () => {
     expect(await db.select().from(agentProjectTable)).toHaveLength(0);
   });
 
+  it("links domain pages: full replacement when sent, untouched when omitted, workspace-scoped", async () => {
+    const admin = await createWorkspaceMember({ role: "admin" });
+    const other = await createWorkspaceMember({ userName: "Other" });
+    const { project } = await createProjectFixture({
+      workspaceId: admin.workspace.id,
+    });
+    const seed = async (workspaceId: string, slug: string, title: string) => {
+      const [row] = await db
+        .insert(agentDomainTable)
+        .values({ workspaceId, slug, title })
+        .returning();
+      return row;
+    };
+    const billing = await seed(admin.workspace.id, "billing", "Billing");
+    const ops = await seed(admin.workspace.id, "ops", "Alpha ops");
+    const foreign = await seed(other.workspace.id, "foreign", "Foreign");
+
+    mockAuthenticatedSession(admin.user);
+
+    // Links can exist before a settings row: defaults still carry them.
+    await db
+      .insert(agentProjectDomainTable)
+      .values({ projectId: project.id, domainId: billing.id });
+    const preset = (await (await getSettings(project.id)).json()) as Settings;
+    expect(preset).toMatchObject({
+      configured: false,
+      domainIds: [billing.id],
+      domains: [{ id: billing.id, slug: "billing", title: "Billing" }],
+    });
+
+    const foreignLink = await putSettings(
+      project.id,
+      validBody({ domainIds: [billing.id, foreign.id] }),
+    );
+    expect(foreignLink.status).toBe(400);
+    await expect(foreignLink.text()).resolves.toBe(
+      "domainId does not belong to this workspace",
+    );
+    const unknownLink = await putSettings(
+      project.id,
+      validBody({ domainIds: ["nope"] }),
+    );
+    expect(unknownLink.status).toBe(400);
+    const tooMany = await putSettings(
+      project.id,
+      validBody({ domainIds: Array.from({ length: 21 }, (_, i) => `d${i}`) }),
+    );
+    expect(tooMany.status).toBe(400);
+    const notArray = await putSettings(
+      project.id,
+      validBody({ domainIds: billing.id }),
+    );
+    expect(notArray.status).toBe(400);
+    // Nothing above changed the links.
+    expect(await db.select().from(agentProjectDomainTable)).toHaveLength(1);
+
+    // Replacement, title-ordered, duplicates collapsed.
+    const replaced = await putSettings(
+      project.id,
+      validBody({ domainIds: [ops.id, billing.id, ops.id] }),
+    );
+    expect(replaced.status).toBe(200);
+    const saved = (await replaced.json()) as Settings;
+    expect(saved.domains).toEqual([
+      { id: ops.id, slug: "ops", title: "Alpha ops" },
+      { id: billing.id, slug: "billing", title: "Billing" },
+    ]);
+    expect(saved.domainIds).toEqual([ops.id, billing.id]);
+    expect(await (await getSettings(project.id)).json()).toEqual(saved);
+
+    // Omitted: untouched. Empty: cleared.
+    const untouched = await putSettings(project.id, validBody());
+    expect(((await untouched.json()) as Settings).domainIds).toEqual([
+      ops.id,
+      billing.id,
+    ]);
+    const cleared = await putSettings(project.id, validBody({ domainIds: [] }));
+    expect(((await cleared.json()) as Settings).domainIds).toEqual([]);
+    expect(await db.select().from(agentProjectDomainTable)).toEqual([]);
+
+    // Deleting a page drops the link (cascade), the settings row stays.
+    await putSettings(project.id, validBody({ domainIds: [billing.id] }));
+    await db
+      .delete(agentDomainTable)
+      .where(eq(agentDomainTable.id, billing.id));
+    const afterDelete = (await (
+      await getSettings(project.id)
+    ).json()) as Settings;
+    expect(afterDelete).toMatchObject({ configured: true, domainIds: [] });
+  });
+
   it("documents both routes and the settings component", async () => {
     const { app } = createApp();
     const spec = (await (await app.request("/api/openapi")).json()) as {
@@ -309,6 +408,8 @@ describe("API integration: agent project settings", () => {
       "corePaths",
       "activeTaskThreshold",
       "doneArchiveDays",
+      "domainIds",
+      "domains",
       "configured",
       "updatedBy",
       "updatedAt",

@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
+import { assertDomainsInWorkspace } from "../../agent-domain/controllers/domain-lookup";
 import { loadActor } from "../../agent-entry/actor-response";
 import db, { schema } from "../../database";
 import { agentDocumentTable } from "../../database/schema-agent-layer";
@@ -12,6 +13,7 @@ type PutInput = {
   title: string;
   body: string;
   taskId?: string | null;
+  domainId?: string | null;
   /** Exactly one of these is set; the other is written as NULL. */
   author: { updatedBy: string } | { actorId: string };
 };
@@ -43,6 +45,10 @@ async function putDocument(input: PutInput) {
     }
   }
 
+  if (input.domainId) {
+    await assertDomainsInWorkspace(input.workspaceId, [input.domainId]);
+  }
+
   const authorColumns =
     "updatedBy" in input.author
       ? { updatedBy: input.author.updatedBy, actorId: null }
@@ -52,6 +58,7 @@ async function putDocument(input: PutInput) {
     title: input.title,
     body: input.body,
     taskId: input.taskId ?? null,
+    domainId: input.domainId ?? null,
     ...authorColumns,
   };
 

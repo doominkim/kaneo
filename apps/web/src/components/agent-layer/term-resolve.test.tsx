@@ -38,6 +38,7 @@ const base: AgentTerm = {
   confidence: "confirmed",
   state: "active",
   supersededBy: null,
+  domainId: null,
   actorId: null,
   actor: null,
   lastVerifiedAt: null,

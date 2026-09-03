@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import db, { schema } from "../../apps/api/src/database";
 import {
   agentActorTable,
+  agentDomainTable,
   agentTermTable,
 } from "../../apps/api/src/database/schema-agent-layer";
 import { createApp } from "../../apps/api/src/index";
@@ -22,6 +23,7 @@ type Term = {
   confidence: string;
   state: string;
   supersededBy: string | null;
+  domainId: string | null;
   actorId: string | null;
   actor: {
     id: string;
@@ -110,6 +112,7 @@ describe("API integration: agent terms", () => {
       confidence: "proposed",
       state: "active",
       supersededBy: null,
+      domainId: null,
       // No provider/model on the request: a person proposed this.
       actorId: null,
       actor: null,
@@ -249,6 +252,117 @@ describe("API integration: agent terms", () => {
       confidence: "proposed",
     });
     expect(payload.anchors).toEqual([]);
+  });
+
+  describe("domain filing", () => {
+    async function seedDomain(workspaceId: string, slug: string) {
+      const [row] = await db
+        .insert(agentDomainTable)
+        .values({ workspaceId, slug, title: slug })
+        .returning();
+      return row;
+    }
+
+    it("files a term under a workspace page on propose, and refuses a foreign page", async () => {
+      const member = await createWorkspaceMember();
+      const other = await createWorkspaceMember({ userName: "Other" });
+      const page = await seedDomain(member.workspace.id, "billing");
+      const foreign = await seedDomain(other.workspace.id, "foreign");
+
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      const denied = await propose(app, {
+        workspaceId: member.workspace.id,
+        canonical: "Refund",
+        domainId: foreign.id,
+      });
+      expect(denied.status).toBe(400);
+      await expect(denied.text()).resolves.toBe(
+        "domainId does not belong to this workspace",
+      );
+      expect(await db.select().from(agentTermTable)).toEqual([]);
+
+      const filed = await propose(app, {
+        workspaceId: member.workspace.id,
+        canonical: "Refund",
+        domainId: page.id,
+      });
+      expect(filed.status).toBe(200);
+      expect(((await filed.json()) as Term).domainId).toBe(page.id);
+
+      // Deleting the page unfiles the term rather than deleting it.
+      await db.delete(agentDomainTable).where(eq(agentDomainTable.id, page.id));
+      const [row] = await db.select().from(agentTermTable);
+      expect(row).toMatchObject({ canonical: "Refund", domainId: null });
+    });
+
+    it("PATCH /domain files and unfiles for workspace:update only, workspace-scoped", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const other = await createWorkspaceMember({ userName: "Other" });
+      const page = await seedDomain(admin.workspace.id, "billing");
+      const foreign = await seedDomain(other.workspace.id, "foreign");
+      const [term] = await db
+        .insert(agentTermTable)
+        .values({ workspaceId: admin.workspace.id, canonical: "Refund" })
+        .returning();
+      const [theirs] = await db
+        .insert(agentTermTable)
+        .values({ workspaceId: other.workspace.id, canonical: "Theirs" })
+        .returning();
+      const patch = (
+        app: ReturnType<typeof createApp>["app"],
+        termId: string,
+        domainId: string | null,
+      ) =>
+        app.request(`/api/agent-term/${admin.workspace.id}/${termId}/domain`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ domainId }),
+        });
+
+      const memberId = `user-${randomUUID()}`;
+      const [member] = await db
+        .insert(schema.userTable)
+        .values({
+          id: memberId,
+          email: `${memberId}@example.com`,
+          emailVerified: true,
+          name: "Member",
+        })
+        .returning();
+      await db.insert(schema.workspaceUserTable).values({
+        workspaceId: admin.workspace.id,
+        userId: member.id,
+        role: "member",
+        joinedAt: new Date(),
+      });
+      mockAuthenticatedSession(member);
+      const asMember = createApp().app;
+      expect((await patch(asMember, term.id, page.id)).status).toBe(403);
+
+      mockAuthenticatedSession(admin.user);
+      const asAdmin = createApp().app;
+      expect((await patch(asAdmin, term.id, foreign.id)).status).toBe(400);
+      expect((await patch(asAdmin, "nope", page.id)).status).toBe(404);
+      expect((await patch(asAdmin, theirs.id, page.id)).status).toBe(404);
+
+      const filed = await patch(asAdmin, term.id, page.id);
+      expect(filed.status).toBe(200);
+      expect((await filed.json()) as Term).toMatchObject({
+        id: term.id,
+        domainId: page.id,
+        confidence: "proposed",
+      });
+      const unfiled = await patch(asAdmin, term.id, null);
+      expect(((await unfiled.json()) as Term).domainId).toBeNull();
+
+      const [foreignRow] = await db
+        .select()
+        .from(agentTermTable)
+        .where(eq(agentTermTable.id, theirs.id));
+      expect(foreignRow?.domainId).toBeNull();
+    });
   });
 
   it("rejects a duplicate canonical name in the same workspace", async () => {

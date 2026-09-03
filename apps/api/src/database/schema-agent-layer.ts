@@ -14,14 +14,18 @@
  */
 
 import { createId } from "@paralleldrive/cuid2";
+import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   index,
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 import { projectTable, taskTable, userTable, workspaceTable } from "./schema";
@@ -254,6 +258,114 @@ export const agentLeaseTable = pgTable(
 );
 
 /* -------------------------------------------------------------------------- */
+/* agent_domain — workspace domain knowledge                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One page of workspace-level domain knowledge, in a tree. Unlike a document
+ * (a per-project deliverable) a domain page is where the meaning lives: what
+ * the business calls things, how a flow actually works, which projects touch
+ * it. Terms, documents and projects link TO a page (`domain_id` on
+ * `agent_term`/`agent_document`, `agent_project_domain`), and the page view
+ * aggregates them — the page never copies them.
+ *
+ * Tree shape: `parentId` NULL for a root page, `SET NULL` on parent delete so
+ * an orphaned subtree is promoted to root rather than lost (the API refuses to
+ * delete a page with children anyway, so this only matters for raw SQL).
+ * Cycles are rejected at the application layer on move.
+ *
+ * Slug uniqueness is per level. Postgres treats NULLs as distinct in a UNIQUE
+ * constraint, so the composite constraint alone would let two root pages share
+ * a slug; the partial unique index covers the root level.
+ *
+ * Authorship follows the document rule: exactly one of `updatedBy` (human,
+ * HTTP) or `actorId` (agent, MCP) is set per write. `createdAt`/`updatedAt`
+ * are written by the app clock on every write.
+ */
+export const agentDomainTable = pgTable(
+  "agent_domain",
+  {
+    id: text("id")
+      .$defaultFn(() => createId())
+      .primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaceTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    parentId: text("parent_id").references(
+      (): AnyPgColumn => agentDomainTable.id,
+      { onDelete: "set null", onUpdate: "cascade" },
+    ),
+    /** ^[a-z0-9][a-z0-9-]{0,63}$ — validated at the API layer; unique per level */
+    slug: text("slug").notNull(),
+    title: text("title").notNull(),
+    /** markdown, ≤ 200KB enforced in Zod */
+    body: text("body").notNull().default(""),
+    /** human author of the current body; NULL when an agent wrote it */
+    updatedBy: text("updated_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /** agent author of the current body; NULL when a human wrote it */
+    actorId: text("actor_id").references(() => agentActorTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /** sibling order; ties broken by title */
+    position: integer("position").notNull().default(0),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("agent_domain_workspace_parent_slug_unique").on(
+      table.workspaceId,
+      table.parentId,
+      table.slug,
+    ),
+    uniqueIndex("agent_domain_workspace_root_slug_unique")
+      .on(table.workspaceId, table.slug)
+      .where(sql`${table.parentId} IS NULL`),
+    index("agent_domain_workspace_parent_idx").on(
+      table.workspaceId,
+      table.parentId,
+    ),
+  ],
+);
+
+/**
+ * Which domain pages a project touches. Many-to-many with a composite key;
+ * both sides cascade because the link has no meaning without either end. The
+ * project side references `project` directly, not `agent_project`, so linking
+ * never requires a settings row to exist.
+ */
+export const agentProjectDomainTable = pgTable(
+  "agent_project_domain",
+  {
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projectTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    domainId: text("domain_id")
+      .notNull()
+      .references(() => agentDomainTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+  },
+  (table) => [
+    primaryKey({
+      name: "agent_project_domain_pk",
+      columns: [table.projectId, table.domainId],
+    }),
+    index("agent_project_domain_domainId_idx").on(table.domainId),
+  ],
+);
+
+/* -------------------------------------------------------------------------- */
 /* agent_term — the lexicon                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -324,6 +436,11 @@ export const agentTermTable = pgTable(
       () => agentEntryTable.id,
       { onDelete: "set null", onUpdate: "cascade" },
     ),
+    /** the domain page this term belongs to (0007); NULL when unfiled */
+    domainId: text("domain_id").references(() => agentDomainTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
 
     /*
      * Retrieval-decay fields. Populated from day one even though the decay
@@ -350,6 +467,7 @@ export const agentTermTable = pgTable(
     index("agent_term_workspaceId_idx").on(table.workspaceId),
     index("agent_term_state_idx").on(table.state),
     index("agent_term_confidence_idx").on(table.confidence),
+    index("agent_term_domainId_idx").on(table.domainId),
   ],
 );
 
@@ -394,6 +512,11 @@ export const agentDocumentTable = pgTable(
       onDelete: "set null",
       onUpdate: "cascade",
     }),
+    /** the domain page this document is filed under (0007); NULL when unfiled */
+    domainId: text("domain_id").references(() => agentDomainTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
     /** ^[a-z0-9][a-z0-9-]{0,63}$ — validated at the API layer */
     slug: text("slug").notNull(),
     title: text("title").notNull(),
@@ -422,6 +545,7 @@ export const agentDocumentTable = pgTable(
     ),
     index("agent_document_project_task_idx").on(table.projectId, table.taskId),
     index("agent_document_workspaceId_idx").on(table.workspaceId),
+    index("agent_document_domainId_idx").on(table.domainId),
   ],
 );
 
@@ -558,3 +682,6 @@ export type AgentArtifact = typeof agentArtifactTable.$inferSelect;
 export type NewAgentArtifact = typeof agentArtifactTable.$inferInsert;
 export type AgentProject = typeof agentProjectTable.$inferSelect;
 export type NewAgentProject = typeof agentProjectTable.$inferInsert;
+export type AgentDomain = typeof agentDomainTable.$inferSelect;
+export type NewAgentDomain = typeof agentDomainTable.$inferInsert;
+export type AgentProjectDomain = typeof agentProjectDomainTable.$inferSelect;

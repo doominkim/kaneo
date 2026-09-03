@@ -24,6 +24,8 @@ const settings: AgentProjectSettings = {
   corePaths: ["src/domain/**"],
   activeTaskThreshold: 20,
   doneArchiveDays: 30,
+  domainIds: [],
+  domains: [],
   configured: true,
   updatedBy: "user-1",
   updatedAt: "2026-09-03T00:00:00.000Z",

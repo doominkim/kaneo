@@ -69,6 +69,7 @@ const document: AgentDocument = {
   title: "개요",
   body: "# Kaneo agent layer\n\nWhat this is.",
   taskId: null,
+  domainId: null,
   updatedBy: "user-1",
   actorId: null,
   actor: null,

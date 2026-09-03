@@ -61,6 +61,7 @@ function term(overrides: Partial<AgentTerm> & { id: string }): AgentTerm {
     confidence: "proposed",
     state: "active",
     supersededBy: null,
+    domainId: null,
     actorId: null,
     actor: null,
     lastVerifiedAt: null,

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // against its contract, the path itself is covered by integration tests.
 const direct = vi.hoisted(() => ({
   putDocumentAsAgent: vi.fn(),
+  putDomainAsAgent: vi.fn(),
   presignArtifactAsAgent: vi.fn(),
   putTextArtifactAsAgent: vi.fn(),
 }));
@@ -529,5 +530,341 @@ describe("agent_artifact_finalize", () => {
     expect(JSON.parse(result.content[0].text).error).toBe(
       "400 Uploaded file does not match the finalize request.",
     );
+  });
+});
+
+function domainNodes() {
+  return [
+    { id: "a", parentId: null, slug: "billing", title: "Billing" },
+    { id: "b", parentId: "a", slug: "refunds", title: "Refunds" },
+    { id: "e", parentId: null, slug: "refunds", title: "Root refunds" },
+  ];
+}
+
+function domainPage(body: string) {
+  return {
+    id: "b",
+    workspaceId: "ws-1",
+    parentId: "a",
+    slug: "refunds",
+    title: "Refunds",
+    body,
+    position: 0,
+    updatedBy: "user-1",
+    actorId: null,
+    author: { userId: "user-1", name: "Dominic" },
+    actor: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-02T00:00:00.000Z",
+    ancestors: [{ id: "a", slug: "billing", title: "Billing" }],
+    children: Array.from({ length: 25 }, (_, i) => ({
+      id: `c${i}`,
+      slug: `child-${i}`,
+      title: `Child ${i}`,
+    })),
+    terms: [
+      {
+        id: "t1",
+        canonical: "Refund",
+        confidence: "confirmed",
+        state: "active",
+      },
+    ],
+    projects: [{ id: "p1", name: "Billing v2", slug: "billing-v2" }],
+    documents: [
+      {
+        id: "d1",
+        projectId: "p1",
+        slug: "refund-flow",
+        title: "Refund flow",
+        updatedAt: "2026-01-02T00:00:00.000Z",
+      },
+    ],
+  };
+}
+
+describe("agent_brief domains", () => {
+  it("lists the project's linked domain pages, id and title only, capped at 10", async () => {
+    apiFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith("/api/agent-project/p1")) {
+        return Response.json({
+          projectId: "p1",
+          domainIds: [],
+          domains: Array.from({ length: 12 }, (_, i) => ({
+            id: `dom-${i}`,
+            slug: `dom-${i}`,
+            title: `Domain ${i}`,
+          })),
+        });
+      }
+      return Response.json({});
+    });
+
+    const brief = await call("agent_brief", { projectId: "p1" });
+
+    expect(brief.domains).toHaveLength(10);
+    expect(brief.domains[0]).toEqual({ id: "dom-0", title: "Domain 0" });
+  });
+
+  it("degrades to an empty list when settings cannot be read", async () => {
+    apiFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/agent-project/")) {
+        return new Response("boom", { status: 500 });
+      }
+      return Response.json({});
+    });
+    const brief = await call("agent_brief", { projectId: "p1" });
+    expect(brief.domains).toEqual([]);
+  });
+});
+
+describe("agent_domain_list", () => {
+  it("returns id/parentId/slug/title only and caps at 200", async () => {
+    const many = Array.from({ length: 205 }, (_, i) => ({
+      id: `d${i}`,
+      parentId: null,
+      slug: `d${i}`,
+      title: `D${i}`,
+      position: i,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      childCount: 0,
+    }));
+    apiFetch.mockImplementation(async () => Response.json({ domains: many }));
+
+    const result = await call("agent_domain_list", { workspaceId: "ws 1" });
+
+    expect(lastRequest()).toMatchObject({
+      url: "http://api.test/api/agent-domain/ws%201",
+      method: "GET",
+      auth: "Bearer test-token",
+    });
+    expect(result.domains).toHaveLength(200);
+    expect(result.domains[0]).toEqual({
+      id: "d0",
+      parentId: null,
+      slug: "d0",
+      title: "D0",
+    });
+    expect(result).toMatchObject({ domainsTotal: 205, truncated: true });
+  });
+});
+
+describe("agent_domain_get", () => {
+  it("resolves a slugPath against the tree, then fetches the page by id", async () => {
+    apiFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/agent-domain/ws-1")) {
+        return Response.json({ domains: domainNodes() });
+      }
+      if (url.endsWith("/api/agent-domain/ws-1/b")) {
+        return Response.json(domainPage("# Refunds\n"));
+      }
+      return new Response("Domain not found", { status: 404 });
+    });
+
+    const page = await call("agent_domain_get", {
+      workspaceId: "ws-1",
+      slugPath: "billing/refunds",
+    });
+
+    expect(apiFetch).toHaveBeenCalledTimes(2);
+    expect(page).toEqual({
+      id: "b",
+      parentId: "a",
+      slug: "refunds",
+      path: "billing/refunds",
+      title: "Refunds",
+      author: "Dominic",
+      actor: null,
+      updatedAt: "2026-01-02T00:00:00.000Z",
+      body: "# Refunds\n",
+      bodyBytes: 10,
+      offset: 0,
+      nextOffset: null,
+      truncated: false,
+      children: Array.from({ length: 20 }, (_, i) => ({
+        id: `c${i}`,
+        slug: `child-${i}`,
+        title: `Child ${i}`,
+      })),
+      terms: ["Refund"],
+      projects: [{ id: "p1", name: "Billing v2" }],
+      documents: [
+        { projectId: "p1", slug: "refund-flow", title: "Refund flow" },
+      ],
+      linksTotal: { children: 25, terms: 1, projects: 1, documents: 1 },
+    });
+    expect(page).not.toHaveProperty("workspaceId");
+    expect(page).not.toHaveProperty("ancestors");
+  });
+
+  it("fetches by domainId directly and windows the body at 8KB", async () => {
+    apiFetch.mockImplementation(async () =>
+      Response.json(domainPage("x".repeat(10_000))),
+    );
+
+    const page = await call("agent_domain_get", {
+      workspaceId: "ws-1",
+      domainId: "b",
+      offset: 0,
+    });
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(lastRequest().url).toBe("http://api.test/api/agent-domain/ws-1/b");
+    expect(page).toMatchObject({
+      bodyBytes: 10_000,
+      nextOffset: 8192,
+      truncated: true,
+    });
+  });
+
+  it("rejects neither/both selectors, an invalid slugPath, and an unresolved one", async () => {
+    apiFetch.mockImplementation(async () =>
+      Response.json({ domains: domainNodes() }),
+    );
+
+    for (const bad of [
+      { workspaceId: "ws-1" },
+      { workspaceId: "ws-1", domainId: "b", slugPath: "billing" },
+    ]) {
+      const result = await callRaw("agent_domain_get", bad);
+      expect(result.isError, JSON.stringify(bad)).toBe(true);
+    }
+    expect(apiFetch).not.toHaveBeenCalled();
+
+    const invalid = await callRaw("agent_domain_get", {
+      workspaceId: "ws-1",
+      slugPath: "Billing/Refunds",
+    });
+    expect(JSON.parse(invalid.content[0].text)).toEqual({
+      error: "400 Invalid slugPath",
+    });
+    expect(apiFetch).not.toHaveBeenCalled();
+
+    const missing = await callRaw("agent_domain_get", {
+      workspaceId: "ws-1",
+      slugPath: "refunds/partial",
+    });
+    expect(missing.isError).toBe(true);
+    expect(JSON.parse(missing.content[0].text)).toEqual({
+      error: "404 No page at refunds/partial",
+    });
+  });
+});
+
+describe("agent_domain_put", () => {
+  const saved = {
+    ...domainPage("body"),
+    actorId: "actor-1",
+    updatedBy: null,
+  };
+
+  it("creates through the in-process path as the session user and echoes meta only", async () => {
+    direct.putDomainAsAgent.mockResolvedValue(saved);
+
+    const result = await call("agent_domain_put", {
+      workspaceId: "ws-1",
+      parentId: "a",
+      slug: "refunds",
+      title: "Refunds",
+      body: "body",
+      ...identity,
+    });
+
+    expect(direct.putDomainAsAgent).toHaveBeenCalledWith({
+      userId: "user-1",
+      workspaceId: "ws-1",
+      parentId: "a",
+      slug: "refunds",
+      title: "Refunds",
+      body: "body",
+      provider: "anthropic",
+      model: "claude-opus-5",
+    });
+    expect(result).toEqual({
+      id: "b",
+      parentId: "a",
+      slug: "refunds",
+      title: "Refunds",
+      actorId: "actor-1",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    });
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+
+  it("updates when domainId is given, without requiring a slug", async () => {
+    direct.putDomainAsAgent.mockResolvedValue(saved);
+    const result = await callRaw("agent_domain_put", {
+      workspaceId: "ws-1",
+      domainId: "b",
+      title: "Refunds",
+      body: "new body",
+      ...identity,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(direct.putDomainAsAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ domainId: "b", body: "new body" }),
+    );
+  });
+
+  it("validates slug presence on create, slug shape, title and the 200KB budget", async () => {
+    const base = { workspaceId: "ws-1", title: "T", body: "b", ...identity };
+    for (const bad of [
+      { ...base },
+      { ...base, slug: "Bad_Slug" },
+      { ...base, slug: "ok", title: "" },
+      { ...base, slug: "ok", body: "x".repeat(200 * 1024 + 1) },
+      { workspaceId: "ws-1", slug: "ok", title: "T", body: "b" },
+    ]) {
+      const result = await callRaw("agent_domain_put", bad);
+      expect(result.isError, JSON.stringify(bad).slice(0, 80)).toBe(true);
+    }
+    expect(direct.putDomainAsAgent).not.toHaveBeenCalled();
+  });
+
+  it("relays a rejection from the write path", async () => {
+    direct.putDomainAsAgent.mockRejectedValue(
+      new Error('409 A page with slug "refunds" already exists at this level'),
+    );
+    const result = await callRaw("agent_domain_put", {
+      workspaceId: "ws-1",
+      slug: "refunds",
+      title: "T",
+      body: "b",
+      ...identity,
+    });
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toContain("409");
+  });
+});
+
+describe("agent_doc_put / agent_term_propose domainId", () => {
+  it("passes domainId through to the document write path", async () => {
+    direct.putDocumentAsAgent.mockResolvedValue(documentDetail("b"));
+    await call("agent_doc_put", {
+      projectId: "p1",
+      slug: "report",
+      title: "T",
+      body: "b",
+      domainId: "dom-1",
+      ...identity,
+    });
+    expect(direct.putDocumentAsAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ domainId: "dom-1" }),
+    );
+  });
+
+  it("posts domainId with the term proposal", async () => {
+    await call("agent_term_propose", {
+      workspaceId: "ws-1",
+      canonical: "Refund",
+      domainId: "dom-1",
+      ...identity,
+    });
+    expect(lastRequest()).toMatchObject({
+      url: "http://api.test/api/agent-term",
+      method: "POST",
+      body: expect.objectContaining({ domainId: "dom-1", canonical: "Refund" }),
+    });
   });
 });

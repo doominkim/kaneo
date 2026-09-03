@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../apps/api/src/mcp/agent-direct", () => ({
   putDocumentAsAgent: vi.fn(),
+  putDomainAsAgent: vi.fn(),
   presignArtifactAsAgent: vi.fn(),
   putTextArtifactAsAgent: vi.fn(),
 }));
@@ -98,6 +99,9 @@ describe("agent_* tool definition budget (tools/list)", () => {
       "agent_brief",
       "agent_doc_get",
       "agent_doc_put",
+      "agent_domain_get",
+      "agent_domain_list",
+      "agent_domain_put",
       "agent_entry_get",
       "agent_lease_acquire",
       "agent_lease_release",

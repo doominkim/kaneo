@@ -12,6 +12,7 @@ import deleteTerm from "./controllers/delete-term";
 import listTerms from "./controllers/list-terms";
 import proposeTerm from "./controllers/propose-term";
 import resolveTerm from "./controllers/resolve-term";
+import setTermDomain from "./controllers/set-term-domain";
 import {
   resolveResultSchema,
   termDeleteResultSchema,
@@ -23,6 +24,7 @@ import {
   listTermsQuery,
   proposeTermBody,
   resolveQuery,
+  setTermDomainBody,
   termParams,
   workspaceIdParam,
 } from "./schema";
@@ -110,6 +112,33 @@ const confirmRoute = createRoute({
   },
 });
 
+const setDomainRoute = createRoute({
+  method: "patch",
+  operationId: "setAgentTermDomain",
+  path: "/{workspaceId}/{termId}/domain",
+  tags: ["Agent Layer"],
+  summary: "File a term under a domain page",
+  description:
+    "Sets or clears the term's `domainId`. The page must belong to the workspace. Requires workspace:update, the same gate as review — where a term belongs is a lexicon decision.",
+  middleware: [
+    workspaceAccess.fromParam("workspaceId"),
+    requireWorkspacePermission({ workspace: ["update"] }),
+  ] as const,
+  request: {
+    params: termParams,
+    body: {
+      required: true,
+      content: { "application/json": { schema: setTermDomainBody } },
+    },
+  },
+  responses: {
+    200: jsonResponse("The term", termSchema),
+    400: errorResponse("domainId outside the workspace"),
+    403: errorResponse("No workspace access, or missing workspace:update"),
+    404: errorResponse("Term not found in this workspace"),
+  },
+});
+
 const deleteRoute = createRoute({
   method: "delete",
   operationId: "deleteAgentTerm",
@@ -166,6 +195,13 @@ const agentTerm = apiRouter<BaseVariables & { workspaceId: string }>()
     const { termId, confidence } = c.req.valid("json");
     return c.json(
       await confirmTerm(c.req.valid("param").workspaceId, termId, confidence),
+      200,
+    );
+  })
+  .openapi(setDomainRoute, async (c) => {
+    const { workspaceId, termId } = c.req.valid("param");
+    return c.json(
+      await setTermDomain(workspaceId, termId, c.req.valid("json").domainId),
       200,
     );
   })
