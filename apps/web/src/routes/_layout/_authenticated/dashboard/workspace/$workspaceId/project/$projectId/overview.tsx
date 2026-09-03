@@ -8,6 +8,7 @@ import {
 import { HandoffCallout } from "@/components/agent-layer/handoff-callout";
 import { ProjectDescription } from "@/components/agent-layer/project-description";
 import { StatusStrip } from "@/components/agent-layer/status-strip";
+import { ThresholdBanner } from "@/components/agent-layer/threshold-banner";
 import { flattenTree } from "@/components/agent-layer/tree-utils";
 import ProjectLayout from "@/components/common/project-layout";
 import PageTitle from "@/components/page-title";
@@ -76,15 +77,21 @@ function RouteComponent() {
               onRetry={() => tree.refetch()}
             />
           ) : (
-            <StatusStrip
-              workspaceId={workspaceId}
-              projectId={projectId}
-              projectSlug={project?.slug}
-              openCount={flattened.openCount}
-              doneCount={flattened.doneCount}
-              leases={leases.data?.leases ?? []}
-              tasksById={flattened.byId}
-            />
+            <>
+              <ThresholdBanner
+                projectId={projectId}
+                threshold={tree.data.threshold}
+              />
+              <StatusStrip
+                workspaceId={workspaceId}
+                projectId={projectId}
+                projectSlug={project?.slug}
+                openCount={flattened.openCount}
+                doneCount={flattened.doneCount}
+                leases={leases.data?.leases ?? []}
+                tasksById={flattened.byId}
+              />
+            </>
           )}
         </div>
       </div>

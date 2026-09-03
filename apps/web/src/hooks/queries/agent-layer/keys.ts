@@ -1,4 +1,8 @@
 import type { AgentEntryKind } from "@/fetchers/agent-layer/get-agent-entries";
+import type {
+  AgentTermConfidence,
+  AgentTermState,
+} from "@/fetchers/agent-layer/get-agent-terms";
 
 /**
  * One place for the agent-layer cache keys so the mutation hooks and the
@@ -19,4 +23,14 @@ export const agentLayerKeys = {
   artifacts: (projectId: string) => ["agent-artifacts", projectId] as const,
   artifactUrl: (projectId: string, artifactId: string, disposition: string) =>
     ["agent-artifact-url", projectId, artifactId, disposition] as const,
+  settings: (projectId: string) =>
+    ["agent-project-settings", projectId] as const,
+  terms: (
+    workspaceId: string,
+    confidence?: AgentTermConfidence,
+    state?: AgentTermState,
+  ) =>
+    ["agent-terms", workspaceId, confidence ?? "all", state ?? "all"] as const,
+  termResolve: (workspaceId: string, term: string) =>
+    ["agent-term-resolve", workspaceId, term] as const,
 };

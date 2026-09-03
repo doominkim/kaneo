@@ -1,0 +1,236 @@
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentTerm } from "@/fetchers/agent-layer/get-agent-terms";
+import { TermList } from "./term-list";
+
+const mocks = vi.hoisted(() => ({
+  terms: vi.fn(),
+  review: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
+}));
+
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({
+    t: (key: string, options?: Record<string, unknown>) =>
+      options
+        ? `${key} ${Object.entries(options)
+            .map(([name, value]) => `${name}=${String(value)}`)
+            .join(" ")}`
+        : key,
+  }),
+}));
+vi.mock("@/lib/format", () => ({
+  formatRelativeTime: () => "2 hours ago",
+  formatDateTime: () => "Sep 3, 2026",
+}));
+vi.mock("@/lib/toast", () => ({
+  toast: { success: mocks.toastSuccess, error: mocks.toastError },
+}));
+vi.mock("@/components/public-project/markdown-renderer", () => ({
+  MarkdownRenderer: ({ content }: { content: string }) => (
+    <div data-testid="markdown">{content}</div>
+  ),
+}));
+vi.mock("@/hooks/queries/agent-layer/use-agent-terms", () => ({
+  useAgentTerms: mocks.terms,
+}));
+vi.mock("@/hooks/mutations/agent-layer/use-confirm-agent-term", () => ({
+  useConfirmAgentTerm: () => ({ mutateAsync: mocks.review, isPending: false }),
+}));
+
+function term(overrides: Partial<AgentTerm> & { id: string }): AgentTerm {
+  return {
+    canonical: "급여코드",
+    definition: null,
+    aliases: [],
+    notToConfuseWith: [],
+    anchors: [],
+    confidence: "proposed",
+    state: "active",
+    supersededBy: null,
+    lastVerifiedAt: null,
+    createdAt: "2026-09-03T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const terms: AgentTerm[] = [
+  term({
+    id: "t1",
+    canonical: "급여코드",
+    definition: "The **benefit** code.",
+    aliases: ["보험코드", "BenefitCode"],
+    notToConfuseWith: ["claim-code"],
+    anchors: [
+      { kind: "db", table: "benefits", column: "benefit_cd" },
+      { kind: "code", path: "src/benefit.ts", symbol: "BenefitCode" },
+      { kind: "doc", url: "https://example.com/spec" },
+      { bogus: true },
+    ],
+  }),
+  term({
+    id: "t2",
+    canonical: "청구코드",
+    confidence: "confirmed",
+    lastVerifiedAt: "2026-09-03T00:00:00.000Z",
+  }),
+  term({
+    id: "t3",
+    canonical: "구코드",
+    confidence: "disputed",
+    state: "retired",
+    supersededBy: "t2",
+  }),
+];
+
+beforeEach(() => {
+  mocks.review.mockReset().mockResolvedValue(terms[0]);
+  mocks.toastSuccess.mockReset();
+  mocks.terms.mockReset().mockReturnValue({
+    isPending: false,
+    isError: false,
+    data: { terms },
+    refetch: vi.fn(),
+  });
+});
+
+afterEach(() => cleanup());
+
+describe("TermList", () => {
+  it("renders canonical, aliases, anchors, not-to-confuse and badges per row", () => {
+    render(<TermList workspaceId="ws" canReview={false} />);
+
+    const rows = screen.getAllByTestId("term-row");
+    expect(rows).toHaveLength(3);
+
+    const first = rows[0];
+    expect(first).toHaveTextContent("급여코드");
+    expect(
+      within(first)
+        .getAllByTestId("alias-chip")
+        .map((chip) => chip.textContent),
+    ).toEqual(["보험코드", "BenefitCode"]);
+    expect(within(first).getByTestId("confidence-badge")).toHaveTextContent(
+      "agentLayer:confidence.proposed",
+    );
+    expect(within(first).getByTestId("not-to-confuse")).toHaveTextContent(
+      "claim-code",
+    );
+    expect(
+      within(first)
+        .getAllByTestId("anchor-chip")
+        .map((chip) => chip.getAttribute("title")),
+    ).toEqual([
+      "db benefits.benefit_cd",
+      "code src/benefit.ts#BenefitCode",
+      "doc https://example.com/spec",
+    ]);
+
+    // Definition is collapsed until asked for.
+    expect(screen.queryByTestId("markdown")).not.toBeInTheDocument();
+    fireEvent.click(within(first).getByTestId("definition-toggle"));
+    expect(within(first).getByTestId("markdown")).toHaveTextContent(
+      "The **benefit** code.",
+    );
+
+    // Active terms carry no state badge; the retired one shows its tombstone.
+    expect(within(first).queryByTestId("state-badge")).not.toBeInTheDocument();
+    expect(within(rows[2]).getByTestId("state-badge")).toHaveTextContent(
+      "agentLayer:state.retired",
+    );
+    expect(rows[2]).toHaveTextContent(
+      "agentLayer:knowledge.supersededBy id=t2",
+    );
+  });
+
+  it("drives the query with the confidence and state filters", () => {
+    render(<TermList workspaceId="ws" canReview={false} />);
+    expect(mocks.terms).toHaveBeenLastCalledWith("ws", undefined, undefined);
+
+    fireEvent.click(
+      within(screen.getByTestId("confidence-filter")).getByText(
+        "agentLayer:confidence.proposed",
+      ),
+    );
+    expect(mocks.terms).toHaveBeenLastCalledWith("ws", "proposed", undefined);
+
+    fireEvent.click(
+      within(screen.getByTestId("state-filter")).getByText(
+        "agentLayer:state.retired",
+      ),
+    );
+    expect(mocks.terms).toHaveBeenLastCalledWith("ws", "proposed", "retired");
+  });
+
+  it("hides review actions without workspace:update", () => {
+    render(<TermList workspaceId="ws" canReview={false} />);
+    expect(screen.queryByTestId("confirm-term")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dispute-term")).not.toBeInTheDocument();
+  });
+
+  it("confirms through the dialog when the viewer may review", async () => {
+    render(<TermList workspaceId="ws" canReview />);
+
+    const rows = screen.getAllByTestId("term-row");
+    // Already-confirmed rows cannot be confirmed again; disputed cannot be re-disputed.
+    expect(within(rows[1]).getByTestId("confirm-term")).toBeDisabled();
+    expect(within(rows[2]).getByTestId("dispute-term")).toBeDisabled();
+
+    fireEvent.click(within(rows[0]).getByTestId("confirm-term"));
+    const dialog = await screen.findByTestId("review-dialog");
+    expect(dialog).toHaveTextContent(
+      "agentLayer:knowledge.confirmTitle term=급여코드",
+    );
+    expect(mocks.review).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByTestId("review-submit"));
+    await waitFor(() =>
+      expect(mocks.review).toHaveBeenCalledWith({
+        workspaceId: "ws",
+        termId: "t1",
+        confidence: "confirmed",
+      }),
+    );
+    expect(mocks.toastSuccess).toHaveBeenCalled();
+  });
+
+  it("disputes through the same dialog", async () => {
+    render(<TermList workspaceId="ws" canReview />);
+    fireEvent.click(
+      within(screen.getAllByTestId("term-row")[1]).getByTestId("dispute-term"),
+    );
+    const dialog = await screen.findByTestId("review-dialog");
+    expect(dialog).toHaveTextContent(
+      "agentLayer:knowledge.disputeTitle term=청구코드",
+    );
+    fireEvent.click(within(dialog).getByTestId("review-submit"));
+    await waitFor(() =>
+      expect(mocks.review).toHaveBeenCalledWith({
+        workspaceId: "ws",
+        termId: "t2",
+        confidence: "disputed",
+      }),
+    );
+  });
+
+  it("shows the empty state when no term matches", () => {
+    mocks.terms.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: { terms: [] },
+      refetch: vi.fn(),
+    });
+    render(<TermList workspaceId="ws" canReview={false} />);
+    expect(
+      screen.getByText("agentLayer:knowledge.termsEmpty"),
+    ).toBeInTheDocument();
+  });
+});

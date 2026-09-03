@@ -2278,8 +2278,59 @@
 		},
 		"knowledge": {
 			"pageTitle": "{{name}} – Knowledge",
-			"placeholder": "Glossary and decision list arrive in Phase 1b.",
-			"title": "Knowledge"
+			"title": "Knowledge",
+			"aliasesHint": "Comma-separated. Variants people actually use, including code identifiers.",
+			"aliasesLabel": "Aliases",
+			"cancel": "Cancel",
+			"canonicalLabel": "Canonical name",
+			"canonicalRequired": "Canonical name is required.",
+			"confirm": "Confirm",
+			"confirmDescription": "Marks the term as reviewed and trusted. This is the only path from proposed to confirmed.",
+			"confirmTitle": "Confirm \"{{term}}\"?",
+			"decisionsEmpty": "No decisions yet.",
+			"decisionsEmptyHint": "Decision entries appear here once an agent or a person records one.",
+			"decisionsHint": "Ledger entries of kind \"decision\" for this project, newest first.",
+			"decisionsTitle": "Decisions",
+			"definitionLabel": "Definition (markdown)",
+			"dispute": "Dispute",
+			"disputeDescription": "Flags the term as contested so agents stop relying on it until it is resolved.",
+			"disputeTitle": "Dispute \"{{term}}\"?",
+			"filterAll": "All",
+			"filterConfidence": "Confidence",
+			"filterState": "State",
+			"glossaryHint": "Workspace vocabulary. Proposals are reviewed by a person before they count.",
+			"glossaryTitle": "Glossary",
+			"hideDefinition": "Hide definition",
+			"lastVerified": "verified {{time}}",
+			"noDefinition": "No definition.",
+			"notToConfuse": "Not to confuse with:",
+			"notToConfuseHint": "Comma-separated canonical names this is NOT.",
+			"notToConfuseLabel": "Not to confuse with",
+			"propose": "Propose term",
+			"proposeConflict": "A term with this canonical name already exists.",
+			"proposed": "\"{{term}}\" proposed.",
+			"proposeDescription": "Lands as proposed. A workspace admin confirms it later.",
+			"proposeFailed": "Could not propose the term.",
+			"proposeSubmit": "Propose",
+			"proposeTitle": "Propose a term",
+			"proposing": "Proposing…",
+			"resolveAmbiguous": "Ambiguous ({{count}})",
+			"resolveButton": "Resolve",
+			"resolveLabel": "Resolve a term",
+			"resolveMatch": {
+				"alias": "Alias match",
+				"canonical": "Canonical match",
+				"none": "No match"
+			},
+			"resolveNoneHint": "Nothing in the lexicon matches this word exactly.",
+			"resolvePlaceholder": "Look up a word as someone said it…",
+			"reviewed": "\"{{term}}\" marked {{confidence}}.",
+			"reviewFailed": "Could not save the review.",
+			"reviewing": "Saving…",
+			"showDefinition": "Show definition",
+			"supersededBy": "Retired — see {{id}} instead.",
+			"termsEmpty": "No terms match.",
+			"termsEmptyHint": "Propose a term, or widen the filters."
 		},
 		"nav": {
 			"docs": "Docs",
@@ -2311,7 +2362,10 @@
 			"descriptionPlaceholder": "What is this project, what is its current shape, what should a newcomer read first…",
 			"descriptionSaved": "Description saved.",
 			"descriptionSaveFailed": "Could not save the description.",
-			"descriptionTitle": "Description"
+			"descriptionTitle": "Description",
+			"thresholdExceeded": "{{open}} open tasks exceed the threshold of {{threshold}}.",
+			"thresholdHint": "The working set is growing. Close or archive tasks, or raise the threshold.",
+			"thresholdSettingsLink": "Adjust in project settings"
 		},
 		"timeline": {
 			"attachments": "Attachments",
@@ -2345,6 +2399,46 @@
 			"showDone": "Show",
 			"task": "Task",
 			"title": "Timeline"
+		},
+		"confidence": {
+			"confirmed": "Confirmed",
+			"disputed": "Disputed",
+			"proposed": "Proposed"
+		},
+		"settings": {
+			"archiveDaysHint": "Days a done task stays before it may be archived. Stored now, acted on in a later phase. Default 30.",
+			"archiveDaysLabel": "Done archive days",
+			"configured": "Configured",
+			"corePathsCount": "{{count}} / {{max}} patterns",
+			"corePathsHint": "One glob per line, repo-relative (e.g. src/domain/** or **/migrations/**). Files in an entry's refs matching any pattern are recorded as core changes. At most {{max}}.",
+			"corePathsLabel": "Core paths",
+			"navTitle": "Agent Layer",
+			"notConfigured": "Defaults (not saved yet)",
+			"pageTitle": "Agent Layer settings",
+			"readOnly": "Read only — project:update is required to change these.",
+			"save": "Save",
+			"saved": "Agent Layer settings saved.",
+			"saveFailed": "Could not save the settings.",
+			"saving": "Saving…",
+			"subtitle": "How the ledger judges core changes and when the overview warns about the working set.",
+			"thresholdHint": "Open tasks above this count show a warning on the overview. Default 20.",
+			"thresholdLabel": "Active task threshold",
+			"title": "Agent Layer",
+			"updatedBy": "Updated by {{name}} {{time}}",
+			"validation": {
+				"absolute": "Line {{line}}: absolute paths are not allowed.",
+				"archiveRange": "Enter a whole number between {{min}} and {{max}}.",
+				"parent": "Line {{line}}: \"..\" segments are not allowed.",
+				"thresholdRange": "Enter a whole number between {{min}} and {{max}}.",
+				"tooLong": "Line {{line}}: at most {{max}} characters.",
+				"tooMany": "At most {{max}} patterns."
+			}
+		},
+		"state": {
+			"active": "Active",
+			"dormant": "Dormant",
+			"retired": "Retired",
+			"stale": "Stale"
 		}
 	}
 }

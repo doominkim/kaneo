@@ -5,7 +5,7 @@ import {
   useLocation,
   useNavigate,
 } from "@tanstack/react-router";
-import { Eye, GitBranch, Plug, Settings } from "lucide-react";
+import { Bot, Eye, GitBranch, Plug, Settings } from "lucide-react";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import SettingsSidebar from "@/components/SettingsSidebar";
@@ -60,6 +60,11 @@ function RouteComponent() {
       title: t("settings:projectWorkflow.title"),
       icon: GitBranch,
       segment: "workflow",
+    },
+    {
+      title: t("agentLayer:settings.navTitle"),
+      icon: Bot,
+      segment: "agent-layer",
     },
   ];
   const { data: projects } = useGetProjects({

@@ -162,6 +162,11 @@ beforeEach(() => {
               usage: { totalTokens: 1200 },
               hasDecision: false,
               coreChanged: [],
+              repo: "doominkim/kaneo",
+              branch: "feat/kpa-v2",
+              effort: null,
+              agentLabel: null,
+              actor: null,
             },
           ],
           nextBefore: null,
@@ -296,6 +301,10 @@ describe("TaskTimelineTree", () => {
     expect(row).toHaveTextContent("Wired the upload flow");
     // Inside the task's own card the task key would be noise.
     expect(row).not.toHaveTextContent("KAN-");
+    // The listing lifts refs.repo/refs.branch so a row can show them.
+    expect(within(row).getByTestId("branch-chip")).toHaveTextContent(
+      "doominkim/kaneo:feat/kpa-v2",
+    );
 
     fireEvent.click(row);
     expect(onOpenEntry).toHaveBeenCalledWith("e1");

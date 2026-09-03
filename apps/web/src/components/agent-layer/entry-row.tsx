@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import type { AgentEntrySummary } from "@/fetchers/agent-layer/get-agent-entries";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
-import { actorLine, formatTokens, KindBadge } from "./chips";
+import { actorLine, BranchChip, formatTokens, KindBadge } from "./chips";
 
 /** One ledger entry line; shared by the project ledger and the per-task fold. */
 export function EntryRow({
@@ -54,6 +54,9 @@ export function EntryRow({
               {projectSlug ? `${projectSlug}-` : "#"}
               {taskNumber ?? "?"}
             </span>
+          ) : null}
+          {entry.branch ? (
+            <BranchChip repo={entry.repo} branch={entry.branch} />
           ) : null}
           {entry.hasDecision ? (
             <Badge variant="warning" size="sm">

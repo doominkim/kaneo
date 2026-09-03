@@ -4,7 +4,7 @@ import { MarkdownRenderer } from "@/components/public-project/markdown-renderer"
 import type { LatestAgentEntry } from "@/hooks/queries/agent-layer/use-agent-latest-entry";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { AgentLayerEmpty } from "./agent-layer-state";
-import { actorLine, KindBadge } from "./chips";
+import { actorLine, BranchChip, KindBadge } from "./chips";
 
 type HandoffCalloutProps = {
   latest: LatestAgentEntry;
@@ -49,6 +49,13 @@ export function HandoffCallout({ latest }: HandoffCalloutProps) {
                   : t("agentLayer:overview.handoffTitle")}
               </span>
               <KindBadge kind={entry.kind} />
+              {entry.refs?.branch ? (
+                <BranchChip
+                  repo={entry.refs.repo}
+                  branch={entry.refs.branch}
+                  className="normal-case tracking-normal"
+                />
+              ) : null}
             </div>
             <h2 className="text-base font-semibold leading-snug text-foreground">
               {entry.summary}
