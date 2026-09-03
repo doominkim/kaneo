@@ -66,6 +66,8 @@ Linear 실패 자체는 실재한다. AI는 append만 하고 compact를 안 한�
 
 감쇠는 **저장이 아니라 인출**에 적용한다. 직접 물으면(`resolve`) 항상 100% 답한다.
 
+**삭제 대신 숨김.** 원장 행은 수정도 삭제도 되지 않는다. 사람이 지운 행은 `deleted_at`/`deleted_by`만 찍히고 다른 열은 그대로 남는다(soft delete, `drizzle-agent/0006`). 기본 읽기(목록·단건·`agent_brief`·`agent_log_tail`·`agent_entry_get`·트리 집계·최신 handoff 선택)는 숨긴 행을 제외하고, `project:update`를 가진 사람만 `includeDeleted=true`로 다시 볼 수 있으며 같은 권한으로 복구한다. 숨길 수 있는 사람은 그 행의 사람 작성자 본인 또는 `project:update` 보유자다 — 에이전트 행에는 사람 작성자가 없으므로 후자만 해당한다. 용어(`agent_term`)는 반대로 `proposed` 상태에서만 하드 삭제한다: 아직 아무도 의존하지 않은 제안이기 때문이며, 확정된 용어는 삭제 대신 `retired` 툼스톤으로 남긴다.
+
 ---
 
 ## 3. 기반 선택 — Kaneo tracking fork
