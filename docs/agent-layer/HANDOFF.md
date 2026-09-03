@@ -4,17 +4,17 @@
 >
 > [DESIGN.md](./DESIGN.md)는 구현 전 설계 snapshot일 수 있다. 현재 운영 상태의 정본은 이 문서의 실측과 Git/Argo 런타임 확인이다.
 
-## 현재 상태 — 도메인 지식(`agent.15`)까지 운영 반영 완료
+## 현재 상태 — 인스턴스 잠금·MCP 보안·타임존 핀(`agent.16`)까지 운영 반영 완료
 
 Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-prod`는 해당 이미지와 S3 첨부 스토리지를 사용 중이다. 첨부 UI의 실제 로그인 사용자 업로드만 아직 브라우저 환경 문제로 확인하지 못했다. **다음 작업의 첫 순서는 로그인한 Kaneo에서 파일 하나를 올리고, 다운로드·삭제까지 확인하는 것**이다.
 
 | 대상 | 확정 상태 | 근거 |
 |---|---|---|
-| Kaneo 코드 | `agent-layer`의 `00a92dfb` push 완료 | `git` 원격 브랜치 확인 |
-| 이미지 | `ghcr.io/doominkim/kaneo:2.22.0-agent.15` 빌드 성공 | [GitHub Actions run 33754271128](https://github.com/doominkim/kaneo/actions/runs/33754271128) |
-| GitOps manifest | platform `main`의 `c448829` | 이미지 태그 `agent.15`, SealedSecret과 공개 S3 환경값 포함 |
+| Kaneo 코드 | `agent-layer`의 `d78844ef` push 완료 | `git` 원격 브랜치 확인 |
+| 이미지 | `ghcr.io/doominkim/kaneo:2.22.0-agent.16` 빌드 성공 | [GitHub Actions run 33757002074](https://github.com/doominkim/kaneo/actions/runs/33757002074) |
+| GitOps manifest | platform `main`의 `eb024ce` | 이미지 태그 `agent.16`, `DISABLE_REGISTRATION`/`DISABLE_GUEST_ACCESS`=`"true"`, SealedSecret과 공개 S3 환경값 포함 |
 | TLS vhost | sandbox `main`의 `5dc74e2` | `files.kit.io.kr` 전용 nginx vhost |
-| Argo / Pod | `kaneo-prod` Synced, Healthy, image `agent.15`, 1/1 Ready, restart 0, agent-layer 마이그레이션 0000~0007 적용 | 운영 클러스터 실측 (2026-09-04 06:30 KST) |
+| Argo / Pod | `kaneo-prod` Synced, Healthy, image `agent.16`, agent-layer 마이그레이션 0000~0007 적용, `/api/config` `disableRegistration:true`·`hasGuestAccess:false` | 운영 실측 (2026-09-03 13:05 UTC) |
 | MinIO HTTPS | `https://files.kit.io.kr/minio/health/live` 200 | SAN=`files.kit.io.kr`, 만료 `2026-12-01` |
 
 관련 Linear: [SAN-244 — Kaneo Agent Layer 운영 배포 및 핵심 실측](https://linear.app/c2fuzg/issue/SAN-244/kaneo-agent-layer-운영-배포-및-핵심-실측). 현재 상태는 In Progress이며, 아래 남은 실측/MCP/web 작업을 닫은 뒤 완료 처리한다.
@@ -109,7 +109,7 @@ MinIO에는 `kaneo-uploads` 전용 bucket, `kaneo-prod` 전용 사용자/버킷 
 1. `https://kaneo.kit.io.kr`에 로그인해 작은 첨부 파일을 task에 올린다. 네트워크 요청이 `https://files.kit.io.kr/kaneo-uploads/...`인지, finalize가 성공하는지, 새로고침 후 다운로드와 삭제가 되는지 기록한다. 실패하면 브라우저 console/Network의 상태 코드와 response body만 수집하고 자격증명·presigned URL query는 공유하지 않는다.
 2. (완료) 로컬 integration DB, Agent Layer integration 테스트, 결함 4건 수정. **재배포 전제**: 아래 "운영 호스트 침해" 대응이 끝나야 한다.
 3. OAuth MCP 클라이언트로 운영 `/api/mcp`의 `tools/list`와 read-only 도구부터 호출해 응답 byte/token 수를 기록한다. MCP 8개에는 append/propose/acquire/release mutation이 있으므로, mutation 전에는 전용 테스트 workspace/task, append-only 영구 데이터 허용 범위, 사용자 승인, lease 해제 기준을 먼저 정한다. 승인 전에는 mutation을 호출하지 않는다.
-4. 잔여 작업의 정본은 Kaneo project `kaneo`(KAN) 부모 task KAN-1 (`o2z5e9avzi7e1w8zzxa01c0u`)이다. 우선순위: INF-5(infra) 침해 대응 → KAN-4 잠금 → KAN-7 MCP 보안 → KAN-9 타임존 → KAN-6 사람 뷰 4탭(설계 승인 후) → KAN-10 Linear 흡수 → KAN-2/3 실측 → KAN-8 CORS.
+4. 잔여 작업의 정본은 Kaneo project `kaneo`(KAN) 부모 task KAN-1 (`o2z5e9avzi7e1w8zzxa01c0u`)이다. KAN-4(인스턴스 잠금, `fika` 비공개 전환 포함)·KAN-7(whoami 정제·DCR 관용)·KAN-9(pg Pool `options: "-c timezone=UTC"`)는 `agent.16`으로 운영 반영되어 in-review다. **KAN-9 잔여**: 기존 행 백필은 `scripts/agent-layer/timezone-backfill.sql`(ROLLBACK 종료 초안, `:cutoff`=agent.16 배포 UTC 시각)로, pg_dump 후 사용자 승인 게이트. 리포트 실측: `agent_entry` 미래행 37/83, 순서 불가 2건. `DATABASE_URL`에 `options=` 쿼리를 넣으면 코드 핀이 덮어써지므로 금지. 남은 우선순위: INF-5 침해 대응 → KAN-3 MCP 크기 실측 → KAN-10 Linear 흡수 → KAN-6 MCP 업로드 실측(새 세션) → KAN-8 CORS.
 5. 증거는 Kaneo 원장(`agent_log_append`)에 남긴다. SAN-244는 더 이상 갱신하지 않는다.
 
 ### 다음 명령 예시
@@ -195,7 +195,7 @@ fika.ing(Mac Studio, macOS 15.6.1, k3s·PostgreSQL 17·MinIO·Redis 호스트)�
 
 ## 오래된 정보 폐기
 
-- `2.22.0-agent.2`~`agent.14`는 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.15`다.
-- `apps/kaneo/prod.yaml`은 미커밋/빈 `sealedEnv` 상태가 아니다. `c448829`가 운영에 반영되었다.
+- `2.22.0-agent.2`~`agent.15`는 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.16`다.
+- `apps/kaneo/prod.yaml`은 미커밋/빈 `sealedEnv` 상태가 아니다. `eb024ce`가 운영에 반영되었다.
 - TLS 발급/배포는 pending이 아니다. `files.kit.io.kr`은 정상 HTTPS다.
 - 운영 DB/auth/S3 secret은 Bitwarden과 SealedSecret으로 이미 주입되어 있다. 값을 문서나 명령 출력에 적지 않는다.
