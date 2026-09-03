@@ -2166,7 +2166,8 @@
 			"tasks": "Tasks",
 			"knowledge": "Knowledge",
 			"docs": "Docs",
-			"sections": "Sections"
+			"sections": "Sections",
+			"domains": "Domains"
 		},
 		"common": {
 			"agent": "Agent",
@@ -2215,7 +2216,10 @@
 			"descriptionDeleteFailed": "Could not delete the description.",
 			"thresholdExceeded": "{{open}} open tasks exceed the threshold of {{threshold}}.",
 			"thresholdHint": "The working set is growing. Close or archive tasks, or raise the threshold.",
-			"thresholdSettingsLink": "Adjust in project settings"
+			"thresholdSettingsLink": "Adjust in project settings",
+			"relatedDomains": "Related domains",
+			"relatedDomainsEmpty": "No domain pages linked.",
+			"relatedDomainsSettings": "Link some in the project's Agent Layer settings."
 		},
 		"timeline": {
 			"pageTitle": "{{name}} – Timeline",
@@ -2375,7 +2379,8 @@
 			"viewerUrlFailed": "Could not open the file.",
 			"viewerReload": "Reload",
 			"viewerZip": "Archives cannot be previewed. Download the file to open it.",
-			"viewerPdf": "PDFs cannot be previewed inside the sandboxed frame. Open the file in a new tab or download it."
+			"viewerPdf": "PDFs cannot be previewed inside the sandboxed frame. Open the file in a new tab or download it.",
+			"domainLabel": "Domain"
 		},
 		"knowledge": {
 			"pageTitle": "{{name}} – Knowledge",
@@ -2439,7 +2444,11 @@
 			"deleted": "\"{{term}}\" deleted.",
 			"deleteFailed": "Could not delete the term.",
 			"deleteRefused": "The term cannot be deleted.",
-			"deleteForbidden": "workspace:update is required to delete a term."
+			"deleteForbidden": "workspace:update is required to delete a term.",
+			"domainLabel": "Domain",
+			"assignDomain": "Domain",
+			"domainSet": "\"{{term}}\" filed.",
+			"domainSetFailed": "Could not change the term's domain."
 		},
 		"confidence": {
 			"proposed": "Proposed",
@@ -2479,7 +2488,64 @@
 				"tooMany": "At most {{max}} patterns.",
 				"thresholdRange": "Enter a whole number between {{min}} and {{max}}.",
 				"archiveRange": "Enter a whole number between {{min}} and {{max}}."
-			}
+			},
+			"domainsLabel": "Domains",
+			"domainsHint": "Domain pages this project touches. Agents load them at boot. At most {{max}}.",
+			"domainsCount": "{{count}} / {{max}} linked"
+		},
+		"domain": {
+			"title": "Domain",
+			"pageTitle": "{{title}} – Domain",
+			"addRoot": "New domain",
+			"addChild": "Add sub-domain",
+			"none": "No domain",
+			"noneYet": "No domain pages yet.",
+			"rootLabel": "Top level",
+			"createTitle": "New domain page",
+			"createChildTitle": "New sub-domain of \"{{parent}}\"",
+			"createDescription": "A page of business knowledge: what a thing is, how it is handled, what to watch for. Sub-domains nest under it.",
+			"titleLabel": "Title",
+			"titleRequired": "Title is required.",
+			"slugLabel": "Slug",
+			"slugHint": "Lowercase letters, digits and hyphens, 1–64 characters, unique among siblings. Suggested from the title; a title with no Latin letters gets a domain-xxxxxx slug.",
+			"slugInvalid": "Slug must match ^[a-z0-9][a-z0-9-]{0,63}$",
+			"slugExists": "A sibling page already uses this slug.",
+			"create": "Create",
+			"creating": "Creating…",
+			"created": "\"{{title}}\" created.",
+			"createFailed": "Could not create the page.",
+			"cancel": "Cancel",
+			"edit": "Edit",
+			"save": "Save",
+			"saving": "Saving…",
+			"saved": "Page saved.",
+			"saveFailed": "Could not save the page.",
+			"byteCounter": "{{used}} / {{max}}",
+			"bodyPlaceholder": "Write the domain knowledge in markdown…",
+			"emptyBody": "This page has no content yet.",
+			"attachmentsDisabled": "File and image attachments are not available on domain pages.",
+			"children": "Sub-domains",
+			"childrenEmpty": "No sub-domains.",
+			"terms": "Terms",
+			"termsEmpty": "No terms filed here.",
+			"projects": "Projects",
+			"projectsEmpty": "No projects linked.",
+			"documents": "Documents",
+			"documentsEmpty": "No documents filed here.",
+			"move": "Move",
+			"moveTitle": "Move \"{{title}}\"",
+			"moveDescription": "Choose the new parent. The page cannot be moved under itself or one of its sub-domains.",
+			"moveParentLabel": "New parent",
+			"moving": "Moving…",
+			"moved": "\"{{title}}\" moved.",
+			"moveFailed": "Could not move the page.",
+			"delete": "Delete",
+			"deleteTitle": "Delete \"{{title}}\"?",
+			"deleteDescription": "The page is removed for good. Sub-domains, terms, documents and projects still filed under it block the deletion.",
+			"deleting": "Deleting…",
+			"deleted": "\"{{title}}\" deleted.",
+			"deleteFailed": "Could not delete the page.",
+			"deleteRefused": "The page cannot be deleted yet:"
 		}
 	}
 }

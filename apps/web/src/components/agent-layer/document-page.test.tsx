@@ -183,7 +183,12 @@ describe("DocumentPage", () => {
     expect(mocks.put).toHaveBeenCalledWith({
       projectId: "p",
       slug: "session-report",
-      body: { title: "Session report", body: "changed", taskId: "t1" },
+      body: {
+        title: "Session report",
+        body: "changed",
+        taskId: "t1",
+        domainId: null,
+      },
     });
     expect(mocks.toastSuccess).toHaveBeenCalledWith("agentLayer:docs.saved");
     await waitFor(() =>

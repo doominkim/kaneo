@@ -7,6 +7,7 @@ import {
 } from "@/components/agent-layer/agent-layer-state";
 import { HandoffCallout } from "@/components/agent-layer/handoff-callout";
 import { ProjectDescription } from "@/components/agent-layer/project-description";
+import { RelatedDomains } from "@/components/agent-layer/related-domains";
 import { StatusStrip } from "@/components/agent-layer/status-strip";
 import { ThresholdBanner } from "@/components/agent-layer/threshold-banner";
 import { flattenTree } from "@/components/agent-layer/tree-utils";
@@ -54,6 +55,12 @@ function RouteComponent() {
             memberNameById={memberNameById}
             canEdit={canUpdateTasks()}
             canDelete={canUpdateProjects()}
+          />
+
+          <RelatedDomains
+            workspaceId={workspaceId}
+            projectId={projectId}
+            canEditSettings={canUpdateProjects()}
           />
 
           <section>

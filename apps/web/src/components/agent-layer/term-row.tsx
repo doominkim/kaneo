@@ -4,12 +4,15 @@ import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/public-project/markdown-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import type { AgentDomainNode } from "@/fetchers/agent-layer/get-agent-domains";
 import type {
   AgentTerm,
   AgentTermConfidence,
   AgentTermState,
 } from "@/fetchers/agent-layer/get-agent-terms";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
+import { DomainChip } from "./domain-chip";
+import { DomainSelect } from "./domain-select";
 
 export type TermAnchor = {
   kind: string;
@@ -106,6 +109,12 @@ type TermRowProps = {
    */
   canDelete?: boolean;
   onDelete?: (term: AgentTerm) => void;
+  /** With `domainNodes`, the row shows the page the term is filed under. */
+  workspaceId?: string;
+  domainNodes?: AgentDomainNode[];
+  /** workspace:update — the same gate as review (KAN-14). */
+  canSetDomain?: boolean;
+  onSetDomain?: (term: AgentTerm, domainId: string | null) => void;
 };
 
 /** One lexicon entry (DESIGN.md §4.4); shared by the list and the resolver. */
@@ -115,10 +124,17 @@ export function TermRow({
   onReview,
   canDelete = false,
   onDelete,
+  workspaceId,
+  domainNodes,
+  canSetDomain = false,
+  onSetDomain,
 }: TermRowProps) {
   const { t } = useTranslation();
   const [showDefinition, setShowDefinition] = useState(false);
   const anchors = parseAnchors(term.anchors);
+  const domain = term.domainId
+    ? domainNodes?.find((node) => node.id === term.domainId)
+    : undefined;
 
   return (
     <li
@@ -143,6 +159,9 @@ export function TermRow({
             {alias}
           </Badge>
         ))}
+        {domain && workspaceId ? (
+          <DomainChip workspaceId={workspaceId} domain={domain} />
+        ) : null}
         <span className="ml-auto flex items-center gap-1">
           {canReview ? (
             <>
@@ -250,6 +269,19 @@ export function TermRow({
             {t("agentLayer:knowledge.lastVerified", {
               time: formatRelativeTime(term.lastVerifiedAt),
             })}
+          </span>
+        ) : null}
+        {canSetDomain && workspaceId ? (
+          <span className="ml-auto inline-flex items-center gap-1">
+            <span>{t("agentLayer:knowledge.assignDomain")}</span>
+            <DomainSelect
+              nodes={domainNodes}
+              value={term.domainId}
+              onChange={(next) => onSetDomain?.(term, next)}
+              size="sm"
+              className="h-6 min-h-6 w-auto min-w-28 max-w-56 text-xs sm:min-h-6"
+              data-testid="term-domain-select"
+            />
           </span>
         ) : null}
       </div>

@@ -1,5 +1,6 @@
 import type * as React from "react";
 
+import { NavDomains } from "@/components/agent-layer/nav-domains";
 import { NavMain } from "@/components/nav-main";
 import { NavProjects } from "@/components/nav-projects";
 import { ThemeToggleDropdown } from "@/components/theme-toggle-dropdown";
@@ -42,6 +43,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <Search />
         <NavMain />
         <NavProjects />
+        <NavDomains />
       </SidebarContent>
       <SidebarFooter>
         <TrialCard />

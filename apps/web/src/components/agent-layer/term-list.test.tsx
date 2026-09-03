@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("react-i18next", () => ({
+  initReactI18next: { type: "3rdParty", init: () => {} },
   useTranslation: () => ({
     t: (key: string, options?: Record<string, unknown>) =>
       options
@@ -49,6 +50,20 @@ vi.mock("@/hooks/mutations/agent-layer/use-confirm-agent-term", () => ({
 }));
 vi.mock("@/hooks/mutations/agent-layer/use-delete-agent-term", () => ({
   useDeleteAgentTerm: () => ({ mutateAsync: mocks.remove, isPending: false }),
+}));
+vi.mock("@/hooks/queries/agent-layer/use-agent-domains", () => ({
+  useAgentDomains: () => ({ data: { domains: [] }, isPending: false }),
+}));
+vi.mock("@/hooks/mutations/agent-layer/use-set-agent-term-domain", () => ({
+  useSetAgentTermDomain: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ children }: { children: React.ReactNode }) => (
+    <a href="/">{children}</a>
+  ),
+}));
+vi.mock("./domain-select", () => ({
+  DomainSelect: () => <span data-testid="term-domain-select" />,
 }));
 
 function term(overrides: Partial<AgentTerm> & { id: string }): AgentTerm {

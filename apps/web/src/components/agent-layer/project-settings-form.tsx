@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import type { AgentDomainNode } from "@/fetchers/agent-layer/get-agent-domains";
 import type { AgentProjectSettings } from "@/fetchers/agent-layer/get-agent-project-settings";
 import type { PutAgentProjectSettingsBody } from "@/fetchers/agent-layer/put-agent-project-settings";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
@@ -17,18 +18,22 @@ import {
   parseCorePaths,
   THRESHOLD_RANGE,
 } from "./core-paths";
+import { DomainCheckList } from "./domain-select";
+import { MAX_PROJECT_DOMAINS } from "./domain-tree";
 
 type ProjectSettingsFormProps = {
   settings: AgentProjectSettings;
   canEdit: boolean;
   isSaving: boolean;
   memberNameById: Map<string, string>;
+  /** The workspace's domain pages (flat), for the domain links. */
+  domainOptions?: AgentDomainNode[];
   onSave: (body: PutAgentProjectSettingsBody) => Promise<void>;
 };
 
 /**
  * Agent Layer project settings (DESIGN.md §6.1 / §6.2). PUT is a full
- * replacement, so the form always submits all three fields. Members without
+ * replacement, so the form always submits every field. Members without
  * project:update get the same form disabled — a visible current state beats
  * a hidden one.
  */
@@ -37,6 +42,7 @@ export function ProjectSettingsForm({
   canEdit,
   isSaving,
   memberNameById,
+  domainOptions,
   onSave,
 }: ProjectSettingsFormProps) {
   const { t } = useTranslation();
@@ -49,6 +55,7 @@ export function ProjectSettingsForm({
   const [archiveDays, setArchiveDays] = useState(
     String(settings.doneArchiveDays),
   );
+  const [domainIds, setDomainIds] = useState<string[]>(settings.domainIds);
   const [submitted, setSubmitted] = useState(false);
 
   // A save (or a refetch) replaces the baseline; local edits are not merged.
@@ -56,6 +63,7 @@ export function ProjectSettingsForm({
     setCorePathsText(settings.corePaths.join("\n"));
     setThreshold(String(settings.activeTaskThreshold));
     setArchiveDays(String(settings.doneArchiveDays));
+    setDomainIds(settings.domainIds);
     setSubmitted(false);
   }, [settings]);
 
@@ -81,7 +89,8 @@ export function ProjectSettingsForm({
   const isDirty =
     corePathsText !== settings.corePaths.join("\n") ||
     threshold !== String(settings.activeTaskThreshold) ||
-    archiveDays !== String(settings.doneArchiveDays);
+    archiveDays !== String(settings.doneArchiveDays) ||
+    domainIds.join("\n") !== settings.domainIds.join("\n");
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -91,6 +100,7 @@ export function ProjectSettingsForm({
       corePaths: parsed.patterns,
       activeTaskThreshold: thresholdValue,
       doneArchiveDays: archiveValue,
+      domainIds,
     });
   };
 
@@ -227,6 +237,28 @@ export function ProjectSettingsForm({
             </p>
           ) : null}
         </div>
+      </div>
+
+      <Separator />
+
+      <div className="space-y-1.5">
+        <Label>{t("agentLayer:settings.domainsLabel")}</Label>
+        <p className="text-xs text-muted-foreground">
+          {t("agentLayer:settings.domainsHint", { max: MAX_PROJECT_DOMAINS })}
+        </p>
+        <DomainCheckList
+          nodes={domainOptions}
+          value={domainIds}
+          max={MAX_PROJECT_DOMAINS}
+          disabled={!canEdit}
+          onChange={setDomainIds}
+        />
+        <p className="text-xs text-muted-foreground">
+          {t("agentLayer:settings.domainsCount", {
+            count: domainIds.length,
+            max: MAX_PROJECT_DOMAINS,
+          })}
+        </p>
       </div>
 
       {canEdit ? (

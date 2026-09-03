@@ -18,6 +18,8 @@ import type {
 } from "@/fetchers/agent-layer/get-agent-terms";
 import { useConfirmAgentTerm } from "@/hooks/mutations/agent-layer/use-confirm-agent-term";
 import { useDeleteAgentTerm } from "@/hooks/mutations/agent-layer/use-delete-agent-term";
+import { useSetAgentTermDomain } from "@/hooks/mutations/agent-layer/use-set-agent-term-domain";
+import { useAgentDomains } from "@/hooks/queries/agent-layer/use-agent-domains";
 import { useAgentTerms } from "@/hooks/queries/agent-layer/use-agent-terms";
 import { cn } from "@/lib/cn";
 import { toast } from "@/lib/toast";
@@ -58,6 +60,21 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
   const query = useAgentTerms(workspaceId, confidence, state);
   const review = useConfirmAgentTerm();
   const remove = useDeleteAgentTerm();
+  const domains = useAgentDomains(workspaceId);
+  const setDomain = useSetAgentTermDomain();
+
+  const handleSetDomain = async (term: AgentTerm, domainId: string | null) => {
+    try {
+      await setDomain.mutateAsync({ workspaceId, termId: term.id, domainId });
+      toast.success(
+        t("agentLayer:knowledge.domainSet", { term: term.canonical }),
+      );
+    } catch (cause) {
+      toast.error(t("agentLayer:knowledge.domainSetFailed"), {
+        description: cause instanceof Error ? cause.message : undefined,
+      });
+    }
+  };
 
   const handleReview = async () => {
     if (!pending) return;
@@ -155,6 +172,10 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
               }
               canDelete={canReview}
               onDelete={setPendingDelete}
+              workspaceId={workspaceId}
+              domainNodes={domains.data?.domains}
+              canSetDomain={canReview}
+              onSetDomain={handleSetDomain}
             />
           ))}
         </ul>

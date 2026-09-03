@@ -13,7 +13,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isAgentLayerStatus } from "@/fetchers/agent-layer/api-error";
 import { usePutAgentDocument } from "@/hooks/mutations/agent-layer/use-put-agent-document";
+import { useAgentDomains } from "@/hooks/queries/agent-layer/use-agent-domains";
 import { toast } from "@/lib/toast";
+import { DomainSelect } from "./domain-select";
 
 // Mirrors apps/api/src/agent-document/schema.ts SLUG_PATTERN; the server is
 // still the authority, this only saves a round trip.
@@ -23,6 +25,8 @@ type CreateDocumentDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
+  /** For the domain list; the document may be filed under a page. */
+  workspaceId?: string;
   existingSlugs: Set<string>;
   onCreated: (slug: string) => void;
 };
@@ -31,18 +35,22 @@ export function CreateDocumentDialog({
   open,
   onOpenChange,
   projectId,
+  workspaceId,
   existingSlugs,
   onCreated,
 }: CreateDocumentDialogProps) {
   const { t } = useTranslation();
   const [slug, setSlug] = useState("");
   const [title, setTitle] = useState("");
+  const [domainId, setDomainId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { mutateAsync, isPending } = usePutAgentDocument();
+  const domains = useAgentDomains(open && workspaceId ? workspaceId : "");
 
   const reset = () => {
     setSlug("");
     setTitle("");
+    setDomainId(null);
     setError(null);
   };
 
@@ -73,7 +81,7 @@ export function CreateDocumentDialog({
       await mutateAsync({
         projectId,
         slug: trimmedSlug,
-        body: { title: trimmedTitle, body: "" },
+        body: { title: trimmedTitle, body: "", domainId },
       });
       toast.success(t("agentLayer:docs.created"));
       reset();
@@ -133,6 +141,20 @@ export function CreateDocumentDialog({
                 }}
               />
             </div>
+            {workspaceId ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="agent-document-domain">
+                  {t("agentLayer:docs.domainLabel")}
+                </Label>
+                <DomainSelect
+                  id="agent-document-domain"
+                  nodes={domains.data?.domains}
+                  value={domainId}
+                  onChange={setDomainId}
+                  data-testid="document-domain-select"
+                />
+              </div>
+            ) : null}
             {error ? (
               <p className="text-xs text-destructive-foreground" role="alert">
                 {error}

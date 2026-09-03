@@ -22,6 +22,7 @@ import { cn } from "@/lib/cn";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { toast } from "@/lib/toast";
 import { AgentAuthorBadge } from "./agent-author-badge";
+import { DomainChip } from "./domain-chip";
 
 /** Matches MAX_DOCUMENT_BODY_BYTES on the API. Bytes, not characters. */
 export const MAX_DOCUMENT_BODY_BYTES = 200 * 1024;
@@ -44,6 +45,8 @@ type DocumentPageProps = {
   projectSlug?: string;
   taskNumber?: number | null;
   authorName?: string | null;
+  /** The page the document is filed under, resolved by the route. */
+  domain?: { id: string; slug: string; title: string } | null;
   canEdit: boolean;
   canDelete: boolean;
   startInEdit?: boolean;
@@ -57,6 +60,7 @@ export function DocumentPage({
   projectSlug,
   taskNumber,
   authorName,
+  domain,
   canEdit,
   canDelete,
   startInEdit = false,
@@ -90,9 +94,14 @@ export function DocumentPage({
       await put.mutateAsync({
         projectId,
         slug: document.slug,
-        // taskId is echoed back so saving never detaches the document from
-        // the task it hangs under in the overview tree.
-        body: { title: trimmedTitle, body, taskId: document.taskId },
+        // taskId and domainId are echoed back so saving never detaches the
+        // document from its task or unfiles it from its domain page.
+        body: {
+          title: trimmedTitle,
+          body,
+          taskId: document.taskId,
+          domainId: document.domainId,
+        },
       });
       toast.success(t("agentLayer:docs.saved"));
       setIsEditing(false);
@@ -235,6 +244,9 @@ export function DocumentPage({
                 {projectSlug ? `${projectSlug}-` : "#"}
                 {taskNumber ?? "?"}
               </Link>
+            ) : null}
+            {domain ? (
+              <DomainChip workspaceId={workspaceId} domain={domain} />
             ) : null}
           </div>
 

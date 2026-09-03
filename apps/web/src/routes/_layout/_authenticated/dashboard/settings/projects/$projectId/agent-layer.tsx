@@ -8,6 +8,7 @@ import { ProjectSettingsForm } from "@/components/agent-layer/project-settings-f
 import PageTitle from "@/components/page-title";
 import { isAgentLayerStatus } from "@/fetchers/agent-layer/api-error";
 import { usePutAgentProjectSettings } from "@/hooks/mutations/agent-layer/use-put-agent-project-settings";
+import { useAgentDomains } from "@/hooks/queries/agent-layer/use-agent-domains";
 import { useAgentProjectSettings } from "@/hooks/queries/agent-layer/use-agent-project-settings";
 import { useMemberNames } from "@/hooks/queries/agent-layer/use-member-names";
 import { useWorkspacePermission } from "@/hooks/use-workspace-permission";
@@ -26,6 +27,7 @@ function RouteComponent() {
   const { canUpdateProjects, workspace } = useWorkspacePermission();
   const settings = useAgentProjectSettings(projectId);
   const memberNameById = useMemberNames(workspace?.id ?? "");
+  const domains = useAgentDomains(workspace?.id ?? "");
   const { mutateAsync, isPending } = usePutAgentProjectSettings();
 
   return (
@@ -54,6 +56,7 @@ function RouteComponent() {
             canEdit={canUpdateProjects()}
             isSaving={isPending}
             memberNameById={memberNameById}
+            domainOptions={domains.data?.domains}
             onSave={async (body) => {
               try {
                 await mutateAsync({ projectId, body });

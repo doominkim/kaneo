@@ -2263,7 +2263,8 @@
 			"viewerReload": "Reload",
 			"viewerUrlFailed": "Could not open the file.",
 			"viewerZip": "Archives cannot be previewed. Download the file to open it.",
-			"viewerPdf": "PDFs cannot be previewed inside the sandboxed frame. Open the file in a new tab or download it."
+			"viewerPdf": "PDFs cannot be previewed inside the sandboxed frame. Open the file in a new tab or download it.",
+			"domainLabel": "Domain"
 		},
 		"kind": {
 			"decision": "Decision",
@@ -2333,7 +2334,11 @@
 			"deleteForbidden": "workspace:update is required to delete a term.",
 			"deleteRefused": "The term cannot be deleted.",
 			"deleteTitle": "Delete \"{{term}}\"?",
-			"deleting": "Deleting…"
+			"deleting": "Deleting…",
+			"assignDomain": "Domain",
+			"domainLabel": "Domain",
+			"domainSet": "\"{{term}}\" filed.",
+			"domainSetFailed": "Could not change the term's domain."
 		},
 		"nav": {
 			"docs": "Docs",
@@ -2341,7 +2346,8 @@
 			"overview": "Overview",
 			"sections": "Sections",
 			"tasks": "Tasks",
-			"timeline": "Timeline"
+			"timeline": "Timeline",
+			"domains": "Domains"
 		},
 		"overview": {
 			"doneTasks": "Done",
@@ -2368,7 +2374,10 @@
 			"descriptionTitle": "Description",
 			"thresholdExceeded": "{{open}} open tasks exceed the threshold of {{threshold}}.",
 			"thresholdHint": "The working set is growing. Close or archive tasks, or raise the threshold.",
-			"thresholdSettingsLink": "Adjust in project settings"
+			"thresholdSettingsLink": "Adjust in project settings",
+			"relatedDomains": "Related domains",
+			"relatedDomainsEmpty": "No domain pages linked.",
+			"relatedDomainsSettings": "Link some in the project's Agent Layer settings."
 		},
 		"timeline": {
 			"attachments": "Attachments",
@@ -2453,7 +2462,10 @@
 				"thresholdRange": "Enter a whole number between {{min}} and {{max}}.",
 				"tooLong": "Line {{line}}: at most {{max}} characters.",
 				"tooMany": "At most {{max}} patterns."
-			}
+			},
+			"domainsCount": "{{count}} / {{max}} linked",
+			"domainsHint": "Domain pages this project touches. Agents load them at boot. At most {{max}}.",
+			"domainsLabel": "Domains"
 		},
 		"state": {
 			"active": "Active",
@@ -2480,6 +2492,60 @@
 			"summaryPlaceholder": "One line for the timeline",
 			"summaryRequired": "Summary is required.",
 			"summaryTooLong": "Summary must be {{max}} characters or fewer."
+		},
+		"domain": {
+			"addChild": "Add sub-domain",
+			"addRoot": "New domain",
+			"attachmentsDisabled": "File and image attachments are not available on domain pages.",
+			"bodyPlaceholder": "Write the domain knowledge in markdown…",
+			"byteCounter": "{{used}} / {{max}}",
+			"cancel": "Cancel",
+			"children": "Sub-domains",
+			"childrenEmpty": "No sub-domains.",
+			"create": "Create",
+			"createChildTitle": "New sub-domain of \"{{parent}}\"",
+			"created": "\"{{title}}\" created.",
+			"createDescription": "A page of business knowledge: what a thing is, how it is handled, what to watch for. Sub-domains nest under it.",
+			"createFailed": "Could not create the page.",
+			"createTitle": "New domain page",
+			"creating": "Creating…",
+			"delete": "Delete",
+			"deleted": "\"{{title}}\" deleted.",
+			"deleteDescription": "The page is removed for good. Sub-domains, terms, documents and projects still filed under it block the deletion.",
+			"deleteFailed": "Could not delete the page.",
+			"deleteRefused": "The page cannot be deleted yet:",
+			"deleteTitle": "Delete \"{{title}}\"?",
+			"deleting": "Deleting…",
+			"documents": "Documents",
+			"documentsEmpty": "No documents filed here.",
+			"edit": "Edit",
+			"emptyBody": "This page has no content yet.",
+			"move": "Move",
+			"moved": "\"{{title}}\" moved.",
+			"moveDescription": "Choose the new parent. The page cannot be moved under itself or one of its sub-domains.",
+			"moveFailed": "Could not move the page.",
+			"moveParentLabel": "New parent",
+			"moveTitle": "Move \"{{title}}\"",
+			"moving": "Moving…",
+			"none": "No domain",
+			"noneYet": "No domain pages yet.",
+			"pageTitle": "{{title}} – Domain",
+			"projects": "Projects",
+			"projectsEmpty": "No projects linked.",
+			"rootLabel": "Top level",
+			"save": "Save",
+			"saved": "Page saved.",
+			"saveFailed": "Could not save the page.",
+			"saving": "Saving…",
+			"slugExists": "A sibling page already uses this slug.",
+			"slugHint": "Lowercase letters, digits and hyphens, 1–64 characters. Suggested from the title; unique among siblings.",
+			"slugInvalid": "Slug must match ^[a-z0-9][a-z0-9-]{0,63}$",
+			"slugLabel": "Slug",
+			"terms": "Terms",
+			"termsEmpty": "No terms filed here.",
+			"title": "Domain",
+			"titleLabel": "Title",
+			"titleRequired": "Title is required."
 		}
 	}
 }

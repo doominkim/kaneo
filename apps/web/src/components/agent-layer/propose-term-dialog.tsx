@@ -14,7 +14,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { isAgentLayerStatus } from "@/fetchers/agent-layer/api-error";
 import { useProposeAgentTerm } from "@/hooks/mutations/agent-layer/use-propose-agent-term";
+import { useAgentDomains } from "@/hooks/queries/agent-layer/use-agent-domains";
 import { toast } from "@/lib/toast";
+import { DomainSelect } from "./domain-select";
 
 type ProposeTermDialogProps = {
   open: boolean;
@@ -48,14 +50,17 @@ export function ProposeTermDialog({
   const [definition, setDefinition] = useState("");
   const [aliases, setAliases] = useState("");
   const [notToConfuseWith, setNotToConfuseWith] = useState("");
+  const [domainId, setDomainId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const { mutateAsync, isPending } = useProposeAgentTerm();
+  const domains = useAgentDomains(open ? workspaceId : "");
 
   const reset = () => {
     setCanonical("");
     setDefinition("");
     setAliases("");
     setNotToConfuseWith("");
+    setDomainId(null);
     setError(null);
   };
 
@@ -79,6 +84,7 @@ export function ProposeTermDialog({
         aliases: splitList(aliases),
         notToConfuseWith: splitList(notToConfuseWith),
         anchors: [],
+        domainId,
       });
       toast.success(t("agentLayer:knowledge.proposed", { term: trimmed }));
       reset();
@@ -162,6 +168,18 @@ export function ProposeTermDialog({
               <p className="text-xs text-muted-foreground">
                 {t("agentLayer:knowledge.notToConfuseHint")}
               </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="agent-term-domain">
+                {t("agentLayer:knowledge.domainLabel")}
+              </Label>
+              <DomainSelect
+                id="agent-term-domain"
+                nodes={domains.data?.domains}
+                value={domainId}
+                onChange={setDomainId}
+                data-testid="propose-domain-select"
+              />
             </div>
             {error ? (
               <p className="text-xs text-destructive-foreground" role="alert">

@@ -115,6 +115,7 @@ function RouteComponent() {
         open={isCreateOpen}
         onOpenChange={setIsCreateOpen}
         projectId={projectId}
+        workspaceId={workspaceId}
         existingSlugs={existingSlugs}
         onCreated={(slug) => {
           setIsCreateOpen(false);

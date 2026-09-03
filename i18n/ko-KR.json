@@ -2159,7 +2159,8 @@
 			"tasks": "태스크",
 			"knowledge": "지식",
 			"docs": "문서",
-			"sections": "섹션"
+			"sections": "섹션",
+			"domains": "도메인"
 		},
 		"common": {
 			"agent": "에이전트",
@@ -2208,7 +2209,10 @@
 			"descriptionDeleteFailed": "설명을 삭제하지 못했습니다.",
 			"thresholdExceeded": "열린 task {{open}}개가 임계치 {{threshold}}를 넘었습니다.",
 			"thresholdHint": "워킹셋이 부풀고 있습니다. task를 닫거나 아카이브하거나 임계치를 조정하세요.",
-			"thresholdSettingsLink": "프로젝트 설정에서 조정"
+			"thresholdSettingsLink": "프로젝트 설정에서 조정",
+			"relatedDomains": "관련 도메인",
+			"relatedDomainsEmpty": "연결된 도메인 페이지가 없습니다.",
+			"relatedDomainsSettings": "프로젝트의 에이전트 레이어 설정에서 연결하세요."
 		},
 		"timeline": {
 			"pageTitle": "{{name}} – 타임라인",
@@ -2368,7 +2372,8 @@
 			"viewerUrlFailed": "파일을 열지 못했습니다.",
 			"viewerReload": "새로 고침",
 			"viewerZip": "아카이브는 미리 볼 수 없습니다. 다운로드해서 여세요.",
-			"viewerPdf": "샌드박스 프레임 안에서는 PDF를 미리 볼 수 없습니다. 새 탭에서 열거나 다운로드하세요."
+			"viewerPdf": "샌드박스 프레임 안에서는 PDF를 미리 볼 수 없습니다. 새 탭에서 열거나 다운로드하세요.",
+			"domainLabel": "도메인"
 		},
 		"knowledge": {
 			"pageTitle": "{{name}} – 지식",
@@ -2432,7 +2437,11 @@
 			"deleted": "\"{{term}}\"을(를) 삭제했습니다.",
 			"deleteFailed": "용어를 삭제하지 못했습니다.",
 			"deleteRefused": "용어를 삭제할 수 없습니다.",
-			"deleteForbidden": "용어를 삭제하려면 workspace:update 권한이 필요합니다."
+			"deleteForbidden": "용어를 삭제하려면 workspace:update 권한이 필요합니다.",
+			"domainLabel": "도메인",
+			"assignDomain": "도메인",
+			"domainSet": "\"{{term}}\"의 도메인을 지정했습니다.",
+			"domainSetFailed": "용어의 도메인을 바꾸지 못했습니다."
 		},
 		"confidence": {
 			"proposed": "제안됨",
@@ -2472,7 +2481,64 @@
 				"tooMany": "패턴은 최대 {{max}}개입니다.",
 				"thresholdRange": "{{min}}에서 {{max}} 사이의 정수를 입력하세요.",
 				"archiveRange": "{{min}}에서 {{max}} 사이의 정수를 입력하세요."
-			}
+			},
+			"domainsLabel": "도메인",
+			"domainsHint": "이 프로젝트가 다루는 도메인 페이지입니다. 에이전트가 시작할 때 읽어 들입니다. 최대 {{max}}개.",
+			"domainsCount": "{{count}} / {{max}}개 연결됨"
+		},
+		"domain": {
+			"title": "도메인",
+			"pageTitle": "{{title}} – 도메인",
+			"addRoot": "도메인 추가",
+			"addChild": "하위 도메인 추가",
+			"none": "도메인 없음",
+			"noneYet": "아직 도메인 페이지가 없습니다.",
+			"rootLabel": "최상위",
+			"createTitle": "새 도메인 페이지",
+			"createChildTitle": "\"{{parent}}\"의 하위 도메인",
+			"createDescription": "업무 지식을 적는 페이지입니다. 무엇인지, 어떻게 다루는지, 무엇을 조심해야 하는지를 남기고 하위 도메인을 그 아래에 둡니다.",
+			"titleLabel": "제목",
+			"titleRequired": "제목을 입력하세요.",
+			"slugLabel": "슬러그",
+			"slugHint": "소문자·숫자·하이픈 1~64자, 같은 부모 아래에서 고유. 제목에서 제안되며 로마자가 없는 제목은 domain-xxxxxx 형태를 받습니다.",
+			"slugInvalid": "슬러그는 ^[a-z0-9][a-z0-9-]{0,63}$ 형식이어야 합니다.",
+			"slugExists": "같은 부모 아래에 이 슬러그를 쓰는 페이지가 이미 있습니다.",
+			"create": "만들기",
+			"creating": "만드는 중…",
+			"created": "\"{{title}}\"을(를) 만들었습니다.",
+			"createFailed": "페이지를 만들지 못했습니다.",
+			"cancel": "취소",
+			"edit": "편집",
+			"save": "저장",
+			"saving": "저장 중…",
+			"saved": "페이지를 저장했습니다.",
+			"saveFailed": "페이지를 저장하지 못했습니다.",
+			"byteCounter": "{{used}} / {{max}}",
+			"bodyPlaceholder": "도메인 지식을 마크다운으로 적으세요…",
+			"emptyBody": "아직 내용이 없습니다.",
+			"attachmentsDisabled": "도메인 페이지에는 파일·이미지 첨부를 쓸 수 없습니다.",
+			"children": "하위 도메인",
+			"childrenEmpty": "하위 도메인이 없습니다.",
+			"terms": "용어",
+			"termsEmpty": "이 도메인에 속한 용어가 없습니다.",
+			"projects": "프로젝트",
+			"projectsEmpty": "연결된 프로젝트가 없습니다.",
+			"documents": "문서",
+			"documentsEmpty": "이 도메인에 속한 문서가 없습니다.",
+			"move": "이동",
+			"moveTitle": "\"{{title}}\" 이동",
+			"moveDescription": "새 부모를 고르세요. 자기 자신이나 하위 도메인 아래로는 옮길 수 없습니다.",
+			"moveParentLabel": "새 부모",
+			"moving": "이동 중…",
+			"moved": "\"{{title}}\"을(를) 이동했습니다.",
+			"moveFailed": "페이지를 이동하지 못했습니다.",
+			"delete": "삭제",
+			"deleteTitle": "\"{{title}}\"을(를) 삭제할까요?",
+			"deleteDescription": "페이지를 완전히 삭제합니다. 하위 도메인·용어·문서·프로젝트가 아직 연결돼 있으면 삭제되지 않습니다.",
+			"deleting": "삭제 중…",
+			"deleted": "\"{{title}}\"을(를) 삭제했습니다.",
+			"deleteFailed": "페이지를 삭제하지 못했습니다.",
+			"deleteRefused": "아직 삭제할 수 없습니다:"
 		}
 	}
 }

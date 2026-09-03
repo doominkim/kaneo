@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentDomainNode } from "@/fetchers/agent-layer/get-agent-domains";
 import type { AgentProjectSettings } from "@/fetchers/agent-layer/get-agent-project-settings";
 import { parseCorePaths } from "./core-paths";
 import { ProjectSettingsForm } from "./project-settings-form";
@@ -31,6 +32,27 @@ const settings: AgentProjectSettings = {
   updatedAt: "2026-09-03T00:00:00.000Z",
 };
 
+const domainOptions: AgentDomainNode[] = [
+  {
+    id: "d-pharmacy",
+    parentId: null,
+    slug: "pharmacy",
+    title: "약국",
+    position: 0,
+    updatedAt: "2026-09-03T00:00:00.000Z",
+    childCount: 1,
+  },
+  {
+    id: "d-pharmacist",
+    parentId: "d-pharmacy",
+    slug: "pharmacist",
+    title: "약사",
+    position: 0,
+    updatedAt: "2026-09-03T00:00:00.000Z",
+    childCount: 0,
+  },
+];
+
 function renderForm(
   overrides: Partial<Parameters<typeof ProjectSettingsForm>[0]> = {},
 ) {
@@ -41,6 +63,7 @@ function renderForm(
       canEdit
       isSaving={false}
       memberNameById={new Map([["user-1", "Dominic"]])}
+      domainOptions={domainOptions}
       onSave={onSave}
       {...overrides}
     />,
@@ -154,7 +177,52 @@ describe("ProjectSettingsForm", () => {
       corePaths: ["src/domain/**", "**/migrations/**"],
       activeTaskThreshold: 5,
       doneArchiveDays: 30,
+      domainIds: [],
     });
+  });
+
+  it("lists the domain tree indented and submits the checked ids in tree order", () => {
+    const { onSave } = renderForm();
+    const checks = screen.getAllByTestId("domain-check");
+    expect(checks.map((el) => el.getAttribute("data-domain-id"))).toEqual([
+      "d-pharmacy",
+      "d-pharmacist",
+    ]);
+    expect(screen.getByText("약사").closest("li")).toHaveAttribute(
+      "style",
+      "padding-left: 1.25rem;",
+    );
+
+    // Child first, then parent: the payload still follows the tree order.
+    fireEvent.click(checks[1]);
+    fireEvent.click(checks[0]);
+    fireEvent.click(screen.getByTestId("settings-save"));
+
+    expect(onSave).toHaveBeenCalledWith({
+      corePaths: ["src/domain/**"],
+      activeTaskThreshold: 20,
+      doneArchiveDays: 30,
+      domainIds: ["d-pharmacy", "d-pharmacist"],
+    });
+  });
+
+  it("starts from the saved links and unchecks back to an empty list", () => {
+    const { onSave } = renderForm({
+      settings: {
+        ...settings,
+        domainIds: ["d-pharmacist"],
+        domains: [{ id: "d-pharmacist", slug: "pharmacist", title: "약사" }],
+      },
+    });
+    const [, pharmacist] = screen.getAllByTestId("domain-check");
+    expect(pharmacist).toHaveAttribute("data-checked");
+    expect(screen.getByTestId("settings-save")).toBeDisabled();
+
+    fireEvent.click(pharmacist);
+    fireEvent.click(screen.getByTestId("settings-save"));
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ domainIds: [] }),
+    );
   });
 
   it("renders read-only without project:update", () => {
@@ -164,5 +232,8 @@ describe("ProjectSettingsForm", () => {
       screen.getByLabelText("agentLayer:settings.corePathsLabel"),
     ).toBeDisabled();
     expect(screen.queryByTestId("settings-save")).not.toBeInTheDocument();
+    for (const check of screen.getAllByTestId("domain-check")) {
+      expect(check).toHaveAttribute("data-disabled");
+    }
   });
 });

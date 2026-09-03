@@ -8,6 +8,7 @@ import { DocumentPage } from "@/components/agent-layer/document-page";
 import ProjectLayout from "@/components/common/project-layout";
 import PageTitle from "@/components/page-title";
 import { useAgentDocument } from "@/hooks/queries/agent-layer/use-agent-document";
+import { useAgentDomains } from "@/hooks/queries/agent-layer/use-agent-domains";
 import { useAgentTaskIndex } from "@/hooks/queries/agent-layer/use-agent-task-index";
 import { useMemberNames } from "@/hooks/queries/agent-layer/use-member-names";
 import useGetProject from "@/hooks/queries/project/use-get-project";
@@ -35,6 +36,7 @@ function RouteComponent() {
   const document = useAgentDocument(projectId, slug);
   const { taskNumberById } = useAgentTaskIndex(projectId);
   const memberNameById = useMemberNames(workspaceId);
+  const domains = useAgentDomains(workspaceId);
   const { canUpdateTasks, canUpdateProjects } = useWorkspacePermission();
 
   return (
@@ -75,6 +77,13 @@ function RouteComponent() {
             authorName={
               document.data.updatedBy
                 ? memberNameById.get(document.data.updatedBy)
+                : null
+            }
+            domain={
+              document.data.domainId
+                ? (domains.data?.domains.find(
+                    (node) => node.id === document.data.domainId,
+                  ) ?? null)
                 : null
             }
             canEdit={canUpdateTasks()}

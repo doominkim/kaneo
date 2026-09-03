@@ -52,4 +52,11 @@ export const agentLayerKeys = {
     ["agent-terms", workspaceId, confidence ?? "all", state ?? "all"] as const,
   termResolve: (workspaceId: string, term: string) =>
     ["agent-term-resolve", workspaceId, term] as const,
+  // Domain pages are workspace-scoped. Both keys share the workspace prefix
+  // so one `["agent-domain", workspaceId]` invalidation reaches the tree and
+  // every open page after a write.
+  domains: (workspaceId: string) =>
+    ["agent-domain", workspaceId, "tree"] as const,
+  domain: (workspaceId: string, domainId: string) =>
+    ["agent-domain", workspaceId, "page", domainId] as const,
 };
