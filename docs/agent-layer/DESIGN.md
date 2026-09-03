@@ -324,26 +324,29 @@ artifact_finalize(project, artifactId, storageKey)             HeadObject 검증
 
 | 탭 | 내용 |
 |---|---|
-| 개요 | 파생 이력 뷰 — 최신 핸드오프 콜아웃 + 태스크 타임라인 트리 + 라이브 섹션 |
+| 개요 | 사람이 쓰는 프로젝트 설명(`agent_document` 예약 slug `overview`, 편집 `task:update`·삭제 `project:update`) + 최신 핸드오프 콜아웃 + 라이브 섹션(열림/완료·lease) |
+| 타임라인 | 태스크 타임라인 트리 — **세로**, 최신이 위, 자식은 들여쓰기. task를 펼치면 그 task의 원장 entry(최근 20 + 드릴다운)가 인라인으로 나온다 (2026-09-03: 메모 탭을 흡수) |
 | 태스크 | 기존 Kaneo 뷰 (board/backlog/calendar/gantt). 상단 탭 아래 2단 스위처로 유지 |
 | 지식 | 용어사전(제안됨/확정/이의), 결정 목록 |
-| 메모 | 타임라인 (최근 20 + 드릴다운), 코어 변경 하이라이트, entry별 모델·effort·토큰 |
 | 문서 | 프로젝트를 진행하며 쌓이는 **산출물·파일 보관함**. `agent_artifact`(html 리포트·zip·pdf·md·json: 업로드·보기·다운로드·삭제)가 중심이고 `agent_document`(마크다운 텍스트, MCP `doc_put`이 남기는 산출물)는 같은 목록의 한 종류. 이름·종류·크기·연결 task·올린 주체·시각, task/날짜 그룹. 위키가 아니다 (2026-09-03 재정의) |
 
-기존 4개 URL은 건드리지 않고 형제 라우트(`overview / knowledge / notes / docs / docs.$slug`)를 더한다(`overview`는 탭 경로일 뿐 문서 slug가 아니다). **기본 랜딩 탭은 Phase 1에서 board를 유지한다** — 개요로 옮기는 것은 2줄 변경이므로 dogfooding 후에 결정한다.
+기존 4개 URL은 건드리지 않고 형제 라우트(`overview / timeline / knowledge / docs / docs.$slug`)를 더한다. 탭 순서는 개요·타임라인·태스크·지식·문서다. `notes` 라우트는 2026-09-03에 제거했다. **기본 랜딩 탭은 Phase 1에서 board를 유지한다** — 개요로 옮기는 것은 2줄 변경이므로 dogfooding 후에 결정한다.
 문서 쓰기는 `task:update`(member 포함), 삭제와 설정(`agent_project`)은 `project:update`. 편집기는 task description이 쓰는 기존 tiptap 에디터를 재사용하고, 파일·이미지 첨부는 업로드 경로가 `taskId`를 요구하므로 Phase 1a에서 제외한다(§10).
 
-**개요는 저장소가 아니라 파생 뷰다** (§6.3, §2.1). 여기에 사람이 따로 쓰는 본문은 없다 — 원본은 원장과 task이고 개요는 그 렌더 결과다. 담는 것은 셋이다.
+**개요의 상태 부분은 파생 뷰다** (§6.3, §2.1) — 원본은 원장과 task다. 단 하나 예외로, 사람이 쓰는 **프로젝트 설명**을 상단에 둔다(2026-09-03): `agent_document` 예약 slug `overview`에 저장해 저자·시각이 보이고, 에이전트도 `doc_put`으로 같은 slug를 쓸 수 있다. 개요가 담는 것은 셋이다.
 
 1. **핸드오프 콜아웃** — 프로젝트의 최신 `kind: handoff` entry를 `summary` + `body`로 펼치고 actor와 시각을 함께 보여준다. handoff가 없으면 kind 무관 최신 entry로 폴백한다. "지금 어디까지 왔나"에 대한 답이 매번 같은 자리에 있다.
-2. **태스크 타임라인 트리** — `subtask` 관계의 대상이 **아닌** task를 부모로 보고 시간 순으로 가로 배치하며, 자식은 아래로 가지를 뻗는다. 산출물은 그것을 만든 task·subtask 아래 **잎**으로 달린다.
+2. **태스크 타임라인 트리 (타임라인 탭)** — `subtask` 관계의 대상이 **아닌** task를 부모로 보고 시간 순 **세로**(최신이 위)로 쌓으며, 자식은 들여쓰기로 아래에 붙는다. 산출물은 그것을 만든 task·subtask 아래 **잎**으로 달린다. task를 펼치면 그 task의 원장 entry 목록이 인라인으로 나온다(메모 탭 대체).
 
 ```
----- task 1 ---------------- task 2 ------ task 3 ----
-     ㄴ task 1-1 (feat/kpa-v2)
-        ㄴ report.html   (보기 · 다운로드)
-        ㄴ bundle.zip    (다운로드)
-     ㄴ task 1-2 (feat/kpa-v2, hotfix/kpa-login)
+● task 3                       (2026-09-03)
+● task 2                       (2026-09-02)
+● task 1                       (2026-09-01)
+  ㄴ task 1-2 (feat/kpa-v2, hotfix/kpa-login)
+  ㄴ task 1-1 (feat/kpa-v2)
+     ㄴ report.html   (보기 · 다운로드)
+     ㄴ bundle.zip    (다운로드)
+     ▸ entries (12)
 ```
 
    - 조립은 서버가 한다. 클라이언트가 task마다 관계·문서·첨부를 조회하면 N+1이므로 `GET /api/agent-project/{projectId}/tree`가 노드당 `id, number, title, status, isFinal, createdAt, completedAt?, branches[], actors[]{provider, model, effort, appearances}, usage{inputTokens, outputTokens, totalTokens}, documents[]{id, slug, title, authorKind, updatedAt}, attachments[]{id, name, contentType, size, url}, children[]`를 한 번에 내려준다. `done`은 §6.1대로 접는다.
