@@ -2242,7 +2242,9 @@
 			"notFoundTitle": "Not found",
 			"retry": "Retry",
 			"tokens": "{{value}} tokens",
-			"unknownModel": "unknown"
+			"unknownModel": "unknown",
+			"human": "Person",
+			"unknownAuthor": "Unknown author"
 		},
 		"docs": {
 			"attachmentsDisabled": "File and image attachments are not available in project documents.",
@@ -2502,6 +2504,26 @@
 			"dormant": "Dormant",
 			"retired": "Retired",
 			"stale": "Stale"
+		},
+		"composer": {
+			"body": "Body",
+			"bodyPlaceholder": "Details in markdown (optional)",
+			"cancel": "Cancel",
+			"decisionRequired": "A decision needs both what and why.",
+			"failed": "Could not record the note.",
+			"forbidden": "task:update is required to write to the ledger.",
+			"kind": "Kind",
+			"open": "Add note",
+			"projectHint": "A project-level note is not tied to a task. It counts toward the latest handoff on the overview and, as a decision, toward the knowledge tab.",
+			"rejectedPlaceholder": "The option that was not taken",
+			"saved": "Note recorded.",
+			"submit": "Record",
+			"submitting": "Recording…",
+			"summary": "Summary",
+			"summaryCounter": "{{used}} / {{max}}",
+			"summaryPlaceholder": "One line for the timeline",
+			"summaryRequired": "Summary is required.",
+			"summaryTooLong": "Summary must be {{max}} characters or fewer."
 		}
 	}
 }

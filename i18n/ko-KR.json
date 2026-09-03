@@ -2163,6 +2163,8 @@
 		},
 		"common": {
 			"agent": "에이전트",
+			"human": "사람",
+			"unknownAuthor": "작성자 알 수 없음",
 			"unknownModel": "알 수 없음",
 			"loadMore": "더 보기",
 			"retry": "다시 시도",
@@ -2240,6 +2242,26 @@
 			"refsFiles": "파일",
 			"coreChangedList": "변경된 코어 경로",
 			"task": "태스크"
+		},
+		"composer": {
+			"open": "기록 남기기",
+			"projectHint": "프로젝트 단위 기록은 특정 태스크에 묶이지 않습니다. 개요의 최신 핸드오프와, 결정이면 지식 탭에 반영됩니다.",
+			"kind": "종류",
+			"summary": "요약",
+			"summaryPlaceholder": "타임라인에 보일 한 줄",
+			"summaryCounter": "{{used}} / {{max}}",
+			"summaryRequired": "요약을 입력하세요.",
+			"summaryTooLong": "요약은 {{max}}자 이하여야 합니다.",
+			"body": "본문",
+			"bodyPlaceholder": "마크다운으로 상세 내용 (선택)",
+			"rejectedPlaceholder": "선택하지 않은 대안",
+			"decisionRequired": "결정에는 무엇을·왜가 모두 필요합니다.",
+			"submit": "기록",
+			"submitting": "기록 중…",
+			"cancel": "취소",
+			"saved": "기록을 남겼습니다.",
+			"failed": "기록을 남기지 못했습니다.",
+			"forbidden": "원장에 쓰려면 task:update 권한이 필요합니다."
 		},
 		"docs": {
 			"pageTitle": "{{name}} – 문서",

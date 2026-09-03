@@ -12,7 +12,8 @@ import {
 import { useAgentEntry } from "@/hooks/queries/agent-layer/use-agent-entry";
 import { formatDateTime } from "@/lib/format";
 import { AgentLayerErrorState, AgentLayerSkeleton } from "./agent-layer-state";
-import { actorLine, BranchChip, formatTokens, KindBadge } from "./chips";
+import { BranchChip, formatTokens, KindBadge } from "./chips";
+import { EntryAuthor } from "./entry-author";
 
 type EntryDetailSheetProps = {
   projectId: string;
@@ -73,12 +74,14 @@ export function EntryDetailSheet({
               {entry?.summary ?? t("agentLayer:timeline.detailTitle")}
             </span>
           </SheetTitle>
-          <SheetDescription>
-            {entry
-              ? [actorLine(entry), formatDateTime(entry.createdAt)]
-                  .filter(Boolean)
-                  .join(" · ")
-              : ""}
+          <SheetDescription className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            {entry ? (
+              <>
+                <EntryAuthor entry={entry} />
+                <span aria-hidden="true">·</span>
+                <span>{formatDateTime(entry.createdAt)}</span>
+              </>
+            ) : null}
           </SheetDescription>
         </SheetHeader>
 
@@ -107,7 +110,7 @@ export function EntryDetailSheet({
                 {refs?.branch ? (
                   <BranchChip repo={refs.repo} branch={refs.branch} />
                 ) : null}
-                {entry.usage?.totalTokens !== undefined ? (
+                {entry.actor && entry.usage?.totalTokens !== undefined ? (
                   <Badge variant="outline" size="sm">
                     {t("agentLayer:common.tokens", {
                       value: formatTokens(entry.usage.totalTokens),

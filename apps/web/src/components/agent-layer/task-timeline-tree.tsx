@@ -5,6 +5,7 @@ import {
   ChevronRight,
   FileText,
   NotebookPen,
+  PenLine,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -29,17 +30,21 @@ import {
   isInlineViewable,
 } from "./artifact-kind";
 import { BranchChip, topModel, UsageChip } from "./chips";
+import { EntryComposer } from "./entry-composer";
 import { EntryRow } from "./entry-row";
 
 type TreeContext = {
   workspaceId: string;
   projectId: string;
   projectSlug?: string;
+  /** task:update, decided by the route: it gates the inline note composer. */
+  canWrite: boolean;
   onOpenEntry: (entryId: string) => void;
 };
 
-type TaskTimelineTreeProps = Omit<TreeContext, "onOpenEntry"> & {
+type TaskTimelineTreeProps = Omit<TreeContext, "onOpenEntry" | "canWrite"> & {
   nodes: AgentTreeNode[];
+  canWrite?: boolean;
   onOpenEntry?: (entryId: string) => void;
 };
 
@@ -54,12 +59,14 @@ export function TaskTimelineTree({
   workspaceId,
   projectId,
   projectSlug,
+  canWrite = false,
   onOpenEntry,
 }: TaskTimelineTreeProps) {
   const context: TreeContext = {
     workspaceId,
     projectId,
     projectSlug,
+    canWrite,
     onOpenEntry: onOpenEntry ?? (() => {}),
   };
   const [showDone, setShowDone] = useState(false);
@@ -302,6 +309,9 @@ function NodeCard({
           taskId={node.id}
           projectId={projectId}
           projectSlug={projectSlug}
+          canWrite={context.canWrite}
+          // Branches arrive newest first, so the head is the latest one.
+          latestBranch={node.branches[0] ?? null}
           onOpenEntry={context.onOpenEntry}
         />
       ) : null}
@@ -309,24 +319,52 @@ function NodeCard({
   );
 }
 
-/** One task's ledger, newest first, 20 per page (§6: replaces the notes tab). */
+/**
+ * One task's ledger, newest first, 20 per page (§6: replaces the notes tab).
+ * People write into the same list through the inline composer (KAN-12).
+ */
 function TaskEntries({
   taskId,
   projectId,
   projectSlug,
+  canWrite,
+  latestBranch,
   onOpenEntry,
 }: {
   taskId: string;
   projectId: string;
   projectSlug?: string;
+  canWrite: boolean;
+  latestBranch: AgentTreeNode["branches"][number] | null;
   onOpenEntry: (entryId: string) => void;
 }) {
   const { t } = useTranslation();
+  const [composing, setComposing] = useState(false);
   const query = useAgentEntries(projectId, undefined, taskId);
   const entries = query.data?.pages.flatMap((page) => page.entries) ?? [];
 
   return (
-    <div className="mt-2" data-testid="task-entries">
+    <div className="mt-2 space-y-2" data-testid="task-entries">
+      {canWrite && !composing ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="xs"
+          data-testid="compose-entry"
+          onClick={() => setComposing(true)}
+        >
+          <PenLine />
+          {t("agentLayer:composer.open")}
+        </Button>
+      ) : null}
+      {canWrite && composing ? (
+        <EntryComposer
+          projectId={projectId}
+          taskId={taskId}
+          defaultBranch={latestBranch}
+          onClose={() => setComposing(false)}
+        />
+      ) : null}
       {query.isPending ? (
         <AgentLayerSkeleton rows={2} />
       ) : query.isError ? (

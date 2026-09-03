@@ -91,9 +91,11 @@ describe("DecisionList", () => {
 
     const rows = screen.getAllByTestId("entry-row");
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveTextContent(
-      "anthropic/claude-opus-5 · 3setter · high",
+    // KAN-11/12: the model is a badge, the harness label and effort follow it.
+    expect(within(rows[0]).getByTestId("agent-author")).toHaveTextContent(
+      "claude-opus-5",
     );
+    expect(rows[0]).toHaveTextContent("3setter · high");
     expect(rows[0]).toHaveTextContent("KAN-7");
     expect(within(rows[0]).getByTestId("branch-chip")).toHaveTextContent(
       "doominkim/kaneo:agent-layer",

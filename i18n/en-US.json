@@ -2170,6 +2170,8 @@
 		},
 		"common": {
 			"agent": "Agent",
+			"human": "Person",
+			"unknownAuthor": "Unknown author",
 			"unknownModel": "unknown",
 			"loadMore": "Load more",
 			"retry": "Retry",
@@ -2247,6 +2249,26 @@
 			"refsFiles": "Files",
 			"coreChangedList": "Core paths changed",
 			"task": "Task"
+		},
+		"composer": {
+			"open": "Add note",
+			"projectHint": "A project-level note is not tied to a task. It counts toward the latest handoff on the overview and, as a decision, toward the knowledge tab.",
+			"kind": "Kind",
+			"summary": "Summary",
+			"summaryPlaceholder": "One line for the timeline",
+			"summaryCounter": "{{used}} / {{max}}",
+			"summaryRequired": "Summary is required.",
+			"summaryTooLong": "Summary must be {{max}} characters or fewer.",
+			"body": "Body",
+			"bodyPlaceholder": "Details in markdown (optional)",
+			"rejectedPlaceholder": "The option that was not taken",
+			"decisionRequired": "A decision needs both what and why.",
+			"submit": "Record",
+			"submitting": "Recording…",
+			"cancel": "Cancel",
+			"saved": "Note recorded.",
+			"failed": "Could not record the note.",
+			"forbidden": "task:update is required to write to the ledger."
 		},
 		"docs": {
 			"pageTitle": "{{name}} – Docs",

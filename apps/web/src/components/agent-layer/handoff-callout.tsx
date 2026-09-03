@@ -4,7 +4,8 @@ import { MarkdownRenderer } from "@/components/public-project/markdown-renderer"
 import type { LatestAgentEntry } from "@/hooks/queries/agent-layer/use-agent-latest-entry";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { AgentLayerEmpty } from "./agent-layer-state";
-import { actorLine, BranchChip, KindBadge } from "./chips";
+import { BranchChip, KindBadge } from "./chips";
+import { EntryAuthor } from "./entry-author";
 
 type HandoffCalloutProps = {
   latest: LatestAgentEntry;
@@ -12,7 +13,9 @@ type HandoffCalloutProps = {
 
 /**
  * Notion-style callout: the newest handoff's summary as heading, its body as
- * markdown, and the actor line as footer (DESIGN.md §6 item 1).
+ * markdown, and the author as footer (DESIGN.md §6 item 1). The source is the
+ * newest handoff regardless of who wrote it; a person's handoff shows their
+ * name where an agent's shows the model.
  */
 export function HandoffCallout({ latest }: HandoffCalloutProps) {
   const { t } = useTranslation();
@@ -27,9 +30,6 @@ export function HandoffCallout({ latest }: HandoffCalloutProps) {
   }
 
   const { entry, isFallback } = latest;
-  const footer = [actorLine(entry), formatRelativeTime(entry.createdAt)]
-    .filter(Boolean)
-    .join(" · ");
 
   return (
     <section
@@ -74,10 +74,13 @@ export function HandoffCallout({ latest }: HandoffCalloutProps) {
           ) : null}
 
           <p
-            className="text-xs text-muted-foreground"
+            data-testid="handoff-footer"
+            className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground"
             title={formatDateTime(entry.createdAt)}
           >
-            {footer}
+            <EntryAuthor entry={entry} />
+            <span aria-hidden="true">·</span>
+            <span>{formatRelativeTime(entry.createdAt)}</span>
           </p>
         </div>
       </div>

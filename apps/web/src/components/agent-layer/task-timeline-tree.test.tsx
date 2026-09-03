@@ -50,6 +50,27 @@ vi.mock("@/lib/toast", () => ({
 vi.mock("@/lib/i18n/domain", () => ({
   getStatusLabel: (status: string) => status,
 }));
+vi.mock("./entry-composer", () => ({
+  EntryComposer: ({
+    taskId,
+    defaultBranch,
+    onClose,
+  }: {
+    taskId?: string;
+    defaultBranch?: { repo?: string | null; branch: string } | null;
+    onClose: () => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="entry-composer"
+      data-task={taskId}
+      data-branch={defaultBranch?.branch}
+      onClick={onClose}
+    >
+      composer
+    </button>
+  ),
+}));
 
 function node(
   overrides: Partial<AgentTreeNode> & { id: string; title: string },
@@ -147,7 +168,7 @@ const nodes: AgentTreeNode[] = [
   node({ id: "t3", number: 3, title: "Task three done", done: true }),
 ];
 
-function renderTree() {
+function renderTree(canWrite?: boolean) {
   const onOpenEntry = vi.fn();
   render(
     <TaskTimelineTree
@@ -155,6 +176,7 @@ function renderTree() {
       workspaceId="ws"
       projectId="p"
       projectSlug="KAN"
+      canWrite={canWrite}
       onOpenEntry={onOpenEntry}
     />,
   );
@@ -338,6 +360,31 @@ describe("TaskTimelineTree", () => {
     expect(
       within(taskOne).queryByTestId("task-entries"),
     ).not.toBeInTheDocument();
+  });
+
+  it("offers the inline composer only with task:update, prefilled with the latest branch", () => {
+    renderTree();
+    const taskOne = screen.getAllByTestId("tree-root")[1];
+    fireEvent.click(within(taskOne).getAllByTestId("entries-toggle")[0]);
+    expect(within(taskOne).queryByTestId("compose-entry")).toBeNull();
+    cleanup();
+
+    renderTree(true);
+    const writable = screen.getAllByTestId("tree-root")[1];
+    fireEvent.click(within(writable).getAllByTestId("entries-toggle")[0]);
+    const open = within(writable).getByTestId("compose-entry");
+    expect(open).toHaveTextContent("agentLayer:composer.open");
+
+    fireEvent.click(open);
+    const composer = within(writable).getByTestId("entry-composer");
+    expect(composer.dataset.task).toBe("t1");
+    expect(composer.dataset.branch).toBe("feat/kpa-v2");
+    expect(within(writable).queryByTestId("compose-entry")).toBeNull();
+
+    // onClose (cancel or success) folds the composer back into the button.
+    fireEvent.click(composer);
+    expect(within(writable).queryByTestId("entry-composer")).toBeNull();
+    expect(within(writable).getByTestId("compose-entry")).toBeInTheDocument();
   });
 
   it("shows the empty ledger state for a task without entries", () => {
