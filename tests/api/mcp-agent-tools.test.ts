@@ -562,11 +562,25 @@ function domainPage(body: string) {
       slug: `child-${i}`,
       title: `Child ${i}`,
     })),
+    // Mixed on purpose: the page must show only what agent_term_resolve would
+    // answer with, or the model reads its own unreviewed proposal off the page.
     terms: [
       {
         id: "t1",
         canonical: "Refund",
         confidence: "confirmed",
+        state: "active",
+      },
+      {
+        id: "t2",
+        canonical: "Chargeback",
+        confidence: "proposed",
+        state: "active",
+      },
+      {
+        id: "t3",
+        canonical: "Clawback",
+        confidence: "disputed",
         state: "active",
       },
     ],
@@ -696,6 +710,56 @@ describe("agent_domain_get", () => {
     });
     expect(page).not.toHaveProperty("workspaceId");
     expect(page).not.toHaveProperty("ancestors");
+  });
+
+  it("shows only confirmed terms and counts the total after that filter", async () => {
+    apiFetch.mockImplementation(async () =>
+      Response.json(domainPage("# Refunds\n")),
+    );
+
+    const page = await call("agent_domain_get", {
+      workspaceId: "ws-1",
+      domainId: "b",
+    });
+
+    // "Chargeback" is proposed and "Clawback" is disputed; neither resolves, so
+    // neither is listed here either.
+    expect(page.terms).toEqual(["Refund"]);
+    // The total counts what is reachable, not what is filed: advertising 3
+    // would send the caller looking for two terms resolve refuses to answer.
+    expect(page.linksTotal.terms).toBe(1);
+  });
+
+  it("caps the confirmed terms at 20 and totals them, ignoring the unreviewed ones", async () => {
+    apiFetch.mockImplementation(async () =>
+      Response.json({
+        ...domainPage("body"),
+        terms: [
+          ...Array.from({ length: 25 }, (_, i) => ({
+            id: `ok-${i}`,
+            canonical: `Confirmed ${String(i).padStart(2, "0")}`,
+            confidence: "confirmed",
+            state: "active",
+          })),
+          ...Array.from({ length: 5 }, (_, i) => ({
+            id: `no-${i}`,
+            canonical: `Proposed ${i}`,
+            confidence: "proposed",
+            state: "active",
+          })),
+        ],
+      }),
+    );
+
+    const page = await call("agent_domain_get", {
+      workspaceId: "ws-1",
+      domainId: "b",
+    });
+
+    expect(page.terms).toHaveLength(20);
+    expect(page.terms[0]).toBe("Confirmed 00");
+    expect(page.terms).not.toContain("Proposed 0");
+    expect(page.linksTotal.terms).toBe(25);
   });
 
   it("fetches by domainId directly and windows the body at 8KB", async () => {
@@ -859,6 +923,7 @@ describe("agent_doc_put / agent_term_propose domainId", () => {
       workspaceId: "ws-1",
       canonical: "Refund",
       domainId: "dom-1",
+      sourceEntryId: "entry-1",
       ...identity,
     });
     expect(lastRequest()).toMatchObject({
@@ -866,5 +931,50 @@ describe("agent_doc_put / agent_term_propose domainId", () => {
       method: "POST",
       body: expect.objectContaining({ domainId: "dom-1", canonical: "Refund" }),
     });
+  });
+
+  /**
+   * The tool always sends provider/model, so every proposal it makes is an
+   * agent proposal and the API refuses one with no ledger citation. Declaring
+   * `sourceEntryId` optional made the tool contradict the endpoint it calls:
+   * the caller was told the field could be left out and then got a 400 back.
+   */
+  it("refuses a term proposal with no sourceEntryId before it reaches the API", async () => {
+    const result = await callRaw("agent_term_propose", {
+      workspaceId: "ws-1",
+      canonical: "Refund",
+      ...identity,
+    });
+    expect(result.isError).toBe(true);
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("agent_term_resolve", () => {
+  it("puts projectId on the query when given and omits it otherwise", async () => {
+    await call("agent_term_resolve", { workspaceId: "ws-1", term: "Refund" });
+    expect(lastRequest().url).toBe(
+      "http://api.test/api/agent-term/ws-1/resolve?term=Refund",
+    );
+
+    await call("agent_term_resolve", {
+      workspaceId: "ws-1",
+      term: "Refund",
+      projectId: "p1",
+    });
+    expect(lastRequest().url).toBe(
+      "http://api.test/api/agent-term/ws-1/resolve?term=Refund&projectId=p1",
+    );
+  });
+
+  it("encodes a term with reserved characters rather than splitting the query", async () => {
+    await call("agent_term_resolve", {
+      workspaceId: "ws/1",
+      term: "a&b c",
+      projectId: "p 1",
+    });
+    expect(lastRequest().url).toBe(
+      "http://api.test/api/agent-term/ws%2F1/resolve?term=a%26b+c&projectId=p+1",
+    );
   });
 });

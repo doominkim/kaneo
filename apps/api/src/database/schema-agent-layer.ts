@@ -376,6 +376,11 @@ export const agentProjectDomainTable = pgTable(
  * Nothing here is ever deleted. `state` only changes retrieval ranking; a
  * direct resolve always answers in full, because a rarely-used term is exactly
  * the one a new session cannot recover on its own.
+ *
+ * `confidence` is a gate, not a label: resolve answers with `confirmed` rows
+ * only. Without that, a model reads back its own `proposed` guess in the next
+ * session and treats it as settled fact — the lexicon would launder inference
+ * into record.
  */
 export const agentTermTable = pgTable(
   "agent_term",
@@ -441,6 +446,27 @@ export const agentTermTable = pgTable(
       onDelete: "set null",
       onUpdate: "cascade",
     }),
+
+    /*
+     * Review trail (0008). `confidence` says what was decided; these three say
+     * who decided it, when, and — for a rejection — why.
+     */
+    /**
+     * The person who reviewed it. Only ever a `user`: the MCP path cannot set
+     * this, because review is a human act, and a model that could confirm its
+     * own proposal is not a gate.
+     */
+    reviewerId: text("reviewer_id").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    reviewedAt: timestamp("reviewed_at", { mode: "date" }),
+    /**
+     * Why a `disputed` term was turned down. Kept so the next proposal of the
+     * same word is answered with the reason rather than a bare conflict —
+     * otherwise the same term is re-proposed every session.
+     */
+    rejectReason: text("reject_reason"),
 
     /*
      * Retrieval-decay fields. Populated from day one even though the decay

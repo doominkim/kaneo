@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, EyeOff, Trash2, User } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/public-project/markdown-renderer";
@@ -11,6 +11,7 @@ import type {
   AgentTermState,
 } from "@/fetchers/agent-layer/get-agent-terms";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
+import { AgentAuthorBadge } from "./agent-author-badge";
 import { DomainChip } from "./domain-chip";
 import { DomainSelect } from "./domain-select";
 
@@ -117,6 +118,44 @@ type TermRowProps = {
   onSetDomain?: (term: AgentTerm, domainId: string | null) => void;
 };
 
+/**
+ * Who proposed the term. A reviewer weighs a proposal by its source, and the
+ * response says which one it was: an `actor` block for a model, `actorId` null
+ * for a person. The model id is shown verbatim through `AgentAuthorBadge` — a
+ * person's own proposals carry no name on the term response, so the human case
+ * is the marker alone.
+ */
+function TermProposer({ term }: { term: AgentTerm }) {
+  const { t } = useTranslation();
+
+  if (term.actor) {
+    return (
+      <span
+        className="inline-flex min-w-0 items-center gap-1"
+        data-testid="term-proposer"
+        data-proposer-kind="agent"
+      >
+        <span>{t("agentLayer:knowledge.proposedBy")}</span>
+        <AgentAuthorBadge actor={term.actor} />
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className="inline-flex items-center gap-1"
+      data-testid="term-proposer"
+      data-proposer-kind="human"
+    >
+      <span>{t("agentLayer:knowledge.proposedBy")}</span>
+      <Badge variant="outline" size="sm" className="text-muted-foreground">
+        <User />
+        {t("agentLayer:common.human")}
+      </Badge>
+    </span>
+  );
+}
+
 /** One lexicon entry (DESIGN.md §4.4); shared by the list and the resolver. */
 export function TermRow({
   term,
@@ -204,6 +243,33 @@ export function TermRow({
         </span>
       </div>
 
+      {/*
+        The whole point of the review gate: an unconfirmed term is invisible to
+        `agent_term_resolve`, so a proposer who is not told this reads the row
+        as "already in the lexicon" and assumes agents are using it.
+      */}
+      {term.confidence === "proposed" ? (
+        <p
+          className="flex items-start gap-1 text-xs text-muted-foreground"
+          data-testid="unconfirmed-hint"
+        >
+          <EyeOff className="mt-0.5 size-3.5 shrink-0" />
+          <span>{t("agentLayer:knowledge.unconfirmedHint")}</span>
+        </p>
+      ) : null}
+
+      {term.rejectReason ? (
+        <p
+          className="text-xs text-destructive-foreground"
+          data-testid="reject-reason"
+        >
+          <span className="font-medium">
+            {t("agentLayer:knowledge.rejectReasonLabel")}
+          </span>{" "}
+          {term.rejectReason}
+        </p>
+      ) : null}
+
       {term.notToConfuseWith.length > 0 ? (
         <p
           className="text-xs text-warning-foreground"
@@ -264,6 +330,22 @@ export function TermRow({
         ) : (
           <span>{t("agentLayer:knowledge.noDefinition")}</span>
         )}
+        <TermProposer term={term} />
+        {term.reviewedAt ? (
+          <span
+            title={formatDateTime(term.reviewedAt)}
+            data-testid="term-review"
+          >
+            {term.reviewer
+              ? t("agentLayer:knowledge.reviewedBy", {
+                  name: term.reviewer.name,
+                  time: formatRelativeTime(term.reviewedAt),
+                })
+              : t("agentLayer:knowledge.reviewedUnknown", {
+                  time: formatRelativeTime(term.reviewedAt),
+                })}
+          </span>
+        ) : null}
         {term.lastVerifiedAt ? (
           <span title={formatDateTime(term.lastVerifiedAt)}>
             {t("agentLayer:knowledge.lastVerified", {

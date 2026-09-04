@@ -79,6 +79,10 @@ function term(overrides: Partial<AgentTerm> & { id: string }): AgentTerm {
     domainId: null,
     actorId: null,
     actor: null,
+    reviewerId: null,
+    reviewer: null,
+    reviewedAt: null,
+    rejectReason: null,
     lastVerifiedAt: null,
     createdAt: "2026-09-03T00:00:00.000Z",
     ...overrides,
@@ -103,6 +107,9 @@ const terms: AgentTerm[] = [
     id: "t2",
     canonical: "청구코드",
     confidence: "confirmed",
+    reviewerId: "u1",
+    reviewer: { userId: "u1", name: "Dominic" },
+    reviewedAt: "2026-09-03T02:00:00.000Z",
     lastVerifiedAt: "2026-09-03T00:00:00.000Z",
   }),
   term({
@@ -111,6 +118,17 @@ const terms: AgentTerm[] = [
     confidence: "disputed",
     state: "retired",
     supersededBy: "t2",
+    actorId: "a1",
+    actor: {
+      id: "a1",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      onBehalfOf: null,
+    },
+    reviewerId: "u1",
+    reviewer: { userId: "u1", name: "Dominic" },
+    reviewedAt: "2026-09-03T02:00:00.000Z",
+    rejectReason: "Superseded by 청구코드; the old spelling is ambiguous.",
   }),
 ];
 
@@ -229,7 +247,7 @@ describe("TermList", () => {
     expect(mocks.toastSuccess).toHaveBeenCalled();
   });
 
-  it("disputes through the same dialog", async () => {
+  it("refuses to dispute without a reason, and sends the reason once given", async () => {
     render(<TermList workspaceId="ws" canReview />);
     fireEvent.click(
       within(screen.getAllByTestId("term-row")[1]).getByTestId("dispute-term"),
@@ -238,13 +256,112 @@ describe("TermList", () => {
     expect(dialog).toHaveTextContent(
       "agentLayer:knowledge.disputeTitle term=청구코드",
     );
+
+    // An empty reason is not a dispute the next reviewer can act on.
+    expect(within(dialog).getByTestId("review-submit")).toBeDisabled();
+    expect(
+      within(dialog).getByTestId("reject-reason-required"),
+    ).toHaveTextContent("agentLayer:knowledge.disputeReasonRequired");
+
+    // Whitespace is not a reason either.
+    fireEvent.change(within(dialog).getByTestId("reject-reason-input"), {
+      target: { value: "   " },
+    });
+    expect(within(dialog).getByTestId("review-submit")).toBeDisabled();
+
+    fireEvent.change(within(dialog).getByTestId("reject-reason-input"), {
+      target: { value: "  Means the claim code, not the benefit code.  " },
+    });
+    expect(
+      within(dialog).queryByTestId("reject-reason-required"),
+    ).not.toBeInTheDocument();
+
     fireEvent.click(within(dialog).getByTestId("review-submit"));
     await waitFor(() =>
       expect(mocks.review).toHaveBeenCalledWith({
         workspaceId: "ws",
         termId: "t2",
         confidence: "disputed",
+        rejectReason: "Means the claim code, not the benefit code.",
       }),
+    );
+  });
+
+  it("keeps the API's 400 next to the reason field", async () => {
+    mocks.review.mockRejectedValueOnce(
+      new AgentLayerApiError(400, "rejectReason is required when disputing"),
+    );
+    render(<TermList workspaceId="ws" canReview />);
+    fireEvent.click(
+      within(screen.getAllByTestId("term-row")[1]).getByTestId("dispute-term"),
+    );
+    const dialog = await screen.findByTestId("review-dialog");
+    fireEvent.change(within(dialog).getByTestId("reject-reason-input"), {
+      target: { value: "wrong" },
+    });
+    fireEvent.click(within(dialog).getByTestId("review-submit"));
+
+    expect(
+      await within(dialog).findByTestId("reject-reason-error"),
+    ).toHaveTextContent("rejectReason is required when disputing");
+    expect(mocks.toastError).not.toHaveBeenCalled();
+    expect(screen.getByTestId("review-dialog")).toBeInTheDocument();
+  });
+
+  it("asks for no reason when confirming", async () => {
+    render(<TermList workspaceId="ws" canReview />);
+    fireEvent.click(
+      within(screen.getAllByTestId("term-row")[0]).getByTestId("confirm-term"),
+    );
+    const dialog = await screen.findByTestId("review-dialog");
+    expect(
+      within(dialog).queryByTestId("reject-reason-input"),
+    ).not.toBeInTheDocument();
+    expect(within(dialog).getByTestId("review-submit")).not.toBeDisabled();
+  });
+
+  it("marks unconfirmed terms as invisible to agents, and shows review provenance", () => {
+    render(<TermList workspaceId="ws" canReview={false} />);
+    const [proposed, confirmed, disputed] = screen.getAllByTestId("term-row");
+
+    // Proposed: the badge plus the reason the badge matters.
+    expect(within(proposed).getByTestId("confidence-badge")).toHaveTextContent(
+      "agentLayer:confidence.proposed",
+    );
+    expect(within(proposed).getByTestId("unconfirmed-hint")).toHaveTextContent(
+      "agentLayer:knowledge.unconfirmedHint",
+    );
+    expect(within(proposed).queryByTestId("term-review")).toBeNull();
+
+    // Reviewed: who and when, in the row itself.
+    expect(within(confirmed).queryByTestId("unconfirmed-hint")).toBeNull();
+    expect(within(confirmed).getByTestId("term-review")).toHaveTextContent(
+      "agentLayer:knowledge.reviewedBy name=Dominic time=2 hours ago",
+    );
+
+    // Disputed: the reason it was rejected travels with the row.
+    expect(within(disputed).getByTestId("reject-reason")).toHaveTextContent(
+      "Superseded by 청구코드; the old spelling is ambiguous.",
+    );
+    expect(within(disputed).getByTestId("term-review")).toHaveTextContent(
+      "agentLayer:knowledge.reviewedBy name=Dominic time=2 hours ago",
+    );
+  });
+
+  it("tells a model proposal apart from a person's", () => {
+    render(<TermList workspaceId="ws" canReview={false} />);
+    const [proposed, , disputed] = screen.getAllByTestId("term-row");
+
+    expect(within(proposed).getByTestId("term-proposer")).toHaveAttribute(
+      "data-proposer-kind",
+      "human",
+    );
+
+    const agent = within(disputed).getByTestId("term-proposer");
+    expect(agent).toHaveAttribute("data-proposer-kind", "agent");
+    // The model id is shown verbatim, not mapped to a display name.
+    expect(within(agent).getByTestId("agent-author")).toHaveTextContent(
+      "claude-opus-5",
     );
   });
 

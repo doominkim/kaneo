@@ -5,12 +5,17 @@ import db, { schema } from "../../apps/api/src/database";
 import {
   agentActorTable,
   agentDomainTable,
+  agentEntryTable,
+  agentProjectDomainTable,
   agentTermTable,
 } from "../../apps/api/src/database/schema-agent-layer";
 import { createApp } from "../../apps/api/src/index";
 import { mockAnonymousSession, mockAuthenticatedSession } from "./helpers/auth";
 import { resetTestDatabase } from "./helpers/database";
-import { createWorkspaceMember } from "./helpers/fixtures";
+import {
+  createProjectFixture,
+  createWorkspaceMember,
+} from "./helpers/fixtures";
 import { mcpToolCall, toolJson } from "./helpers/mcp";
 
 type Term = {
@@ -31,6 +36,10 @@ type Term = {
     model: string;
     onBehalfOf: string | null;
   } | null;
+  reviewerId: string | null;
+  reviewer: { userId: string; name: string } | null;
+  reviewedAt: string | null;
+  rejectReason: string | null;
   lastVerifiedAt: string | null;
   createdAt: string;
 };
@@ -63,6 +72,35 @@ function confirm(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+function resolve(
+  app: ReturnType<typeof createApp>["app"],
+  workspaceId: string,
+  term: string,
+  projectId?: string,
+) {
+  const query = new URLSearchParams({ term });
+  if (projectId) query.set("projectId", projectId);
+  return app.request(`/api/agent-term/${workspaceId}/resolve?${query}`);
+}
+
+/**
+ * A real ledger entry: an agent proposal has to cite one and the FK is
+ * enforced, so a made-up id would fail on the constraint rather than on the
+ * rule under test. The project exists only to hang the entry on.
+ */
+async function seedSourceEntry(workspaceId: string) {
+  const { project } = await createProjectFixture({ workspaceId });
+  const [entry] = await db
+    .insert(agentEntryTable)
+    .values({
+      workspaceId,
+      projectId: project.id,
+      summary: "Investigated how a claim is held",
+    })
+    .returning();
+  return { project, entry };
 }
 
 describe("API integration: agent terms", () => {
@@ -116,6 +154,11 @@ describe("API integration: agent terms", () => {
       // No provider/model on the request: a person proposed this.
       actorId: null,
       actor: null,
+      // Proposing is not reviewing, even when a person does it.
+      reviewerId: null,
+      reviewer: null,
+      reviewedAt: null,
+      rejectReason: null,
       lastVerifiedAt: null,
     });
     expect(payload.anchors).toEqual([{ kind: "db", table: "agent_entry" }]);
@@ -139,6 +182,7 @@ describe("API integration: agent terms", () => {
   it("records the proposing model when an agent proposes, and keeps it through list, resolve and review", async () => {
     // Admin, because the review step at the end needs workspace:update.
     const member = await createWorkspaceMember({ role: "admin" });
+    const { entry } = await seedSourceEntry(member.workspace.id);
     mockAuthenticatedSession(member.user);
     const { app } = createApp();
 
@@ -159,6 +203,7 @@ describe("API integration: agent terms", () => {
         aliases: ["agent_lease"],
         provider: "anthropic",
         model: "claude-fable-5-1",
+        sourceEntryId: entry.id,
       }),
     );
 
@@ -206,18 +251,8 @@ describe("API integration: agent terms", () => {
       actor: expectedActor,
     });
 
-    const resolved = (await (
-      await app.request(
-        `/api/agent-term/${member.workspace.id}/resolve?term=agent_lease`,
-      )
-    ).json()) as Resolution;
-    expect(resolved.match).toBe("alias");
-    expect(resolved.term).toMatchObject({
-      actorId: proposed.actorId,
-      actor: expectedActor,
-    });
-
-    // A review records the outcome without erasing who proposed it.
+    // A review records the outcome without erasing who proposed it, and adds
+    // the person who ruled on it.
     const reviewed = (await (
       await confirm(app, member.workspace.id, {
         termId: proposed.id,
@@ -228,6 +263,20 @@ describe("API integration: agent terms", () => {
       confidence: "confirmed",
       actorId: proposed.actorId,
       actor: expectedActor,
+      reviewerId: member.user.id,
+      reviewer: { userId: member.user.id, name: member.user.name },
+    });
+    expect(reviewed.reviewedAt).not.toBeNull();
+
+    // Only now does it resolve, and both halves survive the round trip.
+    const resolved = (await (
+      await resolve(app, member.workspace.id, "agent_lease")
+    ).json()) as Resolution;
+    expect(resolved.match).toBe("alias");
+    expect(resolved.term).toMatchObject({
+      actorId: proposed.actorId,
+      actor: expectedActor,
+      reviewer: { userId: member.user.id, name: member.user.name },
     });
   });
 
@@ -574,6 +623,7 @@ describe("API integration: agent terms", () => {
           aliases: ["agent_entry"],
           notToConfuseWith: ["Activity"],
           anchors: [],
+          confidence: "confirmed",
         })
         .returning();
 
@@ -616,6 +666,7 @@ describe("API integration: agent terms", () => {
           aliases: ["agent_entry"],
           notToConfuseWith: [],
           anchors: [],
+          confidence: "confirmed",
         })
         .returning();
 
@@ -646,6 +697,7 @@ describe("API integration: agent terms", () => {
           aliases: ["Agent_Entry"],
           notToConfuseWith: [],
           anchors: [],
+          confidence: "confirmed",
         })
         .returning();
 
@@ -689,6 +741,9 @@ describe("API integration: agent terms", () => {
         aliases: [],
         notToConfuseWith: [],
         anchors: [],
+        // Confirmed, so the miss proves the workspace scope rather than the
+        // review gate.
+        confidence: "confirmed",
       });
 
       mockAuthenticatedSession(member.user);
@@ -712,6 +767,7 @@ describe("API integration: agent terms", () => {
           aliases: [],
           notToConfuseWith: [],
           anchors: [],
+          confidence: "confirmed",
         },
         {
           workspaceId: member.workspace.id,
@@ -719,6 +775,7 @@ describe("API integration: agent terms", () => {
           aliases: ["Lease"],
           notToConfuseWith: [],
           anchors: [],
+          confidence: "confirmed",
         },
       ]);
 
@@ -749,6 +806,7 @@ describe("API integration: agent terms", () => {
           aliases: [],
           notToConfuseWith: [],
           anchors: [],
+          confidence: "confirmed",
         })
         .returning();
       await db.insert(agentTermTable).values({
@@ -758,6 +816,9 @@ describe("API integration: agent terms", () => {
         notToConfuseWith: [],
         anchors: [],
         state: "retired",
+        // A tombstone still has to have been confirmed; `state` and
+        // `confidence` are independent axes.
+        confidence: "confirmed",
         supersededBy: superseding.id,
       });
 
@@ -789,6 +850,98 @@ describe("API integration: agent terms", () => {
       );
 
       expect(response.status).toBe(400);
+    });
+
+    /**
+     * A projectId nobody can match used to narrow the answer to the unfiled
+     * terms and return 200, so a typo read exactly like "this workspace has
+     * never defined that word". The scope is either real or the request is
+     * wrong; there is no third answer worth returning.
+     */
+    it("rejects an unknown projectId and one from another workspace", async () => {
+      const member = await createWorkspaceMember();
+      const other = await createWorkspaceMember();
+      const foreign = await createProjectFixture({
+        workspaceId: other.workspace.id,
+      });
+      await db.insert(agentTermTable).values({
+        workspaceId: member.workspace.id,
+        canonical: "Ledger",
+        confidence: "confirmed",
+      });
+
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      const unknown = await resolve(
+        app,
+        member.workspace.id,
+        "Ledger",
+        "project-missing",
+      );
+      expect(unknown.status).toBe(400);
+      await expect(unknown.text()).resolves.toBe(
+        "projectId does not belong to this workspace",
+      );
+
+      const crossWorkspace = await resolve(
+        app,
+        member.workspace.id,
+        "Ledger",
+        foreign.project.id,
+      );
+      expect(crossWorkspace.status).toBe(400);
+
+      // Nothing was counted as a retrieval: the lookup never ran.
+      const [term] = await db
+        .select()
+        .from(agentTermTable)
+        .where(eq(agentTermTable.workspaceId, member.workspace.id));
+      expect(term?.accessCount).toBe(0);
+    });
+
+    it("treats an empty projectId as no narrowing at all", async () => {
+      const member = await createWorkspaceMember();
+      await db.insert(agentTermTable).values({
+        workspaceId: member.workspace.id,
+        canonical: "Ledger",
+        confidence: "confirmed",
+      });
+
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      const response = await app.request(
+        `/api/agent-term/${member.workspace.id}/resolve?term=Ledger&projectId=`,
+      );
+
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as Resolution).match).toBe("canonical");
+    });
+
+    it("resolves with a projectId that does belong to the workspace", async () => {
+      const member = await createWorkspaceMember();
+      const { project } = await createProjectFixture({
+        workspaceId: member.workspace.id,
+      });
+      await db.insert(agentTermTable).values({
+        workspaceId: member.workspace.id,
+        canonical: "Ledger",
+        confidence: "confirmed",
+      });
+
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      const response = await resolve(
+        app,
+        member.workspace.id,
+        "Ledger",
+        project.id,
+      );
+
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as Resolution).match).toBe("canonical");
     });
 
     it("rejects resolving for users outside the workspace", async () => {
@@ -866,8 +1019,12 @@ describe("API integration: agent terms", () => {
         id: term.id,
         canonical: "Ledger",
         confidence: "confirmed",
+        // The reviewer comes from the session, never from the body.
+        reviewerId: member.user.id,
+        reviewer: { userId: member.user.id, name: member.user.name },
       });
       expect(payload.lastVerifiedAt).not.toBeNull();
+      expect(payload.reviewedAt).not.toBeNull();
 
       const [persisted] = await db
         .select()
@@ -875,6 +1032,8 @@ describe("API integration: agent terms", () => {
         .where(eq(agentTermTable.id, term.id));
       expect(persisted?.confidence).toBe("confirmed");
       expect(persisted?.lastVerifiedAt).not.toBeNull();
+      expect(persisted?.reviewerId).toBe(member.user.id);
+      expect(persisted?.reviewedAt).not.toBeNull();
     });
 
     it("records a disputed review outcome", async () => {
@@ -888,10 +1047,14 @@ describe("API integration: agent terms", () => {
         await confirm(app, member.workspace.id, {
           termId: term.id,
           confidence: "disputed",
+          rejectReason: "The team uses this name for two different things",
         })
       ).json()) as Term;
 
       expect(payload.confidence).toBe("disputed");
+      expect(payload.rejectReason).toBe(
+        "The team uses this name for two different things",
+      );
     });
 
     it("rejects a confidence value outside the review vocabulary", async () => {
@@ -944,6 +1107,406 @@ describe("API integration: agent terms", () => {
         .from(agentTermTable)
         .where(eq(agentTermTable.id, foreignTerm.id));
       expect(persisted?.confidence).toBe("proposed");
+    });
+  });
+
+  /**
+   * The gate itself: a term is invisible to resolve until a person has ruled on
+   * it. Everything here is about what a later session can read back, which is
+   * the loop the gate exists to break — a model proposes an inferred
+   * definition, the next session resolves it, and the guess returns wearing the
+   * authority of a record.
+   */
+  describe("the human review gate", () => {
+    async function admin() {
+      const member = await createWorkspaceMember({ role: "admin" });
+      mockAuthenticatedSession(member.user);
+      return { member, app: createApp().app };
+    }
+
+    it("hides a proposed term from resolve, reveals it once confirmed, and hides it again when disputed", async () => {
+      const { member, app } = await admin();
+
+      const proposed = (await (
+        await propose(app, {
+          workspaceId: member.workspace.id,
+          canonical: "Ledger",
+          definition: "The append-only agent work record",
+          aliases: ["agent_entry"],
+        })
+      ).json()) as Term;
+
+      // (a) Proposed: the word exists, but resolve will not vouch for it, by
+      // canonical name or by alias.
+      for (const input of ["Ledger", "agent_entry"]) {
+        const payload = (await (
+          await resolve(app, member.workspace.id, input)
+        ).json()) as Resolution;
+        expect(payload, input).toEqual({
+          match: "none",
+          term: null,
+          ambiguous: [],
+        });
+      }
+
+      // (b) Confirmed: now it answers.
+      await confirm(app, member.workspace.id, {
+        termId: proposed.id,
+        confidence: "confirmed",
+      });
+      const confirmed = (await (
+        await resolve(app, member.workspace.id, "Ledger")
+      ).json()) as Resolution;
+      expect(confirmed.match).toBe("canonical");
+      expect(confirmed.term).toMatchObject({
+        id: proposed.id,
+        confidence: "confirmed",
+        reviewerId: member.user.id,
+        rejectReason: null,
+      });
+
+      // (c) Disputed: rejected is not a weaker yes. It goes back to silence.
+      await confirm(app, member.workspace.id, {
+        termId: proposed.id,
+        confidence: "disputed",
+        rejectReason: "Two different things are called this",
+      });
+      const disputed = (await (
+        await resolve(app, member.workspace.id, "Ledger")
+      ).json()) as Resolution;
+      expect(disputed.match).toBe("none");
+      expect(disputed.term).toBeNull();
+    });
+
+    it("(d) refuses a disputed review with no reason, and (e) replays that reason on the next proposal of the same name", async () => {
+      const { member, app } = await admin();
+      const term = (await (
+        await propose(app, {
+          workspaceId: member.workspace.id,
+          canonical: "Ledger",
+        })
+      ).json()) as Term;
+
+      const unexplained = await confirm(app, member.workspace.id, {
+        termId: term.id,
+        confidence: "disputed",
+      });
+      expect(unexplained.status).toBe(400);
+      await expect(unexplained.text()).resolves.toBe(
+        "rejectReason: rejectReason is required when the outcome is disputed",
+      );
+      const [untouched] = await db
+        .select()
+        .from(agentTermTable)
+        .where(eq(agentTermTable.id, term.id));
+      expect(untouched).toMatchObject({
+        confidence: "proposed",
+        reviewerId: null,
+        rejectReason: null,
+      });
+
+      const rejected = (await (
+        await confirm(app, member.workspace.id, {
+          termId: term.id,
+          confidence: "disputed",
+          rejectReason: "Two different things are called this",
+        })
+      ).json()) as Term;
+      expect(rejected).toMatchObject({
+        confidence: "disputed",
+        rejectReason: "Two different things are called this",
+        reviewerId: member.user.id,
+        reviewer: { userId: member.user.id, name: member.user.name },
+      });
+
+      // The whole point of storing the reason: the next caller is answered
+      // with the verdict instead of re-proposing the same word.
+      const again = await propose(app, {
+        workspaceId: member.workspace.id,
+        canonical: "Ledger",
+      });
+      expect(again.status).toBe(409);
+      await expect(again.text()).resolves.toBe(
+        "Term already exists and was rejected: Ledger — Two different things are called this",
+      );
+    });
+
+    it("names a rejection with no stored reason without inventing one, and clears the reason on a later confirm", async () => {
+      const { member, app } = await admin();
+      const [term] = await db
+        .insert(agentTermTable)
+        .values({
+          workspaceId: member.workspace.id,
+          canonical: "Ledger",
+          // A row disputed before the reason column existed.
+          confidence: "disputed",
+        })
+        .returning();
+
+      const conflict = await propose(app, {
+        workspaceId: member.workspace.id,
+        canonical: "Ledger",
+      });
+      expect(conflict.status).toBe(409);
+      await expect(conflict.text()).resolves.toBe(
+        "Term already exists and was rejected: Ledger",
+      );
+
+      // A reason sent with `confirmed` is stripped rather than refused, and a
+      // stored one is cleared: it would otherwise be replayed as the verdict on
+      // a term that is now accepted.
+      const accepted = (await (
+        await confirm(app, member.workspace.id, {
+          termId: term.id,
+          confidence: "confirmed",
+          rejectReason: "ignored",
+        })
+      ).json()) as Term;
+      expect(accepted).toMatchObject({
+        confidence: "confirmed",
+        rejectReason: null,
+      });
+      expect(
+        await (
+          await propose(app, {
+            workspaceId: member.workspace.id,
+            canonical: "Ledger",
+          })
+        ).text(),
+      ).toBe("Term already exists: Ledger");
+    });
+
+    it("(f) narrows to the project's linked domain pages, keeping the unfiled workspace-wide terms", async () => {
+      const { member, app } = await admin();
+      const { project } = await createProjectFixture({
+        workspaceId: member.workspace.id,
+      });
+      const [linked] = await db
+        .insert(agentDomainTable)
+        .values({
+          workspaceId: member.workspace.id,
+          slug: "billing",
+          title: "Billing",
+        })
+        .returning();
+      const [unlinked] = await db
+        .insert(agentDomainTable)
+        .values({
+          workspaceId: member.workspace.id,
+          slug: "shipping",
+          title: "Shipping",
+        })
+        .returning();
+      await db
+        .insert(agentProjectDomainTable)
+        .values({ projectId: project.id, domainId: linked.id });
+
+      await db.insert(agentTermTable).values([
+        {
+          workspaceId: member.workspace.id,
+          canonical: "Filed",
+          aliases: ["scope-probe"],
+          confidence: "confirmed",
+          domainId: linked.id,
+        },
+        {
+          workspaceId: member.workspace.id,
+          canonical: "Elsewhere",
+          aliases: ["scope-probe"],
+          confidence: "confirmed",
+          domainId: unlinked.id,
+        },
+        {
+          workspaceId: member.workspace.id,
+          canonical: "Unfiled",
+          aliases: ["scope-probe"],
+          confidence: "confirmed",
+          domainId: null,
+        },
+      ]);
+
+      // Without projectId the whole workspace answers, so all three collide.
+      const wide = (await (
+        await resolve(app, member.workspace.id, "scope-probe")
+      ).json()) as Resolution;
+      expect(wide.ambiguous.map((t) => t.canonical).sort()).toEqual([
+        "Elsewhere",
+        "Filed",
+        "Unfiled",
+      ]);
+
+      // With it, the page this project never linked drops out; the unfiled term
+      // stays, because nobody filed it means it applies everywhere.
+      const narrowed = (await (
+        await resolve(app, member.workspace.id, "scope-probe", project.id)
+      ).json()) as Resolution;
+      expect(narrowed.ambiguous.map((t) => t.canonical).sort()).toEqual([
+        "Filed",
+        "Unfiled",
+      ]);
+
+      // A term filed under an unlinked page is not merely deprioritised.
+      const direct = (await (
+        await resolve(app, member.workspace.id, "Elsewhere", project.id)
+      ).json()) as Resolution;
+      expect(direct.match).toBe("none");
+    });
+
+    it("(g) ignores confidence and reviewer fields sent on a proposal", async () => {
+      const { member, app } = await admin();
+
+      const payload = (await (
+        await propose(app, {
+          workspaceId: member.workspace.id,
+          canonical: "Ledger",
+          confidence: "confirmed",
+          reviewerId: member.user.id,
+          reviewedAt: new Date().toISOString(),
+          state: "retired",
+        })
+      ).json()) as Term;
+
+      expect(payload).toMatchObject({
+        confidence: "proposed",
+        state: "active",
+        reviewerId: null,
+        reviewer: null,
+        reviewedAt: null,
+      });
+      const [persisted] = await db
+        .select()
+        .from(agentTermTable)
+        .where(eq(agentTermTable.id, payload.id));
+      expect(persisted).toMatchObject({
+        confidence: "proposed",
+        state: "active",
+        reviewerId: null,
+        reviewedAt: null,
+      });
+      // The claim in the body bought nothing: it still does not resolve.
+      const resolved = (await (
+        await resolve(app, member.workspace.id, "Ledger")
+      ).json()) as Resolution;
+      expect(resolved.match).toBe("none");
+    });
+
+    it("(h) refuses an agent proposal that cites no ledger entry, and accepts one that does", async () => {
+      const { member, app } = await admin();
+      const { entry } = await seedSourceEntry(member.workspace.id);
+
+      const uncited = await propose(app, {
+        workspaceId: member.workspace.id,
+        canonical: "Ledger",
+        provider: "anthropic",
+        model: "claude-fable-5-1",
+      });
+      expect(uncited.status).toBe(400);
+      await expect(uncited.text()).resolves.toBe(
+        "sourceEntryId: sourceEntryId is required when provider and model are given",
+      );
+      expect(await db.select().from(agentTermTable)).toEqual([]);
+
+      // A person proposing is unaffected: the conversation that produced the
+      // term is the source, and there is no entry to point at.
+      const human = await propose(app, {
+        workspaceId: member.workspace.id,
+        canonical: "Lease",
+      });
+      expect(human.status).toBe(200);
+
+      const cited = await propose(app, {
+        workspaceId: member.workspace.id,
+        canonical: "Ledger",
+        provider: "anthropic",
+        model: "claude-fable-5-1",
+        sourceEntryId: entry.id,
+      });
+      expect(cited.status).toBe(200);
+      expect((await cited.json()) as Term).toMatchObject({
+        confidence: "proposed",
+        actorId: expect.any(String),
+      });
+    });
+
+    /**
+     * Half a pair is neither kind of proposal. It used to slip past the
+     * citation rule — `provider` alone was not an agent proposal, so nothing
+     * required `sourceEntryId` — and stored a row with no actor and no source.
+     */
+    it("refuses provider without model and model without provider", async () => {
+      const { member, app } = await admin();
+
+      const providerOnly = await propose(app, {
+        workspaceId: member.workspace.id,
+        canonical: "OnlyProvider",
+        provider: "anthropic",
+      });
+      expect(providerOnly.status).toBe(400);
+      await expect(providerOnly.text()).resolves.toBe(
+        "model: provider and model must be given together",
+      );
+
+      const modelOnly = await propose(app, {
+        workspaceId: member.workspace.id,
+        canonical: "OnlyModel",
+        model: "claude-fable-5-1",
+      });
+      expect(modelOnly.status).toBe(400);
+      await expect(modelOnly.text()).resolves.toBe(
+        "provider: provider and model must be given together",
+      );
+
+      expect(await db.select().from(agentTermTable)).toEqual([]);
+    });
+
+    it("refuses a blank rejectReason and stores a trimmed one", async () => {
+      const { member, app } = await admin();
+      const blankTerm = (await (
+        await propose(app, {
+          workspaceId: member.workspace.id,
+          canonical: "Ledger",
+        })
+      ).json()) as Term;
+
+      const blank = await confirm(app, member.workspace.id, {
+        termId: blankTerm.id,
+        confidence: "disputed",
+        rejectReason: "   ",
+      });
+      expect(blank.status).toBe(400);
+      await expect(blank.text()).resolves.toBe(
+        "rejectReason: rejectReason cannot be blank",
+      );
+      const [untouched] = await db
+        .select()
+        .from(agentTermTable)
+        .where(eq(agentTermTable.id, blankTerm.id));
+      expect(untouched).toMatchObject({
+        confidence: "proposed",
+        rejectReason: null,
+      });
+
+      // Padding is the caller's, not the reviewer's verdict: the stored reason
+      // is what gets replayed in the 409, so it is trimmed at the edge.
+      const rejected = (await (
+        await confirm(app, member.workspace.id, {
+          termId: blankTerm.id,
+          confidence: "disputed",
+          rejectReason: "  Two different things are called this  ",
+        })
+      ).json()) as Term;
+      expect(rejected.rejectReason).toBe(
+        "Two different things are called this",
+      );
+
+      const again = await propose(app, {
+        workspaceId: member.workspace.id,
+        canonical: "Ledger",
+      });
+      expect(again.status).toBe(409);
+      await expect(again.text()).resolves.toBe(
+        "Term already exists and was rejected: Ledger — Two different things are called this",
+      );
     });
   });
 

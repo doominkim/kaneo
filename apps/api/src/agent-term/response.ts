@@ -1,6 +1,18 @@
 import { actorResponseSchema } from "../agent-entry/actor-response";
 import { nullableResponseTimestamp, responseTimestamp, z } from "../openapi";
 
+/**
+ * The reviewer is always a person — id and display name only, like the domain
+ * page's `author`. No actor variant exists on purpose: a model cannot review,
+ * so there is nothing for one to be resolved from.
+ */
+export const termReviewerSchema = z
+  .object({ userId: z.string(), name: z.string() })
+  .openapi("AgentTermReviewer", {
+    description:
+      "The person who reviewed a term, or null while it is unreviewed. Who accepted or rejected a term is what makes `confidence` accountable.",
+  });
+
 export const termSchema = z
   .object({
     id: z.string(),
@@ -22,6 +34,19 @@ export const termSchema = z
     actor: actorResponseSchema.nullable().openapi({
       description:
         "The model that proposed the term, resolved from `actorId`; null for a human proposal. Which model wrote a proposal is what a reviewer weighs it by. `model` is the model id as the harness reported it and is shown verbatim.",
+    }),
+    reviewerId: z.string().nullable().openapi({
+      description:
+        "`user` id of the person who reviewed the term, or null while it is unreviewed. Never an agent — an agent cannot review.",
+    }),
+    reviewer: termReviewerSchema.nullable(),
+    reviewedAt: nullableResponseTimestamp.openapi({
+      description:
+        "When the review was recorded, or null while unreviewed. Distinct from `lastVerifiedAt`, which the re-verification schedule also stamps.",
+    }),
+    rejectReason: z.string().nullable().openapi({
+      description:
+        "Why the term was rejected; set only on a `disputed` term and cleared when it is confirmed. Re-proposing the same canonical name replays it in the 409.",
     }),
     lastVerifiedAt: nullableResponseTimestamp,
     createdAt: responseTimestamp,

@@ -36,7 +36,11 @@ type ProposeInput = {
  */
 async function proposeTerm(input: ProposeInput) {
   const [existing] = await db
-    .select({ id: agentTermTable.id })
+    .select({
+      id: agentTermTable.id,
+      confidence: agentTermTable.confidence,
+      rejectReason: agentTermTable.rejectReason,
+    })
     .from(agentTermTable)
     .where(
       and(
@@ -47,8 +51,16 @@ async function proposeTerm(input: ProposeInput) {
     .limit(1);
 
   if (existing) {
+    // A rejected term replays the reason it was rejected. A bare conflict tells
+    // the caller nothing it can act on, so the same word gets proposed again
+    // every session; the reviewer's verdict is the only thing that stops that.
     throw new HTTPException(409, {
-      message: `Term already exists: ${input.canonical}`,
+      message:
+        existing.confidence === "disputed"
+          ? `Term already exists and was rejected: ${input.canonical}${
+              existing.rejectReason ? ` — ${existing.rejectReason}` : ""
+            }`
+          : `Term already exists: ${input.canonical}`,
     });
   }
 

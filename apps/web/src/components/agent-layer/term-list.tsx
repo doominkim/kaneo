@@ -10,6 +10,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { isAgentLayerStatus } from "@/fetchers/agent-layer/api-error";
 import type {
   AgentTerm,
@@ -56,6 +58,8 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
   );
   const [state, setState] = useState<AgentTermState | undefined>(undefined);
   const [pending, setPending] = useState<PendingReview | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [reasonError, setReasonError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AgentTerm | null>(null);
   const query = useAgentTerms(workspaceId, confidence, state);
   const review = useConfirmAgentTerm();
@@ -76,13 +80,37 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
     }
   };
 
+  const openReview = (
+    term: AgentTerm,
+    confidence: "confirmed" | "disputed",
+  ) => {
+    setRejectReason("");
+    setReasonError(null);
+    setPending({ term, confidence });
+  };
+
+  const closeReview = () => {
+    setRejectReason("");
+    setReasonError(null);
+    setPending(null);
+  };
+
+  // A dispute without a reason is a dead end: the proposer cannot act on it and
+  // the next reviewer cannot tell whether the term was wrong or merely unclear.
+  const trimmedReason = rejectReason.trim();
+  const reasonMissing =
+    pending?.confidence === "disputed" && trimmedReason.length === 0;
+
   const handleReview = async () => {
-    if (!pending) return;
+    if (!pending || reasonMissing) return;
     try {
       await review.mutateAsync({
         workspaceId,
         termId: pending.term.id,
         confidence: pending.confidence,
+        ...(pending.confidence === "disputed"
+          ? { rejectReason: trimmedReason }
+          : {}),
       });
       toast.success(
         t("agentLayer:knowledge.reviewed", {
@@ -90,8 +118,19 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
           confidence: t(`agentLayer:confidence.${pending.confidence}`),
         }),
       );
-      setPending(null);
+      closeReview();
     } catch (cause) {
+      // The API is the authority on the reason requirement; its 400 stays in
+      // the dialog next to the field rather than in a toast the user has to
+      // reopen the dialog to act on.
+      if (isAgentLayerStatus(cause, 400)) {
+        setReasonError(
+          cause instanceof Error
+            ? cause.message
+            : t("agentLayer:knowledge.disputeReasonRequired"),
+        );
+        return;
+      }
       toast.error(t("agentLayer:knowledge.reviewFailed"), {
         description: cause instanceof Error ? cause.message : undefined,
       });
@@ -167,9 +206,7 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
               key={term.id}
               term={term}
               canReview={canReview}
-              onReview={(reviewed, next) =>
-                setPending({ term: reviewed, confidence: next })
-              }
+              onReview={openReview}
               canDelete={canReview}
               onDelete={setPendingDelete}
               workspaceId={workspaceId}
@@ -183,7 +220,7 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
 
       <AlertDialog
         open={Boolean(pending)}
-        onOpenChange={(open) => !open && !review.isPending && setPending(null)}
+        onOpenChange={(open) => !open && !review.isPending && closeReview()}
       >
         <AlertDialogContent data-testid="review-dialog">
           <AlertDialogHeader>
@@ -202,6 +239,47 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
                 : t("agentLayer:knowledge.confirmDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {pending?.confidence === "disputed" ? (
+            <div className="space-y-1.5 px-6 pb-4">
+              <Label htmlFor="agent-term-reject-reason">
+                {t("agentLayer:knowledge.disputeReasonLabel")}
+              </Label>
+              <Textarea
+                id="agent-term-reject-reason"
+                rows={3}
+                autoFocus
+                value={rejectReason}
+                placeholder={t("agentLayer:knowledge.disputeReasonPlaceholder")}
+                aria-describedby={
+                  reasonMissing ? "agent-term-reject-reason-error" : undefined
+                }
+                aria-invalid={reasonMissing || Boolean(reasonError)}
+                onChange={(event) => {
+                  setRejectReason(event.target.value);
+                  setReasonError(null);
+                }}
+                data-testid="reject-reason-input"
+              />
+              {reasonMissing ? (
+                <p
+                  id="agent-term-reject-reason-error"
+                  className="text-xs text-destructive-foreground"
+                  data-testid="reject-reason-required"
+                >
+                  {t("agentLayer:knowledge.disputeReasonRequired")}
+                </p>
+              ) : null}
+              {reasonError ? (
+                <p
+                  className="text-xs text-destructive-foreground"
+                  role="alert"
+                  data-testid="reject-reason-error"
+                >
+                  {reasonError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           <AlertDialogFooter>
             <AlertDialogClose
               render={
@@ -219,7 +297,7 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
               variant={
                 pending?.confidence === "disputed" ? "destructive" : "default"
               }
-              disabled={review.isPending}
+              disabled={review.isPending || reasonMissing}
               onClick={handleReview}
               data-testid="review-submit"
             >

@@ -4,7 +4,7 @@ import { assertDomainsInWorkspace } from "../../agent-domain/controllers/domain-
 import { loadActor } from "../../agent-entry/actor-response";
 import db from "../../database";
 import { agentTermTable } from "../../database/schema-agent-layer";
-import { toTermRecord } from "./term-record";
+import { loadReviewer, toTermRecord } from "./term-record";
 
 /**
  * Files a term under a domain page, or unfiles it (null). Curating the
@@ -36,7 +36,11 @@ async function setTermDomain(
     throw new HTTPException(404, { message: "Term not found" });
   }
 
-  return toTermRecord(updated, await loadActor(updated.actorId));
+  const [actor, reviewer] = await Promise.all([
+    loadActor(updated.actorId),
+    loadReviewer(updated.reviewerId),
+  ]);
+  return toTermRecord(updated, actor, reviewer);
 }
 
 export default setTermDomain;

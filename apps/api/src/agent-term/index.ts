@@ -36,11 +36,12 @@ const resolveRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Resolve a term",
   description:
-    "Deterministic lookup: the same input always returns the same answer, with no embedding and no model judgement. Retired terms are still returned — a tombstone tells you the concept is dead and what replaced it.",
+    "Deterministic lookup: the same input always returns the same answer, with no embedding and no model judgement. Only terms a person confirmed are returned; `proposed` and `disputed` never resolve, so a model cannot read back its own unreviewed proposal as fact. Retired terms are still returned when confirmed — a tombstone tells you the concept is dead and what replaced it. Pass `projectId` to narrow the answer to that project's linked domain pages plus the unfiled, workspace-wide terms.",
   middleware: [workspaceAccess.fromParam("workspaceId")] as const,
   request: { params: workspaceIdParam, query: resolveQuery },
   responses: {
     200: jsonResponse("Resolution result", resolveResultSchema),
+    400: errorResponse("projectId outside the workspace"),
     403: errorResponse("No access to the workspace"),
   },
 });
@@ -68,7 +69,7 @@ const proposeRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Propose a term",
   description:
-    "Adds a term as `proposed`. It never becomes `confirmed` here — unreviewed entries accumulating is how a lexicon stops being trusted. Send `provider`/`model` from an agent so the proposal records which model wrote it; omit both when a person proposes.",
+    "Adds a term as `proposed`, which does not resolve — it never becomes `confirmed` here, because unreviewed entries accumulating is how a lexicon stops being trusted. Send `provider` and `model` together from an agent so the proposal records which model wrote it — one without the other is a 400. An agent proposal must also send `sourceEntryId`, the ledger entry the definition came out of, or the request is a 400. A person proposes with none of the three.",
   middleware: [
     workspaceAccess.fromBody("workspaceId"),
     requireWorkspacePermission({ task: ["update"] }),
@@ -81,6 +82,9 @@ const proposeRoute = createRoute({
   },
   responses: {
     200: jsonResponse("The proposed term", termSchema),
+    400: errorResponse(
+      "provider without model or the reverse, an agent proposal with no sourceEntryId, or a domainId outside the workspace",
+    ),
     403: errorResponse("No workspace access, or missing task:update"),
     409: errorResponse("A term with that canonical name already exists"),
   },
@@ -93,7 +97,7 @@ const confirmRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Review a proposed term",
   description:
-    "Human review outcome — the only path from `proposed` to `confirmed`. Also stamps lastVerifiedAt, which the re-verification schedule reads.",
+    "Human review outcome — the only path from `proposed` to `confirmed`, and the only thing that makes a term resolvable. Records the calling user as the reviewer with `reviewedAt`; a `disputed` outcome requires `rejectReason` and stores it, a `confirmed` one clears it. Also stamps lastVerifiedAt, which the re-verification schedule reads.",
   middleware: [
     workspaceAccess.fromParam("workspaceId"),
     requireWorkspacePermission({ workspace: ["update"] }),
@@ -107,6 +111,9 @@ const confirmRoute = createRoute({
   },
   responses: {
     200: jsonResponse("The reviewed term", termSchema),
+    400: errorResponse(
+      "A disputed outcome with a missing or blank rejectReason",
+    ),
     403: errorResponse("No workspace access, or missing workspace:update"),
     404: errorResponse("Term not found"),
   },
@@ -164,15 +171,13 @@ const deleteRoute = createRoute({
 });
 
 const agentTerm = apiRouter<BaseVariables & { workspaceId: string }>()
-  .openapi(resolveRoute, async (c) =>
-    c.json(
-      await resolveTerm(
-        c.req.valid("param").workspaceId,
-        c.req.valid("query").term,
-      ),
+  .openapi(resolveRoute, async (c) => {
+    const { term, projectId } = c.req.valid("query");
+    return c.json(
+      await resolveTerm(c.req.valid("param").workspaceId, term, projectId),
       200,
-    ),
-  )
+    );
+  })
   .openapi(listRoute, async (c) =>
     c.json(
       await listTerms({
@@ -192,9 +197,17 @@ const agentTerm = apiRouter<BaseVariables & { workspaceId: string }>()
     ),
   )
   .openapi(confirmRoute, async (c) => {
-    const { termId, confidence } = c.req.valid("json");
+    const { termId, confidence, rejectReason } = c.req.valid("json");
     return c.json(
-      await confirmTerm(c.req.valid("param").workspaceId, termId, confidence),
+      await confirmTerm(
+        c.req.valid("param").workspaceId,
+        termId,
+        confidence,
+        // The reviewer is the calling user, never a value from the body: who
+        // signed off is the whole content of a review.
+        c.get("userId"),
+        rejectReason ?? null,
+      ),
       200,
     );
   })

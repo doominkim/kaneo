@@ -124,7 +124,7 @@ type DomainPage = DomainNode & {
   actor: { model: string } | null;
   ancestors: DomainNode[];
   children: DomainNode[];
-  terms: Array<{ canonical: string }>;
+  terms: Array<{ canonical: string; confidence: string }>;
   projects: Array<{ id: string; name: string }>;
   documents: Array<{ projectId: string; slug: string; title: string }>;
 };
@@ -192,9 +192,16 @@ function shapeBoard(board: BoardResponse) {
  * The page's links as names. A booting session needs to know what is filed
  * here, not to page through it; ids come back only where the name alone
  * cannot be acted on (a document needs its project and slug to be read).
+ *
+ * Terms are filtered to the confirmed ones, matching what agent_term_resolve
+ * will answer with. A page that listed unreviewed proposals would be the same
+ * leak by another route — the model would read its own guess off the page and
+ * never learn that resolve refuses it. `linksTotal.terms` counts what is
+ * actually shown, so it never advertises entries the caller cannot reach.
  */
 function shapeDomainPage(page: DomainPage, offset: number) {
   const cap = <T>(items: T[]) => items.slice(0, DOMAIN_LINK_CAP);
+  const terms = page.terms.filter((t) => t.confidence === "confirmed");
   return {
     id: page.id,
     parentId: page.parentId,
@@ -210,7 +217,7 @@ function shapeDomainPage(page: DomainPage, offset: number) {
       slug: c.slug,
       title: c.title,
     })),
-    terms: cap(page.terms).map((t) => t.canonical),
+    terms: cap(terms).map((t) => t.canonical),
     projects: cap(page.projects).map((p) => ({ id: p.id, name: p.name })),
     documents: cap(page.documents).map((d) => ({
       projectId: d.projectId,
@@ -219,7 +226,7 @@ function shapeDomainPage(page: DomainPage, offset: number) {
     })),
     linksTotal: {
       children: page.children.length,
-      terms: page.terms.length,
+      terms: terms.length,
       projects: page.projects.length,
       documents: page.documents.length,
     },
@@ -464,22 +471,28 @@ export function registerAgentTools(
     "agent_term_resolve",
     {
       description:
-        "Resolve a term to its canonical name, aliases, DB/code anchors, and what it must NOT be confused with. Deterministic: same input, same answer, no inference. Ask this BEFORE searching the codebase for an unfamiliar word.",
-      inputSchema: z.object({ workspaceId: z.string(), term: z.string() }),
+        "Resolve a term to its canonical name, aliases, DB/code anchors, and what it must NOT be confused with. Deterministic: same input, same answer, no inference. Ask this BEFORE searching the codebase for an unfamiliar word. Only human-confirmed terms come back, never proposals, including your own; a miss means unknown, so read the code rather than guess. `projectId` narrows to that project's domain pages plus unfiled terms.",
+      inputSchema: z.object({
+        workspaceId: z.string(),
+        term: z.string(),
+        projectId: z.string().optional(),
+      }),
     },
     (args) =>
-      guard(() =>
-        api.json(
-          `/api/agent-term/${encodeURIComponent(args.workspaceId)}/resolve?term=${encodeURIComponent(args.term)}`,
-        ),
-      ),
+      guard(() => {
+        const q = new URLSearchParams({ term: args.term });
+        if (args.projectId) q.set("projectId", args.projectId);
+        return api.json(
+          `/api/agent-term/${encodeURIComponent(args.workspaceId)}/resolve?${q}`,
+        );
+      }),
   );
 
   reg(
     "agent_term_propose",
     {
       description:
-        "Propose a term for the lexicon. It is stored as `proposed` and a human must confirm it — never assume a proposal is authoritative. Pass `provider`/`model` so the proposal records which model wrote it; a reviewer weighs a proposal by its author.",
+        "Propose a term for the lexicon. Stored as `proposed`: agent_term_resolve ignores it until a human confirms it, including for you later. `sourceEntryId` is the ledger entry the definition came out of; append one with agent_log_append first. A reviewer weighs a proposal by its author.",
       inputSchema: z.object({
         workspaceId: z.string(),
         provider: z.string(),
@@ -501,7 +514,7 @@ export function registerAgentTools(
             }),
           )
           .default([]),
-        sourceEntryId: z.string().nullable().optional(),
+        sourceEntryId: z.string(),
         domainId: z
           .string()
           .nullable()

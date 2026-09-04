@@ -41,6 +41,10 @@ const base: AgentTerm = {
   domainId: null,
   actorId: null,
   actor: null,
+  reviewerId: null,
+  reviewer: null,
+  reviewedAt: null,
+  rejectReason: null,
   lastVerifiedAt: null,
   createdAt: "2026-09-03T00:00:00.000Z",
 };
