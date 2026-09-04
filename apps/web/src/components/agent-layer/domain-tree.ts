@@ -123,11 +123,17 @@ export function randomSlugFallback() {
   return `domain-${suffix}`;
 }
 
-/** "root / parent / page" — the label a select shows for a nested page. */
+/**
+ * "root / parent / page" — the label a select shows for a nested page, or
+ * `null` when the id names nothing in `nodes` (the listing has not loaded, or
+ * the item points at another workspace's page). An empty string would render
+ * as a blank trigger and read as a bug; `null` makes the caller choose what to
+ * say instead.
+ */
 export function domainPathLabel(
   nodes: AgentDomainNode[] | undefined,
   domainId: string,
-): string {
+): string | null {
   const byId = new Map((nodes ?? []).map((node) => [node.id, node]));
   const parts: string[] = [];
   let current = byId.get(domainId);
@@ -137,5 +143,5 @@ export function domainPathLabel(
     parts.unshift(current.title);
     current = current.parentId ? byId.get(current.parentId) : undefined;
   }
-  return parts.join(" / ");
+  return parts.length > 0 ? parts.join(" / ") : null;
 }

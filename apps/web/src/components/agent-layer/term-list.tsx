@@ -1,3 +1,4 @@
+import { EyeOff } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -191,6 +192,11 @@ export function TermList({
   };
 
   const terms = query.data?.terms ?? [];
+  // Said once above the list rather than on every row: on a review surface the
+  // rows are unconfirmed by definition, and the reviewer needs the definitions
+  // on screen more than the same sentence repeated.
+  const showUnconfirmedHint =
+    reviewable && terms.some((term) => term.confidence === "proposed");
 
   return (
     <div className="space-y-3" data-testid="term-list">
@@ -228,22 +234,33 @@ export function TermList({
           description={t("agentLayer:knowledge.termsEmptyHint")}
         />
       ) : (
-        <ul className="divide-y divide-border/70 rounded-lg border border-border/80 bg-background">
-          {terms.map((term) => (
-            <TermRow
-              key={term.id}
-              term={term}
-              canReview={reviewable}
-              onReview={openReview}
-              canDelete={reviewable}
-              onDelete={setPendingDelete}
-              workspaceId={workspaceId}
-              domainNodes={domains.data?.domains}
-              canSetDomain={reviewable}
-              onSetDomain={handleSetDomain}
-            />
-          ))}
-        </ul>
+        <>
+          {showUnconfirmedHint ? (
+            <p
+              className="flex items-start gap-1 text-xs text-muted-foreground"
+              data-testid="unconfirmed-hint"
+            >
+              <EyeOff className="mt-0.5 size-3.5 shrink-0" />
+              <span>{t("agentLayer:knowledge.unconfirmedHintAll")}</span>
+            </p>
+          ) : null}
+          <ul className="divide-y divide-border/70 rounded-lg border border-border/80 bg-background">
+            {terms.map((term) => (
+              <TermRow
+                key={term.id}
+                term={term}
+                canReview={reviewable}
+                onReview={openReview}
+                canDelete={reviewable}
+                onDelete={setPendingDelete}
+                workspaceId={workspaceId}
+                domainNodes={domains.data?.domains}
+                canSetDomain={reviewable}
+                onSetDomain={handleSetDomain}
+              />
+            ))}
+          </ul>
+        </>
       )}
 
       <AlertDialog

@@ -2417,7 +2417,8 @@
 			"assignDomain": "Domain",
 			"domainLabel": "Domain",
 			"domainSet": "\"{{term}}\" filed.",
-			"domainSetFailed": "Could not change the item's domain."
+			"domainSetFailed": "Could not change the item's domain.",
+			"unconfirmedHintAll": "Proposed items are not confirmed yet — agents cannot read them until someone confirms them."
 		},
 		"nav": {
 			"docs": "Docs",
@@ -2630,7 +2631,8 @@
 			"termsEmpty": "No knowledge filed here.",
 			"title": "Domain",
 			"titleLabel": "Title",
-			"titleRequired": "Title is required."
+			"titleRequired": "Title is required.",
+			"unknown": "Unknown domain"
 		}
 	}
 }

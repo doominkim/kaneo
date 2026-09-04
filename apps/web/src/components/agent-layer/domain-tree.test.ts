@@ -136,4 +136,11 @@ describe("domainPathLabel", () => {
   it("joins the ancestor titles root first", () => {
     expect(domainPathLabel(rows, "lot")).toBe("약국 / 입고내역 / 로트");
   });
+
+  it("returns null when the id names no page it can see", () => {
+    // The listing has not arrived yet, or the id belongs elsewhere. An empty
+    // string here would render as a blank select trigger.
+    expect(domainPathLabel(rows, "missing")).toBeNull();
+    expect(domainPathLabel(undefined, "lot")).toBeNull();
+  });
 });

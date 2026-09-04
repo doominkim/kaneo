@@ -250,7 +250,11 @@ describe("DomainPage", () => {
       "data-author-kind",
       "human",
     );
-    expect(screen.getByTestId("markdown")).toHaveTextContent("복약지도를");
+    // Scoped to the page body: the knowledge section below renders markdown of
+    // its own, since a row awaiting review arrives with its definition open.
+    expect(
+      within(screen.getByTestId("domain-body")).getByTestId("markdown"),
+    ).toHaveTextContent("복약지도를");
 
     expect(screen.getByTestId("child-link")).toHaveAttribute(
       "href",

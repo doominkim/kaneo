@@ -169,7 +169,22 @@ export function TermRow({
   onSetDomain,
 }: TermRowProps) {
   const { t } = useTranslation();
-  const [showDefinition, setShowDefinition] = useState(false);
+  /*
+    A reviewer cannot confirm what they cannot read, so an item still waiting
+    on review opens with its definition already expanded; a confirmed item and
+    every read-only surface stay collapsed, where the point is to scan a list
+    rather than read each entry. An item with no definition has nothing to
+    expand, so it starts closed and renders no toggle at all.
+
+    The initial value is deliberately not synced to later `confidence` changes:
+    once the reviewer confirms the row, collapsing the text they were just
+    reading would yank it away as a reward for acting. The row keeps whatever
+    state the reviewer left it in, and the toggle is always there.
+  */
+  const [showDefinition, setShowDefinition] = useState(
+    () =>
+      canReview && term.confidence !== "confirmed" && Boolean(term.definition),
+  );
   const anchors = parseAnchors(term.anchors);
   const domain = term.domainId
     ? domainNodes?.find((node) => node.id === term.domainId)
@@ -247,8 +262,12 @@ export function TermRow({
         The whole point of the review gate: an unconfirmed term is invisible to
         `agent_term_resolve`, so a proposer who is not told this reads the row
         as "already in the lexicon" and assumes agents are using it.
+
+        On a review surface every row is unconfirmed, so repeating the sentence
+        per row says nothing and pushes the definition below the fold; the list
+        states it once instead (see `TermList`).
       */}
-      {term.confidence === "proposed" ? (
+      {!canReview && term.confidence === "proposed" ? (
         <p
           className="flex items-start gap-1 text-xs text-muted-foreground"
           data-testid="unconfirmed-hint"

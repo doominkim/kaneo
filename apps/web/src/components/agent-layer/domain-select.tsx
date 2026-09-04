@@ -57,6 +57,10 @@ export function DomainSelect({
   );
   const selectedLabel = value ? domainPathLabel(nodes, value) : null;
   const none = noneLabel ?? t("agentLayer:domain.none");
+  // A value the tree cannot name is not the same as no value: saying "no
+  // domain" there would claim the item is unfiled when it is merely unresolved.
+  const placeholder =
+    value && !selectedLabel ? t("agentLayer:domain.unknown") : none;
 
   return (
     <Select
@@ -77,7 +81,7 @@ export function DomainSelect({
               !selectedLabel && "text-muted-foreground",
             )}
           >
-            {selectedLabel ?? none}
+            {selectedLabel ?? placeholder}
           </span>
         </SelectValue>
       </SelectTrigger>

@@ -397,6 +397,100 @@ describe("TermList", () => {
     );
   });
 
+  it("opens the definition of an item that still needs a decision", () => {
+    mocks.terms.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: {
+        terms: [
+          term({
+            id: "p1",
+            canonical: "조제료",
+            definition: "The **dispensing** fee.",
+          }),
+          term({
+            id: "c1",
+            canonical: "청구코드",
+            confidence: "confirmed",
+            definition: "The claim code.",
+          }),
+        ],
+      },
+      refetch: vi.fn(),
+    });
+    render(<TermList workspaceId="ws" canReview />);
+    const [proposed, confirmed] = screen.getAllByTestId("term-row");
+
+    // A reviewer cannot judge what is hidden, so the unconfirmed row arrives
+    // readable; the confirmed one has nothing to decide and stays scannable.
+    expect(within(proposed).getByTestId("markdown")).toHaveTextContent(
+      "The **dispensing** fee.",
+    );
+    expect(within(proposed).getByTestId("definition-toggle")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(within(confirmed).queryByTestId("markdown")).toBeNull();
+
+    // Expanded by default is still a toggle, not a fixed state.
+    fireEvent.click(within(proposed).getByTestId("definition-toggle"));
+    expect(within(proposed).queryByTestId("markdown")).toBeNull();
+  });
+
+  it("leaves definitions collapsed where the viewer cannot review", () => {
+    const withDefinition = [
+      term({
+        id: "p1",
+        canonical: "조제료",
+        definition: "The **dispensing** fee.",
+      }),
+    ];
+    mocks.terms.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: { terms: withDefinition },
+      refetch: vi.fn(),
+    });
+
+    // The read-only knowledge tab: the same unconfirmed row, collapsed —
+    // the surface is for scanning the lexicon, not for deciding on it.
+    render(<TermList workspaceId="ws" canReview confirmedOnly />);
+    expect(screen.queryByTestId("markdown")).toBeNull();
+    expect(screen.getByTestId("definition-toggle")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    cleanup();
+
+    render(<TermList workspaceId="ws" canReview={false} />);
+    expect(screen.queryByTestId("markdown")).toBeNull();
+  });
+
+  it("states the review gate once for the list, not on every row", () => {
+    render(<TermList workspaceId="ws" canReview />);
+    const hints = screen.getAllByTestId("unconfirmed-hint");
+    expect(hints).toHaveLength(1);
+    expect(hints[0]).toHaveTextContent(
+      "agentLayer:knowledge.unconfirmedHintAll",
+    );
+    for (const row of screen.getAllByTestId("term-row")) {
+      expect(within(row).queryByTestId("unconfirmed-hint")).toBeNull();
+    }
+    cleanup();
+
+    // Nothing proposed is left, so there is no gate left to explain.
+    mocks.terms.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: {
+        terms: [term({ id: "c1", confidence: "confirmed" })],
+      },
+      refetch: vi.fn(),
+    });
+    render(<TermList workspaceId="ws" canReview />);
+    expect(screen.queryByTestId("unconfirmed-hint")).toBeNull();
+  });
+
   it("tells a model proposal apart from a person's", () => {
     render(<TermList workspaceId="ws" canReview={false} />);
     const [proposed, , disputed] = screen.getAllByTestId("term-row");
