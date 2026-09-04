@@ -34,7 +34,7 @@ const listRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Domain page tree",
   description:
-    "Every domain page of the workspace as a flat list ordered by (parentId, position, title), with `childCount` per row. No bodies. The client builds the tree from `parentId`.",
+    "Every domain page of the workspace as a flat list ordered by (parentId, position, title), with `childCount` per row plus the knowledge items filed directly under it counted by review outcome (`proposedCount`, `confirmedCount`, `disputedCount`). The workspace's unfiled items are counted once at the top level under `unfiled`. No bodies. The client builds the tree from `parentId`.",
   middleware: [workspaceAccess.fromParam("workspaceId")] as const,
   request: { params: workspaceIdParam },
   responses: {

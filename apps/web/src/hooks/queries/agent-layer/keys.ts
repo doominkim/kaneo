@@ -4,6 +4,13 @@ import type {
   AgentTermState,
 } from "@/fetchers/agent-layer/get-agent-terms";
 
+export type AgentTermFilters = {
+  confidence?: AgentTermConfidence;
+  state?: AgentTermState;
+  /** A domain page id, or `"none"` for the unfiled bucket. */
+  domainId?: string;
+};
+
 /**
  * One place for the agent-layer cache keys so the mutation hooks and the
  * query hooks cannot drift apart on what a document write must invalidate.
@@ -44,12 +51,18 @@ export const agentLayerKeys = {
     ["agent-artifact-url", projectId, artifactId, disposition] as const,
   settings: (projectId: string) =>
     ["agent-project-settings", projectId] as const,
-  terms: (
-    workspaceId: string,
-    confidence?: AgentTermConfidence,
-    state?: AgentTermState,
-  ) =>
-    ["agent-terms", workspaceId, confidence ?? "all", state ?? "all"] as const,
+  // `domainId` is part of the key, not just the request: the domain page and
+  // the knowledge tab read the same endpoint with different scopes, so a term
+  // refiled from one domain to another must not be served from the other's
+  // cache entry.
+  terms: (workspaceId: string, filters: AgentTermFilters = {}) =>
+    [
+      "agent-terms",
+      workspaceId,
+      filters.confidence ?? "all",
+      filters.state ?? "all",
+      filters.domainId ?? "all",
+    ] as const,
   termResolve: (workspaceId: string, term: string) =>
     ["agent-term-resolve", workspaceId, term] as const,
   // Domain pages are workspace-scoped. Both keys share the workspace prefix

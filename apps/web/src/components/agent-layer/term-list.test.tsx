@@ -198,21 +198,70 @@ describe("TermList", () => {
 
   it("drives the query with the confidence and state filters", () => {
     render(<TermList workspaceId="ws" canReview={false} />);
-    expect(mocks.terms).toHaveBeenLastCalledWith("ws", undefined, undefined);
+    expect(mocks.terms).toHaveBeenLastCalledWith("ws", {
+      confidence: undefined,
+      state: undefined,
+      domainId: undefined,
+    });
 
     fireEvent.click(
       within(screen.getByTestId("confidence-filter")).getByText(
         "agentLayer:confidence.proposed",
       ),
     );
-    expect(mocks.terms).toHaveBeenLastCalledWith("ws", "proposed", undefined);
+    expect(mocks.terms).toHaveBeenLastCalledWith("ws", {
+      confidence: "proposed",
+      state: undefined,
+      domainId: undefined,
+    });
 
     fireEvent.click(
       within(screen.getByTestId("state-filter")).getByText(
         "agentLayer:state.retired",
       ),
     );
-    expect(mocks.terms).toHaveBeenLastCalledWith("ws", "proposed", "retired");
+    expect(mocks.terms).toHaveBeenLastCalledWith("ws", {
+      confidence: "proposed",
+      state: "retired",
+      domainId: undefined,
+    });
+  });
+
+  it("scopes the query to a domain, including the unfiled bucket", () => {
+    render(<TermList workspaceId="ws" canReview domainId="d-pharmacy" />);
+    expect(mocks.terms).toHaveBeenLastCalledWith("ws", {
+      confidence: undefined,
+      state: undefined,
+      domainId: "d-pharmacy",
+    });
+    cleanup();
+
+    render(<TermList workspaceId="ws" canReview domainId="none" />);
+    expect(mocks.terms).toHaveBeenLastCalledWith("ws", {
+      confidence: undefined,
+      state: undefined,
+      domainId: "none",
+    });
+  });
+
+  it("shows only confirmed items and no review controls in the read-only view", () => {
+    render(<TermList workspaceId="ws" canReview confirmedOnly />);
+
+    // The confidence is pinned by the caller rather than by a filter chip, so
+    // the surface cannot be mistaken for the review queue.
+    expect(mocks.terms).toHaveBeenLastCalledWith("ws", {
+      confidence: "confirmed",
+      state: undefined,
+      domainId: undefined,
+    });
+    expect(screen.queryByTestId("confidence-filter")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("state-filter")).not.toBeInTheDocument();
+
+    // workspace:update is not enough to review here.
+    expect(screen.queryByTestId("confirm-term")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dispute-term")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("delete-term")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("term-domain-select")).not.toBeInTheDocument();
   });
 
   it("hides review actions without workspace:update", () => {

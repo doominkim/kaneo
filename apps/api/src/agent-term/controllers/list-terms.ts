@@ -1,5 +1,6 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
+import { assertDomainsInWorkspace } from "../../agent-domain/controllers/domain-lookup";
 import { actorSelection, liftActor } from "../../agent-entry/actor-response";
 import db from "../../database";
 import { userTable } from "../../database/schema";
@@ -7,12 +8,15 @@ import {
   agentActorTable,
   agentTermTable,
 } from "../../database/schema-agent-layer";
+import { NO_DOMAIN_FILTER } from "../schema";
 import { liftReviewer, toTermRecord } from "./term-record";
 
 type ListInput = {
   workspaceId: string;
   state?: string;
   confidence?: string;
+  /** An exact domain page id, or NO_DOMAIN_FILTER for the unfiled rows. */
+  domainId?: string;
   limit: number;
 };
 
@@ -33,6 +37,16 @@ async function listTerms(input: ListInput) {
   if (input.state) conditions.push(eq(agentTermTable.state, input.state));
   if (input.confidence) {
     conditions.push(eq(agentTermTable.confidence, input.confidence));
+  }
+  if (input.domainId === NO_DOMAIN_FILTER) {
+    conditions.push(isNull(agentTermTable.domainId));
+  } else if (input.domainId) {
+    // Empty means unspecified, as it does on resolve's projectId: a caller
+    // building the query string from an unset value asked for no narrowing.
+    // An unknown or foreign id is a 400 rather than an empty page, which would
+    // read exactly like a page with nothing filed under it.
+    await assertDomainsInWorkspace(input.workspaceId, [input.domainId]);
+    conditions.push(eq(agentTermTable.domainId, input.domainId));
   }
 
   const reviewerUser = alias(userTable, "reviewer_user");

@@ -36,7 +36,7 @@ import { CreateDomainDialog } from "./create-domain-dialog";
 import { MAX_DOMAIN_BODY_BYTES } from "./domain-tree";
 import { EntryAuthor } from "./entry-author";
 import { MoveDomainDialog } from "./move-domain-dialog";
-import { ConfidenceBadge } from "./term-row";
+import { TermList } from "./term-list";
 
 const encoder = new TextEncoder();
 
@@ -60,9 +60,9 @@ type DomainPageProps = {
 
 /**
  * One domain page (KAN-14): breadcrumb, markdown body, and everything the
- * API aggregated under it. Terms are workspace-level and have no page of
- * their own, so they render inline with their confidence rather than as
- * links into some project's knowledge tab.
+ * API aggregated under it. Knowledge items are reviewed here (KAN-16) — the
+ * page a reviewer already has open is the one that carries the context the
+ * decision needs.
  */
 export function DomainPage({
   page,
@@ -348,31 +348,30 @@ export function DomainPage({
         )}
       </section>
 
-      <div className="grid gap-6 md:grid-cols-3">
-        <section className="space-y-2" data-testid="domain-terms">
+      {/*
+        Review lives here rather than in the knowledge tab: judging a proposal
+        needs the domain it belongs to, and that context is this page. The
+        list is fetched rather than read off `page.terms`, which carries only
+        id/canonical/confidence/state — not the definition, proposer or
+        reviewer a decision rests on.
+      */}
+      <section className="space-y-2" data-testid="domain-terms">
+        <div>
           <h2 className="text-sm font-semibold text-foreground">
             {t("agentLayer:domain.terms")}
           </h2>
-          {page.terms.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              {t("agentLayer:domain.termsEmpty")}
-            </p>
-          ) : (
-            <ul className="space-y-1.5">
-              {page.terms.map((term) => (
-                <li
-                  key={term.id}
-                  className="flex flex-wrap items-center gap-1.5 text-sm"
-                  data-testid="domain-term"
-                >
-                  <span className="font-medium">{term.canonical}</span>
-                  <ConfidenceBadge confidence={term.confidence} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+          <p className="text-xs text-muted-foreground">
+            {t("agentLayer:domain.termsHint")}
+          </p>
+        </div>
+        <TermList
+          workspaceId={workspaceId}
+          canReview={canManage}
+          domainId={page.id}
+        />
+      </section>
 
+      <div className="grid gap-6 md:grid-cols-2">
         <section className="space-y-2" data-testid="domain-projects">
           <h2 className="text-sm font-semibold text-foreground">
             {t("agentLayer:domain.projects")}

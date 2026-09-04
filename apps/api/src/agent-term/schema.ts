@@ -17,8 +17,19 @@ export const resolveQuery = z.object({
 export const listTermsQuery = z.object({
   state: z.enum(["active", "dormant", "stale", "retired"]).optional(),
   confidence: z.enum(["proposed", "confirmed", "disputed"]).optional(),
+  domainId: z.string().optional().openapi({
+    description:
+      "Exact domain page id, or the literal `none` for the unfiled terms that belong to no page (`domainId` null). Omit, or send it empty, for the whole workspace. Combines with `state` and `confidence`. A page outside this workspace is a 400 rather than an empty answer.",
+  }),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
+
+/**
+ * `domainId=none` selects the unfiled rows. A page id can never collide with
+ * it: ids are generated (cuid2), and "none" is not one. Same sentinel as the
+ * ledger's `taskId=none`.
+ */
+export const NO_DOMAIN_FILTER = "none";
 
 const anchorSchema = z
   .object({

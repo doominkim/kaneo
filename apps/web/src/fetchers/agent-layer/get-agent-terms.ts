@@ -15,6 +15,11 @@ export type GetAgentTermsRequest = {
   workspaceId: string;
   confidence?: AgentTermConfidence;
   state?: AgentTermState;
+  /**
+   * A domain page id narrows the list to that page; `"none"` asks for the
+   * unfiled terms (`domain_id IS NULL`). Omitted, the whole workspace.
+   */
+  domainId?: string;
   limit?: number;
 };
 
@@ -22,6 +27,7 @@ async function getAgentTerms({
   workspaceId,
   confidence,
   state,
+  domainId,
   limit = 100,
 }: GetAgentTermsRequest): Promise<AgentTermList> {
   const response = await client["agent-term"][":workspaceId"].$get({
@@ -30,6 +36,7 @@ async function getAgentTerms({
       limit: String(limit),
       ...(confidence ? { confidence } : {}),
       ...(state ? { state } : {}),
+      ...(domainId ? { domainId } : {}),
     },
   });
 

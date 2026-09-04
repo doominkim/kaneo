@@ -580,6 +580,103 @@ describe("API integration: agent terms", () => {
       expect(limited.terms[0]?.canonical).toBe("Alpha");
     });
 
+    it("filters by domainId, by the `none` sentinel, and combines with confidence", async () => {
+      const member = await createWorkspaceMember();
+      const ws = member.workspace.id;
+      const [billing] = await db
+        .insert(agentDomainTable)
+        .values({ workspaceId: ws, slug: "billing", title: "Billing" })
+        .returning();
+      const [ops] = await db
+        .insert(agentDomainTable)
+        .values({ workspaceId: ws, slug: "ops", title: "Ops" })
+        .returning();
+      await db.insert(agentTermTable).values([
+        { workspaceId: ws, canonical: "Filed", domainId: billing.id },
+        {
+          workspaceId: ws,
+          canonical: "FiledConfirmed",
+          domainId: billing.id,
+          confidence: "confirmed",
+        },
+        { workspaceId: ws, canonical: "Elsewhere", domainId: ops.id },
+        { workspaceId: ws, canonical: "Loose" },
+        {
+          workspaceId: ws,
+          canonical: "LooseConfirmed",
+          confidence: "confirmed",
+        },
+      ]);
+
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+      const list = async (query: string) => {
+        const response = await app.request(
+          `/api/agent-term/${ws}${query ? `?${query}` : ""}`,
+        );
+        expect(response.status, await response.clone().text()).toBe(200);
+        return ((await response.json()) as TermList).terms.map(
+          (term) => term.canonical,
+        );
+      };
+
+      await expect(list("")).resolves.toEqual([
+        "Elsewhere",
+        "Filed",
+        "FiledConfirmed",
+        "Loose",
+        "LooseConfirmed",
+      ]);
+      await expect(list(`domainId=${billing.id}`)).resolves.toEqual([
+        "Filed",
+        "FiledConfirmed",
+      ]);
+      await expect(list("domainId=none")).resolves.toEqual([
+        "Loose",
+        "LooseConfirmed",
+      ]);
+      // Empty is unspecified, the same as omitting it.
+      await expect(list("domainId=")).resolves.toEqual([
+        "Elsewhere",
+        "Filed",
+        "FiledConfirmed",
+        "Loose",
+        "LooseConfirmed",
+      ]);
+      await expect(
+        list(`domainId=${billing.id}&confidence=confirmed`),
+      ).resolves.toEqual(["FiledConfirmed"]);
+      await expect(list("domainId=none&confidence=proposed")).resolves.toEqual([
+        "Loose",
+      ]);
+    });
+
+    it("rejects a domainId that is unknown or from another workspace", async () => {
+      const member = await createWorkspaceMember();
+      const other = await createWorkspaceMember({ userName: "Other" });
+      const [foreign] = await db
+        .insert(agentDomainTable)
+        .values({
+          workspaceId: other.workspace.id,
+          slug: "foreign",
+          title: "Foreign",
+        })
+        .returning();
+
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+
+      for (const domainId of [foreign.id, "no-such-page"]) {
+        const response = await app.request(
+          `/api/agent-term/${member.workspace.id}?domainId=${domainId}`,
+        );
+        expect(response.status).toBe(400);
+        await expect(response.text()).resolves.toBe(
+          "domainId does not belong to this workspace",
+        );
+      }
+    });
+
     it("rejects an unknown confidence filter", async () => {
       const member = await createWorkspaceMember();
 

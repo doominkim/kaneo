@@ -121,5 +121,9 @@ Version-carrying files are listed in `scripts/release/apply-version.mjs`. Add ne
 - **role**: a workspace-scoped set of permission statements.
 - **activity**: durable, user-visible history.
 - **event**: an internal notification used by activity, integrations, notifications, or realtime updates.
+- **knowledge item**: one named, reviewed fact in the Agent Layer — a canonical name plus definition, aliases, do-not-confuse list, and DB or code anchors. Agents may propose one; only a human confirms it, and agents read confirmed items only. Named rules and mappings qualify, not only single words.
+- **domain page**: workspace-scoped prose about a part of the business. Unnamed and unreviewed, so it is readable immediately and always carries its last author and update time, unlike a knowledge item.
+
+A knowledge item is stored in the `agent_term` table and served by `/api/agent-term` and the `agent_term_*` MCP tools. Those identifiers deliberately keep the older `term` name: connected agent harnesses bind to the tool names, so renaming them breaks every client at deploy time. Domain language and storage names are allowed to differ here; do not "fix" one to match the other.
 
 Update this guide only for recurring, observed failure modes. Put narrow workflows in skills or dedicated documentation.

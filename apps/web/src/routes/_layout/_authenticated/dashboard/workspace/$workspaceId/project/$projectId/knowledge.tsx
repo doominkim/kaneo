@@ -26,7 +26,7 @@ function RouteComponent() {
   const { projectId, workspaceId } = Route.useParams();
   const { data: project } = useGetProject({ id: projectId, workspaceId });
   const { taskNumberById } = useAgentTaskIndex(projectId);
-  const { canUpdateWorkspace, canUpdateTasks } = useWorkspacePermission();
+  const { canUpdateTasks } = useWorkspacePermission();
   const [proposeOpen, setProposeOpen] = useState(false);
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
 
@@ -65,9 +65,21 @@ function RouteComponent() {
               ) : null}
             </div>
             <TermResolve workspaceId={workspaceId} />
+            {/*
+              Read-only on purpose (KAN-16): review moved to the domain page
+              each item is filed under, where the reviewer has the context the
+              decision needs. This tab shows what agents can actually read.
+            */}
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="review-elsewhere"
+            >
+              {t("agentLayer:knowledge.reviewElsewhere")}
+            </p>
             <TermList
               workspaceId={workspaceId}
-              canReview={canUpdateWorkspace()}
+              canReview={false}
+              confirmedOnly
             />
           </section>
 

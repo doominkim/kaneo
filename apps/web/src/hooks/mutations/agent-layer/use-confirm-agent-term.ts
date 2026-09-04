@@ -15,6 +15,11 @@ export function useConfirmAgentTerm() {
       queryClient.invalidateQueries({
         queryKey: ["agent-term-resolve", variables.workspaceId],
       });
+      // A review empties one slot of the sidebar's pending count and of the
+      // page aggregates, both of which hang off the domain listing.
+      queryClient.invalidateQueries({
+        queryKey: ["agent-domain", variables.workspaceId],
+      });
     },
   });
 }

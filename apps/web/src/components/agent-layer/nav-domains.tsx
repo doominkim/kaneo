@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { ChevronRight, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -42,6 +42,9 @@ export function NavDomains() {
   const navigate = useNavigate();
   const { workspaceId: routeWorkspaceId, domainId: currentDomainId } =
     useParams({ strict: false });
+  // The unfiled screen has no `domainId` to match on, so its active state is
+  // read off the path instead.
+  const { pathname } = useLocation();
   // `undefined` is closed; `null` creates a root page.
   const [createParent, setCreateParent] = useState<CreateTarget | undefined>(
     undefined,
@@ -76,6 +79,9 @@ export function NavDomains() {
       to: "/dashboard/workspace/$workspaceId/domain/$domainId",
       params: { workspaceId: workspace.id, domainId },
     });
+
+  const unfiledPath = `/dashboard/workspace/${workspace.id}/domain/unfiled`;
+  const unfiledPending = domains.data?.unfiled.proposedCount ?? 0;
 
   return (
     <>
@@ -127,6 +133,31 @@ export function NavDomains() {
                     addChildLabel={t("agentLayer:domain.addChild")}
                   />
                 ))}
+                {/*
+                  Not a page — a fixed destination for the knowledge nobody
+                  filed yet. It sits last because it is the leftovers of the
+                  tree above it, and it stays visible at zero so filing has a
+                  place to be checked rather than only announcing itself when
+                  the queue is already full.
+                */}
+                <SidebarMenuItem data-testid="domain-unfiled">
+                  <SidebarMenuButton
+                    isActive={pathname === unfiledPath}
+                    size="default"
+                    className="h-8 pe-7 pl-[1.625rem] text-sm hover:bg-transparent hover:text-sidebar-accent-foreground active:bg-transparent"
+                    onClick={() =>
+                      navigate({
+                        to: "/dashboard/workspace/$workspaceId/domain/unfiled",
+                        params: { workspaceId: workspace.id },
+                      })
+                    }
+                  >
+                    <span className="truncate text-sidebar-foreground/70">
+                      {t("agentLayer:domain.unfiled")}
+                    </span>
+                    <PendingCount value={unfiledPending} />
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
           </CollapsiblePanel>
@@ -146,6 +177,40 @@ export function NavDomains() {
         }}
       />
     </>
+  );
+}
+
+/**
+ * How many items on this page are still waiting on a person. Disputed items
+ * are deliberately absent: a dispute is a finished review, and counting it
+ * here would leave a number nobody can ever work down to zero.
+ *
+ * `rolledUp` marks the number as a subtree total, which reads differently to a
+ * screen reader: the count is not what this page holds but what the branch
+ * holds, and the rows carrying the rest of it are not on screen.
+ */
+function PendingCount({
+  value,
+  rolledUp = false,
+}: {
+  value: number;
+  rolledUp?: boolean;
+}) {
+  const { t } = useTranslation();
+  if (value <= 0) return null;
+  const label = rolledUp
+    ? t("agentLayer:domain.pendingReviewSubtree", { count: value })
+    : t("agentLayer:domain.pendingReview", { count: value });
+  return (
+    <span
+      className="ml-auto shrink-0 rounded-md bg-sidebar-accent px-1.5 text-xs font-medium tabular-nums text-sidebar-accent-foreground"
+      title={label}
+      data-testid="domain-pending"
+    >
+      {/* A bare number next to a page title says nothing on its own. */}
+      <span className="sr-only">{label}</span>
+      <span aria-hidden="true">{value}</span>
+    </span>
   );
 }
 
@@ -176,6 +241,14 @@ function DomainNodeRows({
   }, [activeAncestors, node.id]);
   const hasChildren = node.children.length > 0;
   const isActive = node.id === activeId;
+  // Collapsed, the row stands in for everything under it, so it carries the
+  // branch total. Expanded, the children draw their own badges and a parent
+  // still holding the total would look like the same items counted twice.
+  const collapsed = hasChildren && !expanded;
+  const pending = collapsed ? node.subtreeProposedCount : node.proposedCount;
+  // Equal totals need no separate wording: nothing is hidden below.
+  const rolledUp =
+    collapsed && node.subtreeProposedCount !== node.proposedCount;
 
   return (
     <>
@@ -192,6 +265,7 @@ function DomainNodeRows({
           onClick={() => onOpen(node.id)}
         >
           <span className="truncate">{node.title}</span>
+          <PendingCount value={pending} rolledUp={rolledUp} />
         </SidebarMenuButton>
         {/* A sibling, not a child, of the row button: nested buttons are
             invalid DOM and React warns on every row. */}

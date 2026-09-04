@@ -48,10 +48,26 @@ type TermListProps = {
   workspaceId: string;
   /** workspace:update — the only path from proposed to confirmed. */
   canReview: boolean;
+  /**
+   * Scopes the list to one domain page; `"none"` is the unfiled bucket.
+   * Omitted, the list is the whole workspace.
+   */
+  domainId?: string;
+  /**
+   * Read-only view of what agents can actually read. Pins the query to
+   * `confirmed` and drops the filters and the review controls, so the surface
+   * showing it cannot be mistaken for the review queue.
+   */
+  confirmedOnly?: boolean;
 };
 
-/** Glossary section of the knowledge tab: filters, rows, human review. */
-export function TermList({ workspaceId, canReview }: TermListProps) {
+/** Knowledge list: filters, rows, human review. */
+export function TermList({
+  workspaceId,
+  canReview,
+  domainId,
+  confirmedOnly = false,
+}: TermListProps) {
   const { t } = useTranslation();
   const [confidence, setConfidence] = useState<AgentTermConfidence | undefined>(
     undefined,
@@ -61,7 +77,17 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
   const [rejectReason, setRejectReason] = useState("");
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AgentTerm | null>(null);
-  const query = useAgentTerms(workspaceId, confidence, state);
+  // The read-only view overrides the permission rather than trusting its
+  // caller to pass `canReview={false}` as well: one prop, one meaning.
+  const reviewable = canReview && !confirmedOnly;
+  // The filter state above is left mounted but unread here — nothing can set
+  // it while the chips are hidden, and branching it out would fork the row
+  // rendering too.
+  const query = useAgentTerms(workspaceId, {
+    confidence: confirmedOnly ? "confirmed" : confidence,
+    state: confirmedOnly ? undefined : state,
+    domainId,
+  });
   const review = useConfirmAgentTerm();
   const remove = useDeleteAgentTerm();
   const domains = useAgentDomains(workspaceId);
@@ -168,24 +194,26 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
 
   return (
     <div className="space-y-3" data-testid="term-list">
-      <div className="flex flex-wrap items-center gap-2">
-        <FilterGroup
-          label={t("agentLayer:knowledge.filterConfidence")}
-          value={confidence}
-          options={CONFIDENCES}
-          labelOf={(option) => t(`agentLayer:confidence.${option}`)}
-          onChange={setConfidence}
-          testId="confidence-filter"
-        />
-        <FilterGroup
-          label={t("agentLayer:knowledge.filterState")}
-          value={state}
-          options={STATES}
-          labelOf={(option) => t(`agentLayer:state.${option}`)}
-          onChange={setState}
-          testId="state-filter"
-        />
-      </div>
+      {confirmedOnly ? null : (
+        <div className="flex flex-wrap items-center gap-2">
+          <FilterGroup
+            label={t("agentLayer:knowledge.filterConfidence")}
+            value={confidence}
+            options={CONFIDENCES}
+            labelOf={(option) => t(`agentLayer:confidence.${option}`)}
+            onChange={setConfidence}
+            testId="confidence-filter"
+          />
+          <FilterGroup
+            label={t("agentLayer:knowledge.filterState")}
+            value={state}
+            options={STATES}
+            labelOf={(option) => t(`agentLayer:state.${option}`)}
+            onChange={setState}
+            testId="state-filter"
+          />
+        </div>
+      )}
 
       {query.isPending ? (
         <AgentLayerSkeleton rows={4} />
@@ -205,13 +233,13 @@ export function TermList({ workspaceId, canReview }: TermListProps) {
             <TermRow
               key={term.id}
               term={term}
-              canReview={canReview}
+              canReview={reviewable}
               onReview={openReview}
-              canDelete={canReview}
+              canDelete={reviewable}
               onDelete={setPendingDelete}
               workspaceId={workspaceId}
               domainNodes={domains.data?.domains}
-              canSetDomain={canReview}
+              canSetDomain={reviewable}
               onSetDomain={handleSetDomain}
             />
           ))}

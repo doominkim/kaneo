@@ -28,7 +28,18 @@ type DomainNode = {
   position: number;
   updatedAt: string;
   childCount: number;
+  proposedCount: number;
+  confirmedCount: number;
+  disputedCount: number;
 };
+
+type KnowledgeCounts = {
+  proposedCount: number;
+  confirmedCount: number;
+  disputedCount: number;
+};
+
+type DomainTree = { domains: DomainNode[]; unfiled: KnowledgeCounts };
 
 type Domain = {
   id: string;
@@ -155,7 +166,10 @@ describe("API integration: agent domain pages", () => {
     mockAuthenticatedSession(member.user);
     const { app } = createApp();
 
-    expect(await (await tree(app, ws)).json()).toEqual({ domains: [] });
+    expect(await (await tree(app, ws)).json()).toEqual({
+      domains: [],
+      unfiled: { proposedCount: 0, confirmedCount: 0, disputedCount: 0 },
+    });
 
     const billing = await created(app, ws, {
       slug: "billing",
@@ -192,9 +206,7 @@ describe("API integration: agent domain pages", () => {
     });
     expect(invoices.position).toBe(1);
 
-    const { domains } = (await (await tree(app, ws)).json()) as {
-      domains: DomainNode[];
-    };
+    const { domains } = (await (await tree(app, ws)).json()) as DomainTree;
     // Roots first (by position), then children grouped by parent.
     expect(domains.map((d) => [d.slug, d.parentId, d.childCount])).toEqual([
       ["billing", null, 2],
@@ -203,6 +215,77 @@ describe("API integration: agent domain pages", () => {
       ["invoices", billing.id, 0],
     ]);
     expect(domains[0]).not.toHaveProperty("body");
+  });
+
+  it("counts the knowledge filed under each page by review outcome, and the workspace's unfiled items", async () => {
+    const member = await createWorkspaceMember();
+    const other = await createWorkspaceMember({ userName: "Other" });
+    const ws = member.workspace.id;
+    const billing = await seedDomain(ws, "billing");
+    const refunds = await seedDomain(ws, "refunds", { parentId: billing.id });
+    await seedDomain(ws, "ops");
+
+    const seedTerm = (
+      canonical: string,
+      confidence: string,
+      domainId: string | null,
+      workspaceId = ws,
+    ) =>
+      db
+        .insert(agentTermTable)
+        .values({ workspaceId, canonical, confidence, domainId });
+
+    await seedTerm("B1", "proposed", billing.id);
+    await seedTerm("B2", "proposed", billing.id);
+    await seedTerm("B3", "confirmed", billing.id);
+    await seedTerm("B4", "disputed", billing.id);
+    // A child page's items are its own; the parent does not roll them up.
+    await seedTerm("R1", "confirmed", refunds.id);
+    await seedTerm("U1", "proposed", null);
+    await seedTerm("U2", "confirmed", null);
+    await seedTerm("U3", "confirmed", null);
+    // Another workspace's items must not leak into either bucket.
+    const foreign = await seedDomain(other.workspace.id, "foreign");
+    await seedTerm("F1", "confirmed", foreign.id, other.workspace.id);
+    await seedTerm("F2", "proposed", null, other.workspace.id);
+
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    const payload = (await (await tree(app, ws)).json()) as DomainTree;
+    expect(
+      payload.domains.map((d) => [
+        d.slug,
+        d.proposedCount,
+        d.confirmedCount,
+        d.disputedCount,
+      ]),
+    ).toEqual([
+      ["billing", 2, 1, 1],
+      ["ops", 0, 0, 0],
+      ["refunds", 0, 1, 0],
+    ]);
+    expect(payload.unfiled).toEqual({
+      proposedCount: 1,
+      confirmedCount: 2,
+      disputedCount: 0,
+    });
+  });
+
+  it("reports the unfiled counts even when the workspace has no pages at all", async () => {
+    const member = await createWorkspaceMember();
+    const ws = member.workspace.id;
+    await db
+      .insert(agentTermTable)
+      .values({ workspaceId: ws, canonical: "Loose", confidence: "disputed" });
+
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    expect(await (await tree(app, ws)).json()).toEqual({
+      domains: [],
+      unfiled: { proposedCount: 0, confirmedCount: 0, disputedCount: 1 },
+    });
   });
 
   it("rejects a parent outside the workspace and a duplicate slug at the same level, but allows it elsewhere", async () => {

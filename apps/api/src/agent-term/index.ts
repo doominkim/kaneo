@@ -53,11 +53,12 @@ const listRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "List lexicon terms",
   description:
-    "Workspace vocabulary, alphabetical. Filter by state or confidence to drive the review queue.",
+    "Workspace vocabulary, alphabetical. Filter by state or confidence to drive the review queue, and by `domainId` to read one domain page's knowledge; `domainId=none` returns the unfiled terms that belong to no page. The filters combine.",
   middleware: [workspaceAccess.fromParam("workspaceId")] as const,
   request: { params: workspaceIdParam, query: listTermsQuery },
   responses: {
     200: jsonResponse("Terms", termListSchema),
+    400: errorResponse("domainId outside the workspace"),
     403: errorResponse("No access to the workspace"),
   },
 });

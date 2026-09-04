@@ -19,6 +19,10 @@ export function useDeleteAgentTerm() {
       queryClient.invalidateQueries({
         queryKey: ["agent-term-resolve", variables.workspaceId],
       });
+      // The counts the sidebar and the domain pages show include this term.
+      queryClient.invalidateQueries({
+        queryKey: ["agent-domain", variables.workspaceId],
+      });
     },
   });
 }

@@ -2,6 +2,17 @@ import { actorResponseSchema } from "../agent-entry/actor-response";
 import { responseTimestamp, z } from "../openapi";
 
 /**
+ * Knowledge items filed under a page, counted per review outcome. The sidebar
+ * draws a review badge from these, so they ride along with the tree rather
+ * than costing a second call per page.
+ */
+const knowledgeCounts = {
+  proposedCount: z.number().int(),
+  confirmedCount: z.number().int(),
+  disputedCount: z.number().int(),
+};
+
+/**
  * Tree row — the flat listing the sidebar builds its tree from. No body: a
  * workspace can hold hundreds of pages and the listing must stay cheap.
  */
@@ -14,14 +25,23 @@ export const domainNodeSchema = z
     position: z.number().int(),
     updatedAt: responseTimestamp,
     childCount: z.number().int(),
+    ...knowledgeCounts,
   })
   .openapi("AgentDomainNode");
+
+const unfiledCountsSchema = z
+  .object(knowledgeCounts)
+  .openapi("AgentDomainUnfiledCounts");
 
 export const domainListSchema = z
   .object({
     domains: z.array(domainNodeSchema).openapi({
       description:
-        "Every page in the workspace, ordered by (parentId, position, title). Root pages come first (parentId null). The client builds the tree.",
+        "Every page in the workspace, ordered by (parentId, position, title). Root pages come first (parentId null). The client builds the tree. Each row counts the knowledge items filed under that page by review outcome — direct children only, not the subtree.",
+    }),
+    unfiled: unfiledCountsSchema.openapi({
+      description:
+        "The same counts for the workspace's unfiled knowledge items (`domainId` null), which belong to no page. Present even when the workspace has no pages, so the sidebar can always draw its unfiled entry.",
     }),
   })
   .openapi("AgentDomainList");

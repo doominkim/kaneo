@@ -41,6 +41,9 @@ const domainOptions: AgentDomainNode[] = [
     position: 0,
     updatedAt: "2026-09-03T00:00:00.000Z",
     childCount: 1,
+    proposedCount: 0,
+    confirmedCount: 0,
+    disputedCount: 0,
   },
   {
     id: "d-pharmacist",
@@ -50,6 +53,9 @@ const domainOptions: AgentDomainNode[] = [
     position: 0,
     updatedAt: "2026-09-03T00:00:00.000Z",
     childCount: 0,
+    proposedCount: 0,
+    confirmedCount: 0,
+    disputedCount: 0,
   },
 ];
 

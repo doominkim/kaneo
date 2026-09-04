@@ -1,18 +1,19 @@
 import { useQuery } from "@tanstack/react-query";
-import getAgentTerms, {
-  type AgentTermConfidence,
-  type AgentTermState,
-} from "@/fetchers/agent-layer/get-agent-terms";
-import { agentLayerKeys } from "./keys";
+import getAgentTerms from "@/fetchers/agent-layer/get-agent-terms";
+import { type AgentTermFilters, agentLayerKeys } from "./keys";
 
 export function useAgentTerms(
   workspaceId: string,
-  confidence?: AgentTermConfidence,
-  state?: AgentTermState,
+  filters: AgentTermFilters = {},
 ) {
+  const { confidence, state, domainId } = filters;
   return useQuery({
-    queryKey: agentLayerKeys.terms(workspaceId, confidence, state),
-    queryFn: () => getAgentTerms({ workspaceId, confidence, state }),
+    queryKey: agentLayerKeys.terms(workspaceId, {
+      confidence,
+      state,
+      domainId,
+    }),
+    queryFn: () => getAgentTerms({ workspaceId, confidence, state, domainId }),
     enabled: Boolean(workspaceId),
   });
 }

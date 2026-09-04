@@ -30,8 +30,12 @@ Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-pr
 | task 관리 | Kaneo 기본 기능 사용 |
 | AI 면 / 사람 면 분리 | `agent_entry`(AI)와 `comment`(사람) |
 | 코어 코드 변경 표시 | `agent_entry.core_changed` 필드만 있음; 렌더링 미구현 |
-| 용어사전 자산화 | `agent_term` + resolve |
+| 지식 항목 자산화 | `agent_term` + resolve |
 | MCP 조회 + 점유 | MCP 8개 도구 + `agent_lease` |
+
+**어휘 (2026-09-04, KAN-16).** 사람 면과 문서에서는 `agent_term`에 저장되는 것을 "용어"가 아니라 **지식 항목**이라 부른다. 이름 붙은 검수된 사실 한 건(정의·별칭·혼동 금지 목록·DB/코드 앵커)이며, 사람이 확정하기 전까지 에이전트가 읽지 못한다. 이름 없는 서술은 지식 항목이 아니라 도메인 페이지 본문이고, 그쪽은 검수 없이 바로 읽히되 작성자·갱신 시각이 함께 나온다. 검수(확정·이의)는 지식 탭이 아니라 **도메인 페이지**에서 하고, 지식 탭은 확정된 항목만 보여주는 읽기 전용이다.
+
+식별자는 바꾸지 않는다 — DB `agent_term`, API `/api/agent-term`, MCP `agent_term_resolve`·`agent_term_propose`는 그대로다. Claude·Codex 두 하네스가 그 툴 이름으로 붙어 있어 바꾸면 배포 순간 양쪽이 깨진다. 도메인 언어와 저장소 이름을 분리한 의도된 처리다. 아래 이력에 나오는 "용어사전"은 그 시점의 호칭이므로 소급해 고치지 않는다.
 
 주요 Agent Layer 커밋은 아래와 같다.
 

@@ -14,6 +14,7 @@ function node(
   parentId: string | null,
   title = id,
   position = 0,
+  proposedCount = 0,
 ): AgentDomainNode {
   return {
     id,
@@ -23,6 +24,9 @@ function node(
     position,
     updatedAt: "2026-09-03T00:00:00.000Z",
     childCount: 0,
+    proposedCount,
+    confirmedCount: 0,
+    disputedCount: 0,
   };
 }
 
@@ -51,6 +55,36 @@ describe("buildDomainTree", () => {
   it("lifts an orphan to the root instead of dropping it", () => {
     const roots = buildDomainTree([node("x", "missing")]);
     expect(roots.map((r) => r.id)).toEqual(["x"]);
+  });
+
+  it("rolls the pending count up the branch without touching the direct one", () => {
+    const roots = buildDomainTree([
+      node("pharmacy", null, "약국", 0, 3),
+      node("pharmacist", "pharmacy", "약사", 0, 2),
+      node("inbound", "pharmacy", "입고내역", 0, 1),
+      node("lot", "inbound", "로트", 0, 4),
+      node("billing", null, "청구", 0, 0),
+    ]);
+    const [pharmacy, billing] = roots;
+    expect(pharmacy).toMatchObject({
+      proposedCount: 3,
+      subtreeProposedCount: 10,
+    });
+    // A grandchild reaches the root, and the middle node carries its own.
+    expect(pharmacy.children[1]).toMatchObject({
+      id: "inbound",
+      proposedCount: 1,
+      subtreeProposedCount: 5,
+    });
+    // A leaf's rollup is just itself.
+    expect(pharmacy.children[1].children[0]).toMatchObject({
+      id: "lot",
+      subtreeProposedCount: 4,
+    });
+    expect(billing).toMatchObject({
+      proposedCount: 0,
+      subtreeProposedCount: 0,
+    });
   });
 
   it("flattens depth-first", () => {
