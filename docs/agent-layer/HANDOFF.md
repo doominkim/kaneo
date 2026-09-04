@@ -11,8 +11,8 @@ Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-pr
 | 대상 | 확정 상태 | 근거 |
 |---|---|---|
 | Kaneo 코드 | `agent-layer`의 `d78844ef` push 완료 | `git` 원격 브랜치 확인 |
-| 이미지 | `ghcr.io/doominkim/kaneo:2.22.0-agent.17` 빌드 성공 | [GitHub Actions run 33839189380](https://github.com/doominkim/kaneo/actions/runs/33839189380) |
-| GitOps manifest | platform `main`의 `d94a9b2` | 이미지 태그 `agent.17`, `DISABLE_REGISTRATION`/`DISABLE_GUEST_ACCESS`=`"true"`, SealedSecret과 공개 S3 환경값 포함 |
+| 이미지 | `ghcr.io/doominkim/kaneo:2.22.0-agent.18` 빌드 성공 | [GitHub Actions run 33845907013](https://github.com/doominkim/kaneo/actions/runs/33845907013) |
+| GitOps manifest | platform `main`의 `f78dc0b` | 이미지 태그 `agent.18`, `DISABLE_REGISTRATION`/`DISABLE_GUEST_ACCESS`=`"true"`, SealedSecret과 공개 S3 환경값 포함 |
 | TLS vhost | sandbox `main`의 `5dc74e2` | `files.kit.io.kr` 전용 nginx vhost |
 | Argo / Pod | `kaneo-prod` Synced, Healthy, image `agent.16`, agent-layer 마이그레이션 0000~0007 적용, `/api/config` `disableRegistration:true`·`hasGuestAccess:false` | 운영 실측 (2026-09-03 13:05 UTC) |
 | MinIO HTTPS | `https://files.kit.io.kr/minio/health/live` 200 | SAN=`files.kit.io.kr`, 만료 `2026-12-01` |
@@ -199,7 +199,7 @@ fika.ing(Mac Studio, macOS 15.6.1, k3s·PostgreSQL 17·MinIO·Redis 호스트)�
 
 ## 오래된 정보 폐기
 
-- `2.22.0-agent.2`~`agent.16`은 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.17`다.
+- `2.22.0-agent.2`~`agent.17`은 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.18`다.
 - `apps/kaneo/prod.yaml`은 미커밋/빈 `sealedEnv` 상태가 아니다. `eb024ce`가 운영에 반영되었다.
 - TLS 발급/배포는 pending이 아니다. `files.kit.io.kr`은 정상 HTTPS다.
 - 운영 DB/auth/S3 secret은 Bitwarden과 SealedSecret으로 이미 주입되어 있다. 값을 문서나 명령 출력에 적지 않는다.
