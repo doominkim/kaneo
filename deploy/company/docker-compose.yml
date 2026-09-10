@@ -46,7 +46,9 @@ services:
       #      192.168.9.121(test-web01) 만 8892 로 허용한다.
       #   2) loopback 유지 + olap-server 에 nginx 를 두어 LAN:8892 → 127.0.0.1:8892
       #      로 넘긴다 (vanpharm-mcp.conf 와 같은 구조).
-      - "${KANEO_BIND_ADDR:-127.0.0.1}:${KANEO_HOST_PORT:-8892}:5173"
+      # 결정(2026-09-10): loopback 유지 + olap-server 로컬 nginx 가 LAN:8892 → 127.0.0.1:8893
+      # (nginx/olap-server-kaneo.conf). 서버의 .env 에 KANEO_HOST_PORT=8893 을 둔다.
+      - "${KANEO_BIND_ADDR:-127.0.0.1}:${KANEO_HOST_PORT:-8893}:5173"
     env_file:
       - kaneo.env
     depends_on:
