@@ -45,7 +45,7 @@ import deleteAccountData from "./user/controllers/delete-account-data";
 import { acceptPendingInvitationsForUser } from "./utils/accept-pending-invitations";
 import {
   autoJoinConfiguredWorkspace,
-  isCustomOAuthCallbackPath,
+  isCustomOAuthCallback,
 } from "./utils/auto-join-workspace";
 import { checkRegistrationAllowed } from "./utils/check-registration-allowed";
 import { checkWorkspaceName } from "./utils/check-workspace-name";
@@ -719,7 +719,7 @@ export const auth = betterAuth({
             // grants membership with no invitation to match, so it must not
             // fire for the built-in social providers, whose callbacks also
             // satisfy `isOAuthCallbackPath`.
-            if (isCustomOAuthCallbackPath(ctx?.path)) {
+            if (isCustomOAuthCallback(ctx)) {
               try {
                 await autoJoinConfiguredWorkspace({ id: user.id });
               } catch (error) {

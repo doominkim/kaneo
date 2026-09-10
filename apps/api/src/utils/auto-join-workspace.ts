@@ -16,13 +16,38 @@ import db, { schema } from "../database";
  */
 export const CUSTOM_OAUTH_CALLBACK_PATH = "/oauth2/callback/custom";
 
+export const CUSTOM_OAUTH_CALLBACK_ROUTE = "/oauth2/callback/:providerId";
+export const CUSTOM_OAUTH_PROVIDER_ID = "custom";
+
 export function isCustomOAuthCallbackPath(path: unknown): boolean {
   if (typeof path !== "string") return false;
-  // better-auth hands the hook the routed path, but the OAuth callback always
-  // carries `?code=...&state=...`, so tolerate a query/fragment suffix rather
-  // than silently failing closed if that ever changes.
+  // Tolerate a `?code=...&state=...` suffix rather than silently failing closed.
   const [withoutQuery] = path.split(/[?#]/);
   return withoutQuery === CUSTOM_OAUTH_CALLBACK_PATH;
+}
+
+/**
+ * What `databaseHooks` actually receive. better-auth passes the endpoint's
+ * *route template* as `ctx.path` (`/oauth2/callback/:providerId`, compare the
+ * username plugin's `ctx.path === "/sign-up/email"`), with the provider in
+ * `ctx.params.providerId`. Verified in production on 2026-09-10: matching the
+ * resolved path alone never fired. Accept either shape.
+ */
+export function isCustomOAuthCallback(ctx: unknown): boolean {
+  if (!ctx || typeof ctx !== "object") return false;
+  const { path, params } = ctx as {
+    path?: unknown;
+    params?: unknown;
+  };
+  if (isCustomOAuthCallbackPath(path)) return true;
+  if (typeof path !== "string") return false;
+  const [withoutQuery] = path.split(/[?#]/);
+  if (withoutQuery !== CUSTOM_OAUTH_CALLBACK_ROUTE) return false;
+  const providerId =
+    params && typeof params === "object"
+      ? (params as { providerId?: unknown }).providerId
+      : undefined;
+  return providerId === CUSTOM_OAUTH_PROVIDER_ID;
 }
 
 export const DEFAULT_AUTO_JOIN_ROLE = "member";

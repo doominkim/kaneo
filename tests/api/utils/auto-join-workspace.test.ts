@@ -3,6 +3,7 @@ import {
   CUSTOM_OAUTH_CALLBACK_PATH,
   DEFAULT_AUTO_JOIN_ROLE,
   getAutoJoinWorkspaceConfig,
+  isCustomOAuthCallback,
   isCustomOAuthCallbackPath,
 } from "../../../apps/api/src/utils/auto-join-workspace";
 
@@ -111,5 +112,36 @@ describe("getAutoJoinWorkspaceConfig", () => {
       role: DEFAULT_AUTO_JOIN_ROLE,
     });
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+describe("isCustomOAuthCallback", () => {
+  it("matches the route template with providerId=custom in params", () => {
+    expect(
+      isCustomOAuthCallback({
+        path: "/oauth2/callback/:providerId",
+        params: { providerId: "custom" },
+      }),
+    ).toBe(true);
+  });
+
+  it("matches a resolved path regardless of params", () => {
+    expect(isCustomOAuthCallback({ path: "/oauth2/callback/custom" })).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    { path: "/oauth2/callback/:providerId", params: { providerId: "okta" } },
+    { path: "/oauth2/callback/:providerId", params: {} },
+    { path: "/oauth2/callback/:providerId" },
+    { path: "/callback/:id", params: { providerId: "custom" } },
+    { path: "/sign-up/email", params: { providerId: "custom" } },
+    {},
+    null,
+    undefined,
+    "/oauth2/callback/custom",
+  ])("does not match %j", (ctx) => {
+    expect(isCustomOAuthCallback(ctx)).toBe(false);
   });
 });
