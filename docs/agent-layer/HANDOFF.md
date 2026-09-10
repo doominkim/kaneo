@@ -21,7 +21,7 @@ Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-pr
 
 ## Agent Layer 목표와 구현 범위
 
-여러 모델·세션이 같은 프로젝트를 진행할 때 맥락이 흩어지는 문제를 Kaneo tracking fork 위의 **작업 원장 레이어**로 해결한다. 최종 목표는 Linear 완전 대체다.
+여러 모델·세션이 같은 프로젝트를 진행할 때 맥락이 흩어지는 문제를 Kaneo tracking fork 위의 **작업 타임라인 레이어**로 해결한다. 최종 목표는 Linear 완전 대체다.
 
 | 요구 | 구현 상태 |
 |---|---|
@@ -44,8 +44,8 @@ Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-pr
 c8f9fd22  feat(agent-layer): 에이전트 전용 MCP 툴셋 8개 추가
 6d1cff67  feat(agent-layer): 태스크 점유(lease) API 모듈 추가
 bf4d641b  feat(agent-layer): 용어사전 API 모듈 추가
-61024737  feat(agent-layer): 원장 API 모듈 추가
-fb6f64b7  feat(agent-layer): 작업 원장 스키마 4테이블과 분리 마이그레이션 파이프라인
+61024737  feat(agent-layer): 타임라인 기록 API 모듈 추가
+fb6f64b7  feat(agent-layer): 작업 타임라인 스키마 4테이블과 분리 마이그레이션 파이프라인
 ```
 
 Agent Layer 신규 영역은 `apps/api/src/agent-entry/`, `agent-term/`, `agent-lease/`, `mcp/agent-tools.ts`, `database/schema-agent-layer.ts`, `drizzle-agent/`다. `apps/api/src/index.ts`, `apps/api/src/mcp/modern.ts`, `.github/workflows/build-images.yml`만 수정했다는 설명은 **초기 Agent Layer 통합 기준**이며, 이후 attachment storage/task 변경까지 배제한다는 뜻이 아니다.
@@ -114,7 +114,7 @@ MinIO에는 `kaneo-uploads` 전용 bucket, `kaneo-prod` 전용 사용자/버킷 
 2. (완료) 로컬 integration DB, Agent Layer integration 테스트, 결함 4건 수정. **재배포 전제**: 아래 "운영 호스트 침해" 대응이 끝나야 한다.
 3. OAuth MCP 클라이언트로 운영 `/api/mcp`의 `tools/list`와 read-only 도구부터 호출해 응답 byte/token 수를 기록한다. MCP 8개에는 append/propose/acquire/release mutation이 있으므로, mutation 전에는 전용 테스트 workspace/task, append-only 영구 데이터 허용 범위, 사용자 승인, lease 해제 기준을 먼저 정한다. 승인 전에는 mutation을 호출하지 않는다.
 4. 잔여 작업의 정본은 Kaneo project `kaneo`(KAN) 부모 task KAN-1 (`o2z5e9avzi7e1w8zzxa01c0u`)이다. KAN-4(인스턴스 잠금, `fika` 비공개 전환 포함)·KAN-7(whoami 정제·DCR 관용)·KAN-9(pg Pool `options: "-c timezone=UTC"`)는 `agent.16`으로 운영 반영되어 in-review다. **KAN-9 잔여**: 기존 행 백필은 `scripts/agent-layer/timezone-backfill.sql`(ROLLBACK 종료 초안, `:cutoff`=agent.16 배포 UTC 시각)로, pg_dump 후 사용자 승인 게이트. 리포트 실측: `agent_entry` 미래행 37/83, 순서 불가 2건. `DATABASE_URL`에 `options=` 쿼리를 넣으면 코드 핀이 덮어써지므로 금지. 남은 우선순위: INF-5 침해 대응 → KAN-3 MCP 크기 실측 → KAN-10 Linear 흡수 → KAN-6 MCP 업로드 실측(새 세션) → KAN-8 CORS.
-5. 증거는 Kaneo 원장(`agent_log_append`)에 남긴다. SAN-244는 더 이상 갱신하지 않는다.
+5. 증거는 Kaneo 타임라인 기록(`agent_log_append`)에 남긴다. SAN-244는 더 이상 갱신하지 않는다.
 
 ### 다음 명령 예시
 
@@ -153,13 +153,13 @@ DATABASE_URL="postgresql://dominic@localhost:5432/kaneo_test" pnpm --filter @kan
 
 DESIGN §6 개정(`f7f4cb0b`)에 따라 1a를 `agent.8`로 배포했다. API(`a5e8956d`): `agent_document` 테이블·`drizzle-agent/0001`(agent_entry에 effort/agent_label/usage nullable 추가), `/api/agent-document` CRUD, `/api/agent-project/{projectId}/tree`, entry `refs.repo/branch`, `agent_brief` 문서 목록(상한 20). web(`94f96bac`): 5탭 nav, 개요(핸드오프 콜아웃·상태 스트립·타임라인 트리), 메모, 문서, 지식 placeholder, i18n `agentLayer` 네임스페이스.
 
-2026-09-03 `agent.9`(`cf1912a0`, `2a5b9792`, `39fdbb87`): 사용자 피드백으로 탭을 개요·타임라인·태스크·지식·문서로 재구성(메모 탭 제거). 문서 탭은 산출물·파일 보관함(`agent_artifact`, presign→PUT→finalize, html/md/txt/json sandbox 뷰어, zip 다운로드), 타임라인은 세로 트리(task 펼치면 원장 entry), 개요에 사람이 쓰는 설명(`agent_document` slug `overview`). MCP 도구 5개 추가(`agent_doc_get/put`, `agent_artifact_put_text/presign/finalize`, 에이전트 attribution은 API 프로세스 내 직접 호출로만). 툴 개수 상한은 정의 크기 예산(개별 2560B·합계 12288B, 실측 9258B)으로 대체. **Claude Code는 MCP 도구 스키마를 세션 시작 시 캐시하므로 새 도구는 새 세션에서만 보인다.**
+2026-09-03 `agent.9`(`cf1912a0`, `2a5b9792`, `39fdbb87`): 사용자 피드백으로 탭을 개요·타임라인·태스크·지식·문서로 재구성(메모 탭 제거). 문서 탭은 산출물·파일 보관함(`agent_artifact`, presign→PUT→finalize, html/md/txt/json sandbox 뷰어, zip 다운로드), 타임라인은 세로 트리(task 펼치면 타임라인 기록 entry), 개요에 사람이 쓰는 설명(`agent_document` slug `overview`). MCP 도구 5개 추가(`agent_doc_get/put`, `agent_artifact_put_text/presign/finalize`, 에이전트 attribution은 API 프로세스 내 직접 호출로만). 툴 개수 상한은 정의 크기 예산(개별 2560B·합계 12288B, 실측 9258B)으로 대체. **Claude Code는 MCP 도구 스키마를 세션 시작 시 캐시하므로 새 도구는 새 세션에서만 보인다.**
 
 2026-09-03 `agent.10`(`6262a7d8`, `ac79a839`): 1b 완료 — `agent_project` 설정(`drizzle-agent/0003`, core_paths·활성 task 임계치·아카이브 일수, 설정 → 프로젝트 → 에이전트 레이어), `core_paths` 서버 판정(picomatch, `coreChanged` 입력 제거, `refs` 배열 상한), 지식 탭(용어사전 resolve/confirm/propose, 결정 목록), 임계치 배너, entry 요약 `repo/branch` 칩. 1c 중 스킬 갱신은 `~/.agents` `7fdcd38`(using-kaneo: handoff 4단락, refs.branch 필수, effort/label/usage, 문서·산출물 도구·curl 업로드 규칙).
 
-2026-09-03 `agent.11`(`7fcd2f3a`, `b114387d`): **DESIGN §2.3 면 분리 폐기(KAN-12)** — 원장은 사람·AI 공용 노트. `POST /api/agent-entry`는 provider/model이 둘 다 없으면 사람 entry(`created_by`, 0004), 응답에 `author {userId, name}`. 타임라인에 "기록 남기기"(task별·프로젝트), 작성자 표시(사람 이름 / 모델 배지). KAN-11(다른 세션): 문서·산출물·용어 응답과 트리 잎에 `actor` 블록, `agent_term.actor_id`(0005), MCP `agent_term_propose`는 provider/model 필수. 스킬 `~/.agents` `58f6243`. **동시 편집 주의**: 같은 작업트리에서 Codex 세션이 병행 작업할 수 있다. 커밋 전 `git status`로 남의 hunk를 확인하고, 마이그레이션 번호는 journal 순서를 따른다.
+2026-09-03 `agent.11`(`7fcd2f3a`, `b114387d`): **DESIGN §2.3 면 분리 폐기(KAN-12)** — 타임라인 기록은 사람·AI 공용 노트. `POST /api/agent-entry`는 provider/model이 둘 다 없으면 사람 entry(`created_by`, 0004), 응답에 `author {userId, name}`. 타임라인에 "기록 남기기"(task별·프로젝트), 작성자 표시(사람 이름 / 모델 배지). KAN-11(다른 세션): 문서·산출물·용어 응답과 트리 잎에 `actor` 블록, `agent_term.actor_id`(0005), MCP `agent_term_propose`는 provider/model 필수. 스킬 `~/.agents` `58f6243`. **동시 편집 주의**: 같은 작업트리에서 Codex 세션이 병행 작업할 수 있다. 커밋 전 `git status`로 남의 hunk를 확인하고, 마이그레이션 번호는 journal 순서를 따른다.
 
-KAN-6에 남은 것: 새 세션에서 MCP `agent_artifact_put_text` 운영 실측, SubagentStop usage 자동 기록 훅(설계·승인 필요), 30일 아카이브 cron(승인 게이트, `done_archive_days` 0=off 스위치 결정 필요), MCP 경로 viewer 403·교차 workspace integration 테스트, 설정 폼 Save 버튼 disabled 조건 정리. KAN-12 후속은 `agent.12`(`e9cf2351`)로 해결: `GET /api/agent-entry/{projectId}?taskId=none`과 타임라인 상단 "프로젝트 기록" 섹션. **KAN-13 `agent.13`(`831f502d`)**: 원장 entry 소프트 삭제(`deleted_at/deleted_by`, 0006; 작성자 본인 또는 project:update)·복구(project:update)·`includeDeleted` 게이트, 조회·brief·트리 집계에서 제외, 용어 하드 삭제(workspace:update, `agent.14`부터 confidence 무관·`supersededBy` 참조만 409). MCP에는 삭제 도구가 없다(에이전트는 정정 entry만). DESIGN §2.4는 "삭제 대신 숨김". **KAN-14 `agent.15`(`f5d87d54`, `00a92dfb`)**: 도메인 지식 — workspace 단위 `agent_domain` 페이지 트리(0007, 마크다운 본문 + 용어·프로젝트·문서 자동 집계), 사이드바 "도메인", `/api/agent-domain/{workspaceId}` 6 라우트, MCP `agent_domain_list/get/put`, `agent_brief.domains`. slug는 ASCII만이라 한글 제목은 `domain-xxxxxx`로 자동 대체. 스킬 `~/.agents` `84ef37d`.
+KAN-6에 남은 것: 새 세션에서 MCP `agent_artifact_put_text` 운영 실측, SubagentStop usage 자동 기록 훅(설계·승인 필요), 30일 아카이브 cron(승인 게이트, `done_archive_days` 0=off 스위치 결정 필요), MCP 경로 viewer 403·교차 workspace integration 테스트, 설정 폼 Save 버튼 disabled 조건 정리. KAN-12 후속은 `agent.12`(`e9cf2351`)로 해결: `GET /api/agent-entry/{projectId}?taskId=none`과 타임라인 상단 "프로젝트 기록" 섹션. **KAN-13 `agent.13`(`831f502d`)**: 타임라인 기록 entry 소프트 삭제(`deleted_at/deleted_by`, 0006; 작성자 본인 또는 project:update)·복구(project:update)·`includeDeleted` 게이트, 조회·brief·트리 집계에서 제외, 용어 하드 삭제(workspace:update, `agent.14`부터 confidence 무관·`supersededBy` 참조만 409). MCP에는 삭제 도구가 없다(에이전트는 정정 entry만). DESIGN §2.4는 "삭제 대신 숨김". **KAN-14 `agent.15`(`f5d87d54`, `00a92dfb`)**: 도메인 지식 — workspace 단위 `agent_domain` 페이지 트리(0007, 마크다운 본문 + 용어·프로젝트·문서 자동 집계), 사이드바 "도메인", `/api/agent-domain/{workspaceId}` 6 라우트, MCP `agent_domain_list/get/put`, `agent_brief.domains`. slug는 ASCII만이라 한글 제목은 `domain-xxxxxx`로 자동 대체. 스킬 `~/.agents` `84ef37d`.
 
 ## 운영 호스트 침해 (2026-09-02 발견)
 
