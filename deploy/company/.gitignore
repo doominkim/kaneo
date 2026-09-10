@@ -1,0 +1,2 @@
+# 실제 값이 든 env 는 커밋하지 않는다. 루트 .gitignore 의 `.env` 패턴은 이 이름을 잡지 못한다.
+kaneo.env

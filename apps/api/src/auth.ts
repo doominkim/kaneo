@@ -42,6 +42,11 @@ import { syncWorkspaceSeats } from "./billing/controllers/sync-seats";
 import db, { schema } from "./database";
 import { publishEvent } from "./events";
 import deleteAccountData from "./user/controllers/delete-account-data";
+import { acceptPendingInvitationsForUser } from "./utils/accept-pending-invitations";
+import {
+  autoJoinConfiguredWorkspace,
+  isCustomOAuthCallbackPath,
+} from "./utils/auto-join-workspace";
 import { checkRegistrationAllowed } from "./utils/check-registration-allowed";
 import { checkWorkspaceName } from "./utils/check-workspace-name";
 import { mapCustomOAuthProfileToUser } from "./utils/custom-oauth-profile";
@@ -614,7 +619,7 @@ export const auth = betterAuth({
             });
           }
         },
-        after: async (user) => {
+        after: async (user, ctx) => {
           // The anonymous() plugin creates ephemeral users for guest
           // access; never promote one to instance admin even if no
           // real admin exists yet. `isAnonymous` is contributed by the
@@ -661,6 +666,71 @@ export const auth = betterAuth({
                 .where(eq(schema.userTable.id, user.id));
             }
           });
+
+          // SSO first login: put the employee into the workspace they were
+          // invited to. Nothing else does this — better-auth only creates a
+          // member row from an explicit POST /organization/accept-invitation,
+          // so an employee who signs in through the IdP and never opens the
+          // invitations page has no workspace and every MCP call fails on
+          // workspace access.
+          //
+          // Gated on the OAuth callback path, which is the same trust boundary
+          // the `before` hook uses for `allowInvitationByEmail`: there the
+          // email comes from the identity provider's profile. On the password
+          // path the address is still unverified here, so matching an
+          // invitation by email would let anyone type a colleague's address
+          // and join their workspace.
+          if (isOAuthCallbackPath(ctx?.path)) {
+            // The IdP must also assert the address. better-auth stores
+            // `email_verified ?? false`, so an IdP that omits the claim lands
+            // here as unverified and the employee has to accept from the
+            // invitations page instead — safer than joining on a bare match.
+            if (!user.emailVerified) {
+              console.warn(
+                "Skipping invitation auto-accept and workspace auto-join: identity provider did not assert email_verified for user",
+                user.id,
+              );
+              return;
+            }
+            try {
+              await acceptPendingInvitationsForUser({
+                id: user.id,
+                email: user.email,
+              });
+            } catch (error) {
+              // The user row is already committed. Failing here would abort a
+              // sign-in over a membership the user can still accept from the
+              // invitations page.
+              console.error(
+                "Auto-accepting pending invitations failed for user",
+                user.id,
+                error,
+              );
+            }
+
+            // Company SSO has no Kaneo-side invitation step at all:
+            // mcp.vanpharm.com only issues a token to holders of the `kaneo`
+            // permission, so anyone who reaches this point is already
+            // authorized and only needs a workspace. Runs after the invitation
+            // sweep so an explicitly invited role wins, and the util skips a
+            // user who is already a member.
+            //
+            // The gate is narrower than the block above on purpose: auto-join
+            // grants membership with no invitation to match, so it must not
+            // fire for the built-in social providers, whose callbacks also
+            // satisfy `isOAuthCallbackPath`.
+            if (isCustomOAuthCallbackPath(ctx?.path)) {
+              try {
+                await autoJoinConfiguredWorkspace({ id: user.id });
+              } catch (error) {
+                console.error(
+                  "Auto-joining the configured workspace failed for user",
+                  user.id,
+                  error,
+                );
+              }
+            }
+          }
         },
       },
     },

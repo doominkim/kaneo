@@ -210,11 +210,20 @@ const hexColorSchema = z
     "Expected a hex color like #FF6600",
   );
 
-/** Register Kaneo's authenticated tool catalog on an MCP server adapter. */
+/**
+ * Register Kaneo's authenticated tool catalog on an MCP server adapter.
+ *
+ * `sessionUserId` is the owner of `token` as resolved by the caller's bearer
+ * check. It is used only as the fallback assignee for `create_task`, so a task
+ * created over MCP by a signed-in employee lands on that employee instead of
+ * being left unassigned. Omitting it keeps the previous "unassigned unless
+ * `userId` is given" behaviour.
+ */
 export function registerMcpTools(
   server: McpToolRegistrar,
   baseUrl: string,
   token: string,
+  sessionUserId?: string,
 ): void {
   const client = new ApiClient(baseUrl, token);
   const registerTool = <InputSchema extends z.ZodObject>(
@@ -420,7 +429,8 @@ export function registerMcpTools(
   registerTool(
     "create_task",
     {
-      description: "Create a task in a project.",
+      description:
+        "Create a task in a project. Defaults the assignee to the signed-in user; pass an explicit `userId` to assign someone else.",
       inputSchema: z.object({
         projectId: nonEmptyString,
         title: nonEmptyString,
@@ -441,7 +451,10 @@ export function registerMcpTools(
       };
       if (args.startDate !== undefined) body.startDate = args.startDate;
       if (args.dueDate !== undefined) body.dueDate = args.dueDate;
-      if (args.userId !== undefined) body.userId = args.userId;
+      // An explicit `userId` always wins; otherwise the task is assigned to the
+      // session that created it, so SSO users get their own tasks (KAN-17).
+      const assigneeId = args.userId ?? sessionUserId;
+      if (assigneeId !== undefined) body.userId = assigneeId;
       return run(() =>
         client.json(`/api/task/${encodeURIComponent(args.projectId)}`, {
           method: "POST",

@@ -45,7 +45,10 @@ type McpSession = {
 
 const sessions = new Map<string, McpSession>();
 
-function createMcpServerForUser(token: string): LegacyMcpServer {
+function createMcpServerForUser(
+  token: string,
+  userId: string,
+): LegacyMcpServer {
   const server = new LegacyMcpServer({
     name: "kaneo-mcp",
     version: "1.0.0",
@@ -54,6 +57,7 @@ function createMcpServerForUser(token: string): LegacyMcpServer {
     withSanitizedWhoami(toMcpToolRegistrar(server)),
     internalApiUrl,
     token,
+    userId,
   );
   return server;
 }
@@ -243,7 +247,7 @@ mcp.all("/mcp", async (c) => {
     }
   };
 
-  const server = createMcpServerForUser(authResult.token);
+  const server = createMcpServerForUser(authResult.token, authResult.userId);
   await server.connect(transport);
   const response = await transport.handleRequest(c.req.raw);
 
@@ -367,7 +371,7 @@ mcp.all("/mcp", async (c) => {
     }
   };
 
-  const server = createMcpServerForUser(authResult.token);
+  const server = createMcpServerForUser(authResult.token, authResult.userId);
   await server.connect(transport);
   const response = await transport.handleRequest(c.req.raw);
 

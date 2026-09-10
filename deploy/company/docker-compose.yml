@@ -1,0 +1,74 @@
+# 사내 단일 서버(olap-server, 192.168.9.32) 용 Kaneo 배포.
+#
+#   외부 :443 ─ test-web01 nginx ─ 192.168.9.32:8892 ─ kaneo 컨테이너(:5173)
+#
+# kaneo 이미지는 api(:1337) + nginx(:5173) 를 한 컨테이너에서 띄운다
+# (Dockerfile.kaneo / deploy/kaneo-entrypoint.sh). 그래서 web 컨테이너가 따로 없다.
+# 앱 포트는 127.0.0.1 에만 바인딩한다 — 외부 노출은 test-web01 이 전담한다.
+#
+#   cd deploy/company && docker compose up -d
+#
+# 이미지 태그·호스트 포트를 바꿀 때만 셸 변수로 덮어쓴다:
+#   KANEO_IMAGE=ghcr.io/doominkim/kaneo:<tag> docker compose up -d
+#
+# env 는 kaneo.env 하나만 쓴다 (kaneo.env.example 복사). postgres 도 같은 파일을 읽어
+# 비밀번호를 두 곳에 적지 않는다. DATABASE_URL 은 비워 두고 POSTGRES_* 에서 파생시킨다.
+name: kaneo-company
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    # 포트를 publish 하지 않는다. 접근은 compose 네트워크 안에서만.
+    env_file:
+      - kaneo.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$${POSTGRES_USER:-kaneo}\" -d \"$${POSTGRES_DB:-kaneo}\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  kaneo:
+    # 운영(kaneo.kit.io.kr)과 같은 이미지 계열. 태그는 반드시 빌드된 값으로 고정한다.
+    # latest 를 쓰지 않는 이유: agent-layer 마이그레이션이 태그마다 달라 롤백 대상이 흐려진다.
+    image: ${KANEO_IMAGE:-ghcr.io/doominkim/kaneo:2.22.0-agent.18}
+    ports:
+      # 기본은 loopback 바인딩이다. 단, test-web01 은 다른 호스트라 이 상태로는
+      # 프록시가 닿지 않는다. 둘 중 하나를 정해야 한다 (README "노출 범위" 참고):
+      #   1) KANEO_BIND_ADDR=192.168.9.32 로 LAN IP 에 바인딩하고 방화벽에서
+      #      192.168.9.121(test-web01) 만 8892 로 허용한다.
+      #   2) loopback 유지 + olap-server 에 nginx 를 두어 LAN:8892 → 127.0.0.1:8892
+      #      로 넘긴다 (vanpharm-mcp.conf 와 같은 구조).
+      - "${KANEO_BIND_ADDR:-127.0.0.1}:${KANEO_HOST_PORT:-8892}:5173"
+    env_file:
+      - kaneo.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      # 컨테이너 내부 nginx(:5173) 를 통해 api 까지 확인한다.
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:5173/api/health",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # 첫 기동은 drizzle 마이그레이션이 돌아 느리다.
+      start_period: 120s
+
+volumes:
+  pgdata:

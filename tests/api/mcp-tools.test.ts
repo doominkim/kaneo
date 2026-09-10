@@ -10,7 +10,9 @@ type ToolCallback = (args: unknown) => Promise<{
   isError?: boolean;
 }>;
 
-function collectTools(options: { sanitizeWhoami?: boolean } = {}) {
+function collectTools(
+  options: { sanitizeWhoami?: boolean; sessionUserId?: string } = {},
+) {
   const tools = new Map<string, ToolCallback>();
   const registrar: McpToolRegistrar = {
     registerTool: (name, _config, callback) => tools.set(name, callback),
@@ -19,6 +21,7 @@ function collectTools(options: { sanitizeWhoami?: boolean } = {}) {
     options.sanitizeWhoami ? withSanitizedWhoami(registrar) : registrar,
     "http://api.test",
     "test-token",
+    options.sessionUserId,
   );
   return tools;
 }
@@ -219,6 +222,47 @@ describe("MCP tool catalog", () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain("Task not found");
+  });
+});
+
+describe("create_task default assignee", () => {
+  // The MCP session is authenticated as one Kaneo user (SSO or otherwise), so a
+  // task that user creates should land on them instead of staying unassigned.
+  const sessionTools = collectTools({ sessionUserId: "session-user" });
+
+  function callAsSession(name: string, args: unknown = {}) {
+    const tool = sessionTools.get(name);
+    if (!tool) throw new Error(`Tool ${name} is not registered`);
+    return tool(args);
+  }
+
+  const baseArgs = {
+    projectId: "p1",
+    title: "Ship it",
+    description: "",
+    priority: "medium",
+    status: "to-do",
+  };
+
+  it("assigns the calling session's user when userId is omitted", async () => {
+    await callAsSession("create_task", baseArgs);
+
+    const request = lastRequest();
+    expect(request.url).toBe("http://api.test/api/task/p1");
+    expect(request.method).toBe("POST");
+    expect(request.body.userId).toBe("session-user");
+  });
+
+  it("honours an explicit userId over the session user", async () => {
+    await callAsSession("create_task", { ...baseArgs, userId: "someone-else" });
+
+    expect(lastRequest().body.userId).toBe("someone-else");
+  });
+
+  it("leaves the task unassigned when no session user is known", async () => {
+    await call("create_task", baseArgs);
+
+    expect(lastRequest().body).not.toHaveProperty("userId");
   });
 });
 

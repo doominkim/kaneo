@@ -127,7 +127,7 @@ divergent fork가 되면 유지보수가 전부 우리 몫이 되고 upstream �
    - 실행: `migrationsTable: "__drizzle_migrations_agent"` — 기본 `__drizzle_migrations`를 공유하면 두 폴더가 서로의 이력을 덮어쓴다.
    - 결과: upstream의 journal·추적 테이블을 한 글자도 건드리지 않는다.
 4. **upstream 정기 merge.** 리듬을 정하고 밀리지 않는다.
-5. **MCP는 `tools.ts`를 건드리지 않고 별도 툴셋 파일을 추가**해 등록만 한다.
+5. **MCP는 `tools.ts`를 건드리지 않고 별도 툴셋 파일을 추가**해 등록만 한다. 예외 1건(KAN-17): `registerMcpTools`가 세션 유저 id를 선택 인자로 받아, `create_task`에 `userId`가 없으면 호출 세션의 유저를 기본 담당자로 채운다 — 명시된 `userId`는 그대로 존중한다.
 
 목적은 퇴로 유지다 — upstream이 같은 방향으로 가면 fork를 버리고 돌아갈 수 있어야 한다. 그것이 성공이다.
 

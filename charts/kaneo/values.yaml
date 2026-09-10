@@ -135,6 +135,16 @@ kaneo:
   #       secretKeyRef:
   #         name: oauth-secret
   #         key: client-id
+  # Workspace auto-join for instances that delegate login to a company IdP and
+  # skip Kaneo invitations entirely. When CUSTOM_OAUTH_AUTO_JOIN_WORKSPACE_ID is
+  # set, a user created by the generic OAuth callback (/oauth2/callback/custom)
+  # with an IdP-asserted email is added to that workspace. Unset = disabled.
+  # The value is a workspace id, not a slug; the role defaults to "member" and
+  # must be a role slug that exists in that workspace.
+  #   - name: CUSTOM_OAUTH_AUTO_JOIN_WORKSPACE_ID
+  #     value: "workspace-id"
+  #   - name: CUSTOM_OAUTH_AUTO_JOIN_ROLE
+  #     value: "member"
   extraEnvFrom: []
   # extraEnvFrom:
   #   - secretRef:

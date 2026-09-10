@@ -7,7 +7,8 @@ import { withSanitizedWhoami } from "./whoami";
  * Create a stateless MCP 2026 handler with a fresh server per request.
  *
  * `userId` is the owner of `token` as resolved by the caller's bearer check;
- * the agent tools that write in-process (agent-direct) act as that user.
+ * the agent tools that write in-process (agent-direct) act as that user, and
+ * the upstream catalogue uses it as the default `create_task` assignee.
  */
 export function createModernMcpHandler(
   token: string,
@@ -21,7 +22,7 @@ export function createModernMcpHandler(
         version: "1.0.0",
       });
       const registrar = toMcpToolRegistrar(server);
-      registerMcpTools(withSanitizedWhoami(registrar), apiUrl, token);
+      registerMcpTools(withSanitizedWhoami(registrar), apiUrl, token, userId);
       // Agent Layer tools (fork) — registered alongside, tools.ts untouched.
       registerAgentTools(registrar, apiUrl, token, userId);
       return server;
