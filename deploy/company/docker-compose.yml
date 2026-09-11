@@ -38,7 +38,7 @@ services:
   kaneo:
     # 운영(kaneo.kit.io.kr)과 같은 이미지 계열. 태그는 반드시 빌드된 값으로 고정한다.
     # latest 를 쓰지 않는 이유: agent-layer 마이그레이션이 태그마다 달라 롤백 대상이 흐려진다.
-    image: ${KANEO_IMAGE:-ghcr.io/doominkim/kaneo:2.22.0-agent.20}
+    image: ${KANEO_IMAGE:-ghcr.io/doominkim/kaneo:2.22.0-agent.21}
     ports:
       # 기본은 loopback 바인딩이다. 단, test-web01 은 다른 호스트라 이 상태로는
       # 프록시가 닿지 않는다. 둘 중 하나를 정해야 한다 (README "노출 범위" 참고):
