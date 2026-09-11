@@ -7,6 +7,7 @@ import {
   projectTable,
   taskTable,
 } from "../../database/schema";
+import { agentDecisionTaskTable } from "../../database/schema-agent-layer";
 import { publishEvent } from "../../events";
 import { claimTaskNumber } from "./claim-task-numbers";
 
@@ -161,6 +162,10 @@ async function moveTask({
         message: "Failed to move task",
       });
     }
+
+    await tx
+      .delete(agentDecisionTaskTable)
+      .where(eq(agentDecisionTaskTable.taskId, taskId));
 
     await tx
       .update(assetTable)

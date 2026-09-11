@@ -15,6 +15,7 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import activity from "./activity";
 import agentArtifact from "./agent-artifact";
+import agentDecision from "./agent-decision";
 import agentDocument from "./agent-document";
 import agentDomain from "./agent-domain";
 import agentEntry from "./agent-entry";
@@ -583,6 +584,7 @@ export function createApp() {
   const taskApi = api.route("/task", task);
   const columnApi = api.route("/column", column);
   const activityApi = api.route("/activity", activity);
+  const agentDecisionApi = api.route("/agent-decision", agentDecision);
   const agentEntryApi = api.route("/agent-entry", agentEntry);
   const agentTermApi = api.route("/agent-term", agentTerm);
   const agentLeaseApi = api.route("/agent-lease", agentLease);
@@ -763,6 +765,7 @@ export function createApp() {
     api,
     injectWebSocket,
     activityApi,
+    agentDecisionApi,
     agentEntryApi,
     agentTermApi,
     agentLeaseApi,
@@ -898,6 +901,7 @@ const {
   app,
   injectWebSocket,
   activityApi,
+  agentDecisionApi,
   agentEntryApi,
   agentTermApi,
   agentLeaseApi,
@@ -950,6 +954,7 @@ export type AppType =
   | typeof taskApi
   | typeof columnApi
   | typeof activityApi
+  | typeof agentDecisionApi
   | typeof agentEntryApi
   | typeof agentTermApi
   | typeof agentLeaseApi

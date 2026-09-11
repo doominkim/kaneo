@@ -21,6 +21,43 @@ export type EntryUsage = {
   cacheReadTokens?: number;
 };
 
+export type EntryDecisionTrace = {
+  decisionId: string;
+  number: number;
+  status: "accepted" | "superseded";
+};
+
+/**
+ * Lift only the small ADR trace from a decision payload. Listings still avoid
+ * returning the full JSON body, while callers can deep-link lifecycle entries.
+ */
+export function liftDecisionTrace(value: unknown): {
+  adrDecisionId: string | null;
+  adrNumber: number | null;
+  adrStatus: "accepted" | "superseded" | null;
+} {
+  if (!value || typeof value !== "object") {
+    return { adrDecisionId: null, adrNumber: null, adrStatus: null };
+  }
+  const adr = (value as Record<string, unknown>).adr;
+  if (!adr || typeof adr !== "object") {
+    return { adrDecisionId: null, adrNumber: null, adrStatus: null };
+  }
+  const record = adr as Record<string, unknown>;
+  if (
+    typeof record.decisionId !== "string" ||
+    typeof record.number !== "number" ||
+    (record.status !== "accepted" && record.status !== "superseded")
+  ) {
+    return { adrDecisionId: null, adrNumber: null, adrStatus: null };
+  }
+  return {
+    adrDecisionId: record.decisionId,
+    adrNumber: record.number,
+    adrStatus: record.status as "accepted" | "superseded",
+  };
+}
+
 type AuthorColumns = {
   id: string | null;
   name: string | null;

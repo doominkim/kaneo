@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import Activity from "@/components/activity";
 import CommentInput from "@/components/activity/comment-input";
 import { isCommentActivity } from "@/components/activity/utils";
+import { RelatedDecisions } from "@/components/agent-layer/related-decisions";
 import { ExternalLinksAccordion } from "@/components/external-links/external-links-accordion";
 import useAuth from "@/components/providers/auth-provider/hooks/use-auth";
 import { Timeline } from "@/components/ui/timeline";
@@ -12,6 +13,7 @@ import useExternalLinks from "@/hooks/queries/external-link/use-external-links";
 import useGetProject from "@/hooks/queries/project/use-get-project";
 import useGetTask from "@/hooks/queries/task/use-get-task";
 import useGetTaskRelations from "@/hooks/queries/task-relation/use-get-task-relations";
+import { useWorkspacePermission } from "@/hooks/use-workspace-permission";
 import type { ExternalLink } from "@/types/external-link";
 import TaskDescription from "./task-description";
 import TaskRelations from "./task-relations";
@@ -40,6 +42,7 @@ export default function TaskDetailsContent({
     useExternalLinks(taskId ?? "");
   const { data: relations = [] } = useGetTaskRelations(taskId ?? "");
   const { user } = useAuth();
+  const { canUpdateTasks } = useWorkspacePermission();
 
   const parentRelation = relations.find(
     (rel) => rel.relationType === "subtask" && rel.targetTaskId === taskId,
@@ -102,6 +105,14 @@ export default function TaskDetailsContent({
           taskId={taskId}
           projectId={projectId}
           workspaceId={workspaceId}
+        />
+      </div>
+      <div className="mt-4">
+        <RelatedDecisions
+          projectId={projectId}
+          workspaceId={workspaceId}
+          taskId={taskId}
+          canWrite={canUpdateTasks()}
         />
       </div>
       <span className="text-sm font-medium text-muted-foreground h-[1px] bg-border w-full block shrink-0" />

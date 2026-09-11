@@ -1,6 +1,6 @@
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { RotateCcw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/public-project/markdown-renderer";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { usePromoteAgentDecision } from "@/hooks/mutations/agent-layer/use-agent-decisions";
 import { useAgentEntry } from "@/hooks/queries/agent-layer/use-agent-entry";
+import { useWorkspacePermission } from "@/hooks/use-workspace-permission";
 import { formatDateTime } from "@/lib/format";
 import { AgentLayerErrorState, AgentLayerSkeleton } from "./agent-layer-state";
 import { BranchChip, formatTokens, KindBadge } from "./chips";
@@ -73,18 +75,54 @@ export function EntryDetailSheet({
 }: EntryDetailSheetProps) {
   const { t } = useTranslation();
   const query = useAgentEntry(projectId, entryId, includeDeleted);
+  const navigate = useNavigate();
   const entry = query.data;
   const decision = entry ? parseDecision(entry.decision) : null;
   const refs = entry?.refs ?? null;
   const permissions = useEntryPermissions();
   const { restore, isPending: restoring } = useRestoreEntry(projectId);
+  const promote = usePromoteAgentDecision();
+  const { canUpdateTasks } = useWorkspacePermission();
   const [pendingDelete, setPendingDelete] = useState<DeletableEntry | null>(
     null,
   );
+  const [promotionError, setPromotionError] = useState<string | null>(null);
+  const activeEntryId = useRef(entryId);
+  useEffect(() => {
+    activeEntryId.current = entryId;
+    setPromotionError(null);
+  }, [entryId]);
   const deleted = Boolean(entry?.deletedAt);
+  const promoteLegacy = async () => {
+    if (!entry) return;
+    const promotedEntryId = entry.id;
+    try {
+      setPromotionError(null);
+      const adr = await promote.mutateAsync({
+        projectId,
+        entryId: promotedEntryId,
+      });
+      if (activeEntryId.current !== promotedEntryId) return;
+      onClose();
+      navigate({
+        to: "/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId",
+        params: { workspaceId, projectId, decisionId: adr.id },
+        search: { origin: "knowledge", status: "current" },
+      });
+    } catch {
+      if (activeEntryId.current === promotedEntryId) {
+        setPromotionError(t("agentLayer:adr.promoteFailed"));
+      }
+    }
+  };
 
   return (
-    <Sheet open={Boolean(entryId)} onOpenChange={(open) => !open && onClose()}>
+    <Sheet
+      open={Boolean(entryId)}
+      onOpenChange={(open) => {
+        if (!open && !promote.isPending) onClose();
+      }}
+    >
       <SheetContent
         side="right"
         className="w-full max-w-full sm:max-w-lg md:max-w-2xl"
@@ -141,6 +179,52 @@ export function EntryDetailSheet({
               >
                 <RotateCcw />
                 {t("agentLayer:timeline.restore")}
+              </Button>
+            </div>
+          ) : null}
+          {entry?.adrDecisionId ? (
+            <Link
+              to="/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId"
+              params={{
+                workspaceId,
+                projectId,
+                decisionId: entry.adrDecisionId,
+              }}
+              search={{ origin: "knowledge", status: "current" }}
+              className="text-xs underline-offset-2 hover:underline"
+              onClick={onClose}
+              data-testid="open-lifecycle-adr"
+            >
+              ADR-{String(entry.adrNumber ?? 0).padStart(3, "0")}
+            </Link>
+          ) : entry?.kind === "decision" && decision && canUpdateTasks() ? (
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={promoteLegacy}
+                disabled={promote.isPending}
+                data-testid="promote-legacy-adr"
+              >
+                {promote.isPending
+                  ? t("agentLayer:adr.promoting")
+                  : t("agentLayer:adr.promote")}
+              </Button>
+            </div>
+          ) : null}
+          {promotionError ? (
+            <div className="flex items-center justify-end gap-2">
+              <p className="text-xs text-destructive" role="alert">
+                {promotionError}
+              </p>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={promoteLegacy}
+              >
+                {t("agentLayer:adr.retry")}
               </Button>
             </div>
           ) : null}

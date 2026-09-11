@@ -43,6 +43,12 @@ export const entrySummarySchema = z
       description:
         "Whether a decision payload exists. Fetch the entry by id to read it.",
     }),
+    adrDecisionId: z.string().nullable().openapi({
+      description:
+        "ADR id for a structured acceptance/supersession entry, otherwise null.",
+    }),
+    adrNumber: z.number().int().nullable(),
+    adrStatus: z.enum(["accepted", "superseded"]).nullable(),
     coreChanged: z.array(z.string()).nullable().openapi({
       description:
         "Server judgment of `refs.files` against the project's core-path patterns at append time: null = not judged (no `refs.files`), [] = judged, nothing matched. Never recomputed.",
@@ -86,6 +92,9 @@ export const entryDetailSchema = z
     summary: z.string(),
     body: z.string().nullable(),
     decision: z.unknown(),
+    adrDecisionId: z.string().nullable(),
+    adrNumber: z.number().int().nullable(),
+    adrStatus: z.enum(["accepted", "superseded"]).nullable(),
     refs: refsBody.nullable(),
     coreChanged: z.array(z.string()).nullable().openapi({
       description:

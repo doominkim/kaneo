@@ -9,6 +9,7 @@ import {
 import {
   type EntryRefs,
   type EntryUsage,
+  liftDecisionTrace,
   shapeAuthorship,
 } from "./entry-fields";
 
@@ -57,6 +58,7 @@ async function getEntry(
     refs: (entry.refs as EntryRefs | null) ?? null,
     coreChanged: (entry.coreChanged as string[] | null) ?? null,
     usage: (entry.usage as EntryUsage | null) ?? null,
+    ...liftDecisionTrace(entry.decision),
     ...shapeAuthorship(row.actor, row.author),
   };
 }

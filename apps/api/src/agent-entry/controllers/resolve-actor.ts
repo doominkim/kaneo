@@ -1,9 +1,8 @@
-import { and, eq } from "drizzle-orm";
 import db from "../../database";
 import { agentActorTable } from "../../database/schema-agent-layer";
 
 /**
- * Find or create the actor row for a (workspace, human, model) triple.
+ * Find or create the actor row for a (workspace, human, provider, model) tuple.
  *
  * Identity is deliberately NOT per session: session-scoped rows would grow
  * without bound. The session id is recorded on the entry and the lease instead,
@@ -16,31 +15,20 @@ async function resolveActor(
   provider: string,
   model: string,
 ) {
-  const [existing] = await db
-    .select()
-    .from(agentActorTable)
-    .where(
-      and(
-        eq(agentActorTable.workspaceId, workspaceId),
-        eq(agentActorTable.onBehalfOf, onBehalfOf),
-        eq(agentActorTable.model, model),
-      ),
-    )
-    .limit(1);
-
-  if (existing) {
-    await db
-      .update(agentActorTable)
-      .set({ lastSeenAt: new Date() })
-      .where(eq(agentActorTable.id, existing.id));
-    return existing;
-  }
-
-  const [created] = await db
+  const [actor] = await db
     .insert(agentActorTable)
     .values({ workspaceId, onBehalfOf, provider, model })
+    .onConflictDoUpdate({
+      target: [
+        agentActorTable.workspaceId,
+        agentActorTable.onBehalfOf,
+        agentActorTable.provider,
+        agentActorTable.model,
+      ],
+      set: { lastSeenAt: new Date() },
+    })
     .returning();
-  return created;
+  return actor;
 }
 
 export default resolveActor;

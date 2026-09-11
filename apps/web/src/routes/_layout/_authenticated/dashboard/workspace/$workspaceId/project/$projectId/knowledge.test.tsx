@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentType, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTerm } from "@/fetchers/agent-layer/get-agent-terms";
@@ -8,13 +8,21 @@ const mocks = vi.hoisted(() => ({
   terms: vi.fn(),
   canUpdateWorkspace: vi.fn(),
   canUpdateTasks: vi.fn(),
+  navigate: vi.fn(),
+  search: {
+    tab: "knowledge",
+    status: "current",
+    q: undefined as string | undefined,
+  },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: () => (options: Record<string, unknown>) => ({
     ...options,
     useParams: () => ({ workspaceId: "ws", projectId: "p1" }),
+    useSearch: () => mocks.search,
   }),
+  useNavigate: () => mocks.navigate,
   Link: ({ children }: { children: ReactNode }) => <a href="/">{children}</a>,
 }));
 vi.mock("react-i18next", () => ({
@@ -37,6 +45,9 @@ vi.mock("@/components/common/project-layout", () => ({
 vi.mock("@/components/page-title", () => ({ default: () => null }));
 vi.mock("@/components/agent-layer/decision-list", () => ({
   DecisionList: () => <div data-testid="decision-list" />,
+}));
+vi.mock("@/components/agent-layer/adr-list", () => ({
+  AdrList: () => <div data-testid="adr-list" />,
 }));
 vi.mock("@/components/agent-layer/entry-detail-sheet", () => ({
   EntryDetailSheet: () => null,
@@ -103,6 +114,8 @@ const term: AgentTerm = {
 };
 
 beforeEach(() => {
+  mocks.search = { tab: "knowledge", status: "current", q: undefined };
+  mocks.navigate.mockReset();
   mocks.canUpdateWorkspace.mockReturnValue(true);
   mocks.canUpdateTasks.mockReturnValue(true);
   mocks.terms.mockReset().mockReturnValue({
@@ -115,8 +128,8 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-describe("knowledge tab", () => {
-  it("is a read-only confirmed view — review moved to the domain pages", () => {
+describe("지식 탭", () => {
+  it("확정 항목만 읽기 전용으로 표시하고 검토는 도메인 페이지에 둔다", () => {
     render(<KnowledgeTab />);
 
     // Confirmed only, and still the whole workspace: narrowing this tab to the
@@ -139,10 +152,18 @@ describe("knowledge tab", () => {
     );
   });
 
-  it("keeps proposing and the decisions section", () => {
-    render(<KnowledgeTab />);
+  it("지식 제안 기능과 결정 기록 하위 탭을 함께 제공한다", () => {
+    const { rerender } = render(<KnowledgeTab />);
     expect(screen.getByTestId("propose-term")).toBeInTheDocument();
-    expect(screen.getByTestId("decision-list")).toBeInTheDocument();
     expect(screen.getByTestId("term-resolve")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("adr-tab"));
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: expect.objectContaining({ tab: "decisions" }),
+      }),
+    );
+    mocks.search = { tab: "decisions", status: "current", q: undefined };
+    rerender(<KnowledgeTab />);
+    expect(screen.getByTestId("decision-list")).toBeInTheDocument();
   });
 });

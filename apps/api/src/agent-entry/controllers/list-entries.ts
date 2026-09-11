@@ -21,6 +21,7 @@ import { NO_TASK_FILTER } from "../schema";
 import {
   type EntryRefs,
   type EntryUsage,
+  liftDecisionTrace,
   liftRefs,
   shapeAuthorship,
 } from "./entry-fields";
@@ -108,6 +109,7 @@ async function listEntries(input: ListInput) {
       kind: agentEntryTable.kind,
       summary: agentEntryTable.summary,
       hasDecision: isNotNull(agentEntryTable.decision),
+      decisionTrace: sql<unknown>`${agentEntryTable.decision}->'adr'`,
       coreChanged: agentEntryTable.coreChanged,
       refs: agentEntryTable.refs,
       effort: agentEntryTable.effort,
@@ -135,6 +137,7 @@ async function listEntries(input: ListInput) {
     kind: r.kind,
     summary: r.summary,
     hasDecision: Boolean(r.hasDecision),
+    ...liftDecisionTrace(r.decisionTrace ? { adr: r.decisionTrace } : null),
     coreChanged: (r.coreChanged as string[] | null) ?? null,
     ...liftRefs(r.refs as EntryRefs | null),
     effort: r.effort,

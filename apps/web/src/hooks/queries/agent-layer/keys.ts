@@ -16,6 +16,14 @@ export type AgentTermFilters = {
  * query hooks cannot drift apart on what a document write must invalidate.
  */
 export const agentLayerKeys = {
+  decisions: (
+    projectId: string,
+    status: "current" | "all" | "draft" | "accepted" | "superseded" = "current",
+    query = "",
+    taskId?: string,
+  ) => ["agent-decisions", projectId, status, query, taskId ?? "all"] as const,
+  decision: (projectId: string, decisionId: string) =>
+    ["agent-decision", projectId, decisionId] as const,
   tree: (projectId: string) => ["agent-tree", projectId] as const,
   // The trailing segment keeps the maintainer's "with deleted" view apart
   // from the default one; both sit under the same prefix, so the mutations'

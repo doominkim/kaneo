@@ -1,0 +1,2 @@
+ALTER TABLE "agent_actor" DROP CONSTRAINT "agent_actor_workspace_user_model_unique";--> statement-breakpoint
+ALTER TABLE "agent_actor" ADD CONSTRAINT "agent_actor_workspace_user_provider_model_unique" UNIQUE("workspace_id","on_behalf_of","provider","model");

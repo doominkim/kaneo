@@ -17,6 +17,7 @@ import { createId } from "@paralleldrive/cuid2";
 import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
+  boolean,
   index,
   integer,
   jsonb,
@@ -37,7 +38,7 @@ import { projectTable, taskTable, userTable, workspaceTable } from "./schema";
 /**
  * A non-human actor. Humans stay in `user`; this table is only for models.
  *
- * Identity is (workspace, human, model) — NOT per session. A session id is
+ * Identity is (workspace, human, provider, model) — NOT per session. A session id is
  * recorded on the entry/lease instead, so actor rows stay bounded while a
  * person can still run several concurrent sessions of the same model.
  *
@@ -77,9 +78,10 @@ export const agentActorTable = pgTable(
   (table) => [
     index("agent_actor_workspaceId_idx").on(table.workspaceId),
     index("agent_actor_onBehalfOf_idx").on(table.onBehalfOf),
-    unique("agent_actor_workspace_user_model_unique").on(
+    unique("agent_actor_workspace_user_provider_model_unique").on(
       table.workspaceId,
       table.onBehalfOf,
+      table.provider,
       table.model,
     ),
   ],
@@ -208,6 +210,149 @@ export const agentEntryTable = pgTable(
     index("agent_entry_compaction_idx").on(table.compaction),
   ],
 );
+
+/* -------------------------------------------------------------------------- */
+/* agent_decision — architecture decision records                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A project ADR. Drafts are editable; accepted and superseded rows are
+ * immutable at the application boundary. The append-only `agent_entry` ledger
+ * remains the audit stream and receives a structured entry when a draft is
+ * accepted or an accepted ADR is superseded.
+ *
+ * `sourceEntryId` promotes an older ledger decision without rewriting it.
+ * `supersedesDecisionId` points from the replacement to the record it replaced;
+ * the partial unique index lets drafts express no pending intent while ensuring
+ * one accepted ADR cannot acquire two replacements.
+ */
+export const agentDecisionTable = pgTable(
+  "agent_decision",
+  {
+    id: text("id")
+      .$defaultFn(() => createId())
+      .primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaceTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projectTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    /** Stable, monotonically allocated within one project. */
+    number: integer("number").notNull(),
+    title: text("title").notNull(),
+    context: text("context").notNull(),
+    decision: text("decision").notNull(),
+    alternatives: text("alternatives"),
+    consequences: text("consequences"),
+    /** Uninterpreted body copied from a promoted legacy decision entry. */
+    sourceNote: text("source_note"),
+    reversible: boolean("reversible"),
+    /** draft | accepted | superseded */
+    status: text("status").notNull().default("draft"),
+    /** Same reference shape as `agent_entry.refs`. */
+    refs: jsonb("refs"),
+    /** Optional provenance when an existing ledger decision became this ADR. */
+    sourceEntryId: text("source_entry_id").references(
+      () => agentEntryTable.id,
+      { onDelete: "set null", onUpdate: "cascade" },
+    ),
+    /** The accepted ADR replaced by this one. Accepted rows only. */
+    supersedesDecisionId: text("supersedes_decision_id").references(
+      (): AnyPgColumn => agentDecisionTable.id,
+      { onDelete: "restrict", onUpdate: "cascade" },
+    ),
+
+    /** Exactly one creator column is populated by the application. */
+    createdBy: text("created_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    createdActorId: text("created_actor_id").references(
+      () => agentActorTable.id,
+      { onDelete: "set null", onUpdate: "cascade" },
+    ),
+    /** Exactly one last-editor column is populated while the row is a draft. */
+    updatedBy: text("updated_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    updatedActorId: text("updated_actor_id").references(
+      () => agentActorTable.id,
+      { onDelete: "set null", onUpdate: "cascade" },
+    ),
+    /** Acceptance is a human project-governance action. */
+    acceptedBy: text("accepted_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    acceptedAt: timestamp("accepted_at", { mode: "date" }),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("agent_decision_project_number_unique").on(
+      table.projectId,
+      table.number,
+    ),
+    uniqueIndex("agent_decision_source_entry_unique")
+      .on(table.sourceEntryId)
+      .where(sql`${table.sourceEntryId} IS NOT NULL`),
+    uniqueIndex("agent_decision_supersedes_unique")
+      .on(table.supersedesDecisionId)
+      .where(sql`${table.supersedesDecisionId} IS NOT NULL`),
+    index("agent_decision_project_status_number_idx").on(
+      table.projectId,
+      table.status,
+      table.number,
+    ),
+    index("agent_decision_workspaceId_idx").on(table.workspaceId),
+  ],
+);
+
+/** Many-to-many task links. A deleted task removes only the link, not the ADR. */
+export const agentDecisionTaskTable = pgTable(
+  "agent_decision_task",
+  {
+    decisionId: text("decision_id")
+      .notNull()
+      .references(() => agentDecisionTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+  },
+  (table) => [
+    primaryKey({
+      name: "agent_decision_task_pk",
+      columns: [table.decisionId, table.taskId],
+    }),
+    index("agent_decision_task_taskId_idx").on(table.taskId),
+  ],
+);
+
+/** Separate counter so creating an ADR does not make agent-project settings look configured. */
+export const agentDecisionCounterTable = pgTable("agent_decision_counter", {
+  projectId: text("project_id")
+    .primaryKey()
+    .references(() => projectTable.id, {
+      onDelete: "cascade",
+      onUpdate: "cascade",
+    }),
+  /** The number assigned to the next draft created in this project. */
+  nextNumber: integer("next_number").notNull().default(1),
+});
 
 /* -------------------------------------------------------------------------- */
 /* agent_lease — who is holding what right now                                 */
@@ -698,6 +843,11 @@ export type AgentActor = typeof agentActorTable.$inferSelect;
 export type NewAgentActor = typeof agentActorTable.$inferInsert;
 export type AgentEntry = typeof agentEntryTable.$inferSelect;
 export type NewAgentEntry = typeof agentEntryTable.$inferInsert;
+export type AgentDecision = typeof agentDecisionTable.$inferSelect;
+export type NewAgentDecision = typeof agentDecisionTable.$inferInsert;
+export type AgentDecisionTask = typeof agentDecisionTaskTable.$inferSelect;
+export type AgentDecisionCounter =
+  typeof agentDecisionCounterTable.$inferSelect;
 export type AgentLease = typeof agentLeaseTable.$inferSelect;
 export type NewAgentLease = typeof agentLeaseTable.$inferInsert;
 export type AgentTerm = typeof agentTermTable.$inferSelect;

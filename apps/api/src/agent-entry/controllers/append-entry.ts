@@ -8,6 +8,7 @@ import { agentEntryTable } from "../../database/schema-agent-layer";
 import {
   type EntryRefs,
   type EntryUsage,
+  liftDecisionTrace,
   liftRefs,
   shapeAuthorship,
 } from "./entry-fields";
@@ -101,6 +102,7 @@ async function appendEntry(input: AppendInput) {
     kind: entry.kind,
     summary: entry.summary,
     hasDecision: entry.decision != null,
+    ...liftDecisionTrace(entry.decision),
     coreChanged: (entry.coreChanged as string[] | null) ?? null,
     ...liftRefs(entry.refs as EntryRefs | null),
     effort: entry.effort,
