@@ -40,7 +40,8 @@ Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-pr
 주요 Agent Layer 커밋은 아래와 같다.
 
 ```
-8dd35aca  현재 agent-layer 배포 대상
+0e252888  현재 agent-layer 배포 대상 (2.22.0-agent.23, 2026-09-13)
+8dd35aca  agent.18 배포 대상이었음
 c8f9fd22  feat(agent-layer): 에이전트 전용 MCP 툴셋 8개 추가
 6d1cff67  feat(agent-layer): 태스크 점유(lease) API 모듈 추가
 bf4d641b  feat(agent-layer): 용어사전 API 모듈 추가
@@ -143,6 +144,14 @@ DATABASE_URL="postgresql://dominic@localhost:5432/kaneo_test" pnpm --filter @kan
 
 배포를 다시 해야 하는 코드/manifest 변경이 생기면 사용자 승인 후 `agent-layer` 이미지 빌드 성공 → platform manifest diff와 target revision 확인 → platform `main` push → Argo Synced/Healthy와 실제 API/UI 흐름까지 순서대로 증명한다. platform `main` push는 Argo auto-sync 운영 배포이므로 사용자 승인과 diff/revision 확인 없이 수행하지 않는다. push/build 성공만으로 운영 완료라고 판단하지 않는다.
 
+## 요구사항·설계·Feature 허브 (KAN-19 spec-tabs → feature-hub, 2026-09-13)
+
+같은 날 두 번 배포했다. `agent.22`(`25c270b7`, spec-tabs): 요구사항·설계를 Kaneo 1급 엔티티로(`agent_requirement_*`·`agent_design*`·`agent_task_*`·coverage, drizzle-agent 0011), MCP 툴 6개, 승인·확인은 사람 세션만. `agent.23`(`0e252888`, feature-hub): 사용자 실측 피드백으로 요구사항·설계 탭을 **Feature 탭 하나**(목록 + 상세 서브 탭 요구사항/설계/태스크)로 합치고, **요구사항 문서를 정본**으로 바꿨다 — `## 스토리` 절 아래 `n. 문장 \`unit|api|e2e\` REQ-키` 줄을 `agent-requirement/parse.ts` 가 행으로 파생하고 키를 발급해 본문에 써넣는다(`story` 컬럼, 0012). 기준 문장은 한국어 "조건 → 시스템은 → 결과" 형식(EARS 영어 키워드 폐기, 사용자 결정). 설계 첫 승인은 태스크를 stale 로 만들지 않는다. `/agent-feature` 요약 API, `agent_brief.features[]`.
+
+같은 날 사용자 결정으로 **운영 DB 를 fika 요구사항만 남기고 비웠다**(프로젝트 9개·task 72·타임라인 311). 백업 `~/kaneo-backups/kaneo-2026-09-13-pre-wipe.dump`(ops 호스트)·`~/.agents/artifacts/kaneo/`(로컬). KAN 프로젝트는 `b2bgnm0yp59zn2vvhe8c7ftr` 로 재생성됐고 feature-hub 가 첫 feature 다. 이 문서의 KAN #1~#19 등 옛 task ID 는 전부 무효다.
+
+정본: 요구사항·설계는 Kaneo Feature 탭(KAN feature-hub, FIK admin-qa). 레포 `docs/specs/<feature>/requirements.md` 는 spec-check 용 키 목록 사본이고 `docs/specs/kaneo.json` 포인터 방식(sandbox)으로 옮겨가는 중이다. 하네스 쪽은 `~/.agents/skills/spec-driven/SKILL.md`. 미결: admin-qa 요구사항의 문서 모드 재저장(메뉴별 스토리), 툴 정의 예산 재산정(18,432B, DESIGN.md §5.2), spec-check 가 픽스처 문자열의 키를 매핑으로 세는 한계.
+
 ## Linear → Kaneo 전환 (2026-09-02)
 
 사용자 결정으로 Linear를 종료하고 Kaneo를 plan/work-state SSOT로 쓴다. 하네스 쪽 정본은 `~/.agents/skills/using-kaneo/SKILL.md`, `~/.agents/rules/20-plan-kaneo.md`, `~/.claude/incidents/2026-09-02-linear-to-kaneo-cutover.md`다. MCP 등록: Claude는 user scope `kaneo` (`https://kaneo.kit.io.kr/api/mcp`, 브라우저 OAuth), Codex는 `[mcp_servers.kaneo]`(`url`만)와 `codex mcp login kaneo`(브라우저 OAuth, DCR+PKCE). `using-linear`·`20-plan-linear.md`·`/plan-html`·Linear MCP는 제거했다. SAN-244는 더 이상 갱신하지 않으며 남은 항목은 Kaneo task로 옮긴다.
@@ -199,7 +208,7 @@ fika.ing(Mac Studio, macOS 15.6.1, k3s·PostgreSQL 17·MinIO·Redis 호스트)�
 
 ## 오래된 정보 폐기
 
-- `2.22.0-agent.2`~`agent.17`은 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.18`다.
+- `2.22.0-agent.2`~`agent.22`는 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.23`(feature-hub)다.
 - `apps/kaneo/prod.yaml`은 미커밋/빈 `sealedEnv` 상태가 아니다. `eb024ce`가 운영에 반영되었다.
 - TLS 발급/배포는 pending이 아니다. `files.kit.io.kr`은 정상 HTTPS다.
 - 운영 DB/auth/S3 secret은 Bitwarden과 SealedSecret으로 이미 주입되어 있다. 값을 문서나 명령 출력에 적지 않는다.
