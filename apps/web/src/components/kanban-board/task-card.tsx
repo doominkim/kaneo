@@ -42,6 +42,7 @@ import useBulkSelectionStore from "@/store/bulk-selection";
 import useProjectStore from "@/store/project";
 import { useUserPreferencesStore } from "@/store/user-preferences";
 import type Task from "@/types/task";
+import { TaskSpecBadges } from "../agent-layer/task-spec-links";
 import { Button } from "../ui/button";
 import { ContextMenu, ContextMenuTrigger } from "../ui/context-menu";
 import TaskCardContextMenuContent from "./task-card-context-menu/task-card-context-menu-content";
@@ -255,6 +256,7 @@ function TaskCard({ task, disableDragDrop = false }: TaskCardProps) {
                 <TaskLabels labels={task.labels ?? []} />
               </div>
             )}
+            <TaskSpecBadges projectId={task.projectId} taskId={task.id} />
 
             <div className="flex items-center gap-1.5">
               {showPriority && (

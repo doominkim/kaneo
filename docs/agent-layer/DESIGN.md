@@ -161,6 +161,14 @@ Task 본문은 고정 크기(명세)를 유지하고, 증가는 전부 `entry`�
 | `agent_project` | 프로젝트별 설정. `project_id` PK, `core_paths` jsonb, `active_task_threshold`(기본 20), `done_archive_days`(기본 30) |
 | `agent_domain` | 워크스페이스 도메인 지식 페이지 트리(§4.7). `workspace_id`, `parent_id`(self, `SET NULL`), `slug`(레벨별 unique), `title`, `body`(markdown), `position`, `updated_by` / `actor_id` |
 | `agent_project_domain` | 프로젝트 ↔ 도메인 페이지 링크. PK (`project_id`, `domain_id`), 양쪽 `CASCADE` |
+| `agent_requirement_set` | 요구사항 문서(KAN-19, 2026-09-13). `project_id`+`feature` unique, `title`, `body`, `status`(draft/approved), `approved_at`/`approved_by`(사람만), `next_seq`(키 발급 카운터, 재사용 없음), `source_slug`(이관 원본 문서), `updated_by` / `actor_id` |
+| `agent_requirement_item` | 요구사항 항목 행. `set_id`(CASCADE), `project_id`+`key`(`REQ-<FEATURE>-<n>`) unique, `seq`, `text`, `layer`, `status`(active/deferred/dropped — 삭제 없음), `updated_at`은 text·status 변경 시에만 이동(stale 계산의 시계) |
+| `agent_design` | 설계 문서. `project_id`+`feature` unique, `title`, `body`, `status`, `approved_at`/`approved_by`, `source_slug`, `updated_by` / `actor_id` |
+| `agent_design_requirement` | 설계 ↔ 요구사항 항목. PK (`design_id`, `item_id`) |
+| `agent_task_requirement` / `agent_task_design` | task ↔ 항목 / task ↔ 설계. PK (`task_id`, …), `created_at`·`acknowledged_at`이 그 링크의 시계. task CASCADE |
+| `agent_requirement_coverage` | spec-check 결과. (`item_id`, `repo`, `test_path`) unique, `test_name`, `reported_at`, `actor_id`. 통과 여부는 저장하지 않는다 |
+
+**stale은 저장하지 않는다(KAN-19 결정).** 설계: `approved_at` 이후에 바뀐 항목이 있으면 stale, 미승인이면 stale 아님(그냥 미승인). task: 링크마다 `coalesce(acknowledged_at, created_at)` 이후에 항목 `updated_at` 또는 설계 `approved_at`이 움직였으면 stale, 원인 키를 함께 돌려준다. 재승인·확인(acknowledge)이 시계를 옮겨 stale을 푼다. 계산은 `apps/api/src/agent-requirement/stale.ts` 한 곳.
 
 **모든 테이블에 `agent_` prefix를 붙인다.** upstream이 `entry`·`term` 같은 흔한 이름을 나중에 쓸 수 있고, prefix가 있어야 마이그레이션 범위를 이름으로 가를 수 있다.
 
@@ -365,9 +373,17 @@ artifact_finalize(project, artifactId, storageKey)             HeadObject 검증
 domain_list(workspace)                                         도메인 페이지 평면 트리(id/parentId/slug/title, ≤200)
 domain_get(workspace, domainId? | slugPath?, offset?)          페이지 메타 + 8KB 본문 창 + 링크 이름(지식 항목·프로젝트·문서·자식 각 ≤20)
 domain_put(workspace, domainId? | parentId?+slug, title, body) upsert. actorId 기록. body 전체 교체
+requirements_get(project, feature?, offset?)   요구사항 set + 항목(key/text/status/covered/designs/tasks) + 본문 창. feature 없으면 목록
+requirements_put(project, feature, title, body, items[])  항목 부분 upsert(키 발급/수정/dropped). 항상 draft. approved 를 덮으면 draft + entry
+design_get(project, feature?, offset?)          설계 + stale 판정·원인 + 커버 항목 + 파생 task
+design_put(project, feature, title, body, requirementKeys[])  draft 저장, 매핑 전체 교체
+task_link(project, taskId, requirementKeys?, designFeatures?)  task 매핑 교체
+requirement_coverage_put(project, feature, repo, entries[])    spec-check 결과 업로드(repo 단위 교체)
 ```
 
-**툴 개수 상한은 두지 않는다(2026-09-03 개정).** 대신 정의 크기 예산으로 관리한다: `tools/list` 기준 `agent_*` 툴 정의(이름·설명·inputSchema) 합계 **12,288B 이하**, 툴 하나 **2,560B 이하**. `tests/api/mcp-agent-tools-budget.test.ts`가 실제 핸들러의 `tools/list`를 직렬화해 측정하고 초과 시 실패한다. 실측(2026-09-03, 13개 툴): 합계 **9,258B**, 최대 `agent_log_append` **2,148B** — 이 툴은 inputSchema만 1,695B(필드 14개·중첩 객체 3개)라 초안의 2KB로는 `decision.why`/`rejected`를 설명할 설명문이 들어가지 않아 2.5KB로 조정했다. 도메인 툴 3개 추가 후 재실측(2026-09-03, 16개 툴): 합계 **11,924B**(잔여 364B), 최대 `agent_log_append` **2,207B**, `agent_domain_put` 894B·`agent_domain_get` 613B·`agent_domain_list` 396B. `doc_put`·`term_propose`의 `domainId`와 `brief`의 `domains` 설명이 나머지 증가분이다. 다음 툴을 추가하려면 기존 설명을 줄이거나 예산을 재산정해야 한다. 참고로 upstream 36개 툴 합계는 16,455B다. 근거: 툴 정의는 세션마다 상주하지만 하네스마다 비용 모델이 다르다 — Claude Code는 지연 로딩이라 개별 스키마 크기가 비용이고, Codex처럼 전체 스키마를 싣는 클라이언트는 개수×크기가 비용이다. 개수는 그 비용을 대표하지 못한다. 산출물 바이트를 MCP JSON에 싣는 단일 업로드 툴(base64)은 기각 — 1MB html이 약 35만 토큰이 된다.
+approve·acknowledge 도구는 없다(REQ-SPEC-TABS-4·6·10): 승인과 stale 확인은 사람이 세션으로만 한다. REST에서도 API 키 호출자는 403.
+
+**툴 개수 상한은 두지 않는다(2026-09-03 개정).** 대신 정의 크기 예산으로 관리한다: `tools/list` 기준 `agent_*` 툴 정의(이름·설명·inputSchema) 합계 **12,288B 이하**, 툴 하나 **2,560B 이하**. `tests/api/mcp-agent-tools-budget.test.ts`가 실제 핸들러의 `tools/list`를 직렬화해 측정하고 초과 시 실패한다. 실측(2026-09-03, 13개 툴): 합계 **9,258B**, 최대 `agent_log_append` **2,148B** — 이 툴은 inputSchema만 1,695B(필드 14개·중첩 객체 3개)라 초안의 2KB로는 `decision.why`/`rejected`를 설명할 설명문이 들어가지 않아 2.5KB로 조정했다. 도메인 툴 3개 추가 후 재실측(2026-09-03, 16개 툴): 합계 **11,924B**(잔여 364B), 최대 `agent_log_append` **2,207B**, `agent_domain_put` 894B·`agent_domain_get` 613B·`agent_domain_list` 396B. `doc_put`·`term_propose`의 `domainId`와 `brief`의 `domains` 설명이 나머지 증가분이다. 다음 툴을 추가하려면 기존 설명을 줄이거나 예산을 재산정해야 한다. **2026-09-13 재산정(KAN-19):** 요구사항·설계 툴 6개 추가로 합계 **16,984B**(신규 6개 4,801B, 최대 `agent_requirements_put` 1,260B — items 스키마가 대부분). 설명을 줄여도 12KB 안에 들어가지 않아 예산을 **18,432B**로 올렸다. 잔여 1,448B. 참고로 upstream 36개 툴 합계는 16,455B다. 근거: 툴 정의는 세션마다 상주하지만 하네스마다 비용 모델이 다르다 — Claude Code는 지연 로딩이라 개별 스키마 크기가 비용이고, Codex처럼 전체 스키마를 싣는 클라이언트는 개수×크기가 비용이다. 개수는 그 비용을 대표하지 못한다. 산출물 바이트를 MCP JSON에 싣는 단일 업로드 툴(base64)은 기각 — 1MB html이 약 35만 토큰이 된다.
 `doc_put`·`artifact_put_text`·`artifact_presign`·`domain_put`은 HTTP를 거치지 않고 프로세스 내에서 컨트롤러를 직접 호출한다(`apps/api/src/mcp/agent-direct.ts`). MCP가 API를 부를 때 쓰는 bearer는 사용자의 일반 세션 토큰이라 API 쪽에서 MCP 호출과 `curl`을 구분할 수 없고, 따라서 `actorId`를 HTTP 필드·헤더로 열면 누구나 에이전트 저자를 사칭할 수 있다. 직접 호출 경로에서도 인가는 HTTP와 같은 원시 함수(`validateWorkspaceAccess`, `hasWorkspacePermission`, `task:update`)로 다시 수행한다.
 `doc_put`은 산출물을 남기는 경로다 — 세션 리포트를 사람에게 넘기는 유일한 쓰기 면이며, 타임라인 기록 entry를 부풀리는 대신 여기로 나간다. slug 단위 덮어쓰기라 무한 append가 구조적으로 불가능하고, task를 잡지 않는 조사·설계 세션도 써야 하므로 lease를 요구하지 않는다.
 `brief`에는 문서 목록(`slug`/`title`/`updatedAt`)만 싣고 본문은 `doc_get`으로만 나간다(§5.1 예산).

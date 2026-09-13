@@ -1,8 +1,10 @@
 import {
   BookOpen,
+  DraftingCompass,
   FileText,
   GitCommitVertical,
   LayoutDashboard,
+  ListChecks,
   SquareKanban,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -16,6 +18,8 @@ import { cn } from "@/lib/cn";
 export type ProjectView =
   | "overview"
   | "timeline"
+  | "requirements"
+  | "design"
   | "backlog"
   | "board"
   | "calendar"
@@ -27,6 +31,8 @@ export type ProjectView =
 export type ProjectSection =
   | "overview"
   | "timeline"
+  | "requirements"
+  | "design"
   | "tasks"
   | "knowledge"
   | "docs";
@@ -34,6 +40,9 @@ export type ProjectSection =
 export const PROJECT_VIEW_PATHS = {
   overview: "/dashboard/workspace/$workspaceId/project/$projectId/overview",
   timeline: "/dashboard/workspace/$workspaceId/project/$projectId/timeline",
+  requirements:
+    "/dashboard/workspace/$workspaceId/project/$projectId/requirements",
+  design: "/dashboard/workspace/$workspaceId/project/$projectId/design",
   backlog: "/dashboard/workspace/$workspaceId/project/$projectId/backlog",
   board: "/dashboard/workspace/$workspaceId/project/$projectId/board",
   calendar: "/dashboard/workspace/$workspaceId/project/$projectId/calendar",
@@ -43,7 +52,7 @@ export const PROJECT_VIEW_PATHS = {
 } as const satisfies Record<ProjectView, string>;
 
 const VIEW_SEGMENT_PATTERN =
-  /\/project\/[^/]+\/(overview|timeline|knowledge|docs|backlog|board|calendar|gantt)(?:\/|$)/;
+  /\/project\/[^/]+\/(overview|timeline|requirements|design|knowledge|docs|backlog|board|calendar|gantt)(?:\/|$)/;
 
 export function resolveProjectView(
   pathname: string,
@@ -66,7 +75,7 @@ export function sectionOfView(view: ProjectView): ProjectSection {
   }
 }
 
-const SECTIONS: Array<{
+export const SECTIONS: Array<{
   section: ProjectSection;
   view: ProjectView;
   icon: typeof LayoutDashboard;
@@ -83,6 +92,18 @@ const SECTIONS: Array<{
     view: "timeline",
     icon: GitCommitVertical,
     labelKey: "agentLayer:nav.timeline",
+  },
+  {
+    section: "requirements",
+    view: "requirements",
+    icon: ListChecks,
+    labelKey: "agentLayer:nav.requirements",
+  },
+  {
+    section: "design",
+    view: "design",
+    icon: DraftingCompass,
+    labelKey: "agentLayer:nav.design",
   },
   {
     section: "tasks",
@@ -110,7 +131,7 @@ type ProjectSectionTabsProps = {
   className?: string;
 };
 
-/** Desktop header: 개요 · 타임라인 · 태스크 · 지식 · 문서. */
+/** Desktop header: 개요 · 타임라인 · 요구사항 · 설계 · 태스크 · 지식 · 문서 (KAN-19). */
 export function ProjectSectionTabs({
   activeView,
   onSelectView,
@@ -158,7 +179,7 @@ type MobileProjectSectionsProps = {
   onSelectView: (view: ProjectView) => void;
 };
 
-/** Mobile popover: the same five sections as a compact grid. */
+/** Mobile popover: the same seven sections as a compact grid. */
 export function MobileProjectSections({
   activeView,
   onSelectView,
@@ -171,7 +192,7 @@ export function MobileProjectSections({
       <p className="px-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
         {t("agentLayer:nav.sections")}
       </p>
-      <div className="grid grid-cols-5 gap-1">
+      <div className="grid grid-cols-4 gap-1">
         {SECTIONS.map(({ section, view, icon: Icon, labelKey }) => {
           const isActive = section === activeSection;
           return (

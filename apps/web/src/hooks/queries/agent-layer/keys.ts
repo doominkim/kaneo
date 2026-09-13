@@ -80,4 +80,18 @@ export const agentLayerKeys = {
     ["agent-domain", workspaceId, "tree"] as const,
   domain: (workspaceId: string, domainId: string) =>
     ["agent-domain", workspaceId, "page", domainId] as const,
+  // Spec tabs (KAN-19). Sets, designs and task links all share the project
+  // prefix of their own family; a requirement edit invalidates designs and
+  // task links too, because stale is computed from the items' clocks.
+  requirementSets: (projectId: string) =>
+    ["agent-requirements", projectId, "list"] as const,
+  requirementSet: (projectId: string, feature: string) =>
+    ["agent-requirements", projectId, "set", feature] as const,
+  designs: (projectId: string) => ["agent-designs", projectId, "list"] as const,
+  design: (projectId: string, feature: string) =>
+    ["agent-designs", projectId, "set", feature] as const,
+  taskLinkBadges: (projectId: string) =>
+    ["agent-task-links", projectId, "badges"] as const,
+  taskLinks: (projectId: string, taskId: string) =>
+    ["agent-task-links", projectId, "task", taskId] as const,
 };

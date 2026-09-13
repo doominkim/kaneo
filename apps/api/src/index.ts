@@ -16,11 +16,15 @@ import { HTTPException } from "hono/http-exception";
 import activity from "./activity";
 import agentArtifact from "./agent-artifact";
 import agentDecision from "./agent-decision";
+import agentDesign from "./agent-design";
 import agentDocument from "./agent-document";
 import agentDomain from "./agent-domain";
 import agentEntry from "./agent-entry";
 import agentLease from "./agent-lease";
 import agentProject from "./agent-project";
+import agentRequirement from "./agent-requirement";
+import requirementSet from "./agent-requirement/requirement-set";
+import agentTaskLink from "./agent-task-link";
 import agentTerm from "./agent-term";
 import { auth } from "./auth";
 import { organizationRoutes } from "./auth-openapi";
@@ -589,6 +593,10 @@ export function createApp() {
   const agentTermApi = api.route("/agent-term", agentTerm);
   const agentLeaseApi = api.route("/agent-lease", agentLease);
   const agentDocumentApi = api.route("/agent-document", agentDocument);
+  const agentRequirementApi = api.route("/agent-requirement", agentRequirement);
+  const agentDesignApi = api.route("/agent-design", agentDesign);
+  const agentTaskLinkApi = api.route("/agent-task-link", agentTaskLink);
+  const requirementSetApi = api.route("/requirement-set", requirementSet);
   const agentProjectApi = api.route("/agent-project", agentProject);
   const agentArtifactApi = api.route("/agent-artifact", agentArtifact);
   const agentDomainApi = api.route("/agent-domain", agentDomain);
@@ -770,6 +778,10 @@ export function createApp() {
     agentTermApi,
     agentLeaseApi,
     agentDocumentApi,
+    agentRequirementApi,
+    agentDesignApi,
+    agentTaskLinkApi,
+    requirementSetApi,
     agentProjectApi,
     agentArtifactApi,
     agentDomainApi,
@@ -906,6 +918,10 @@ const {
   agentTermApi,
   agentLeaseApi,
   agentDocumentApi,
+  agentRequirementApi,
+  agentDesignApi,
+  agentTaskLinkApi,
+  requirementSetApi,
   agentProjectApi,
   agentArtifactApi,
   agentDomainApi,
@@ -959,6 +975,10 @@ export type AppType =
   | typeof agentTermApi
   | typeof agentLeaseApi
   | typeof agentDocumentApi
+  | typeof agentRequirementApi
+  | typeof agentDesignApi
+  | typeof agentTaskLinkApi
+  | typeof requirementSetApi
   | typeof agentProjectApi
   | typeof agentArtifactApi
   | typeof agentDomainApi

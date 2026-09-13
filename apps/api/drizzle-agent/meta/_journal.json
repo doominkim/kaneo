@@ -1,83 +1,90 @@
 {
-	"version": "7",
-	"dialect": "postgresql",
-	"entries": [
-		{
-			"idx": 0,
-			"version": "7",
-			"when": 1788262388205,
-			"tag": "0000_tired_marvex",
-			"breakpoints": true
-		},
-		{
-			"idx": 1,
-			"version": "7",
-			"when": 1788331699192,
-			"tag": "0001_flaky_boom_boom",
-			"breakpoints": true
-		},
-		{
-			"idx": 2,
-			"version": "7",
-			"when": 1788392215235,
-			"tag": "0002_agent_artifact",
-			"breakpoints": true
-		},
-		{
-			"idx": 3,
-			"version": "7",
-			"when": 1788399332265,
-			"tag": "0003_agent_project",
-			"breakpoints": true
-		},
-		{
-			"idx": 4,
-			"version": "7",
-			"when": 1788404501241,
-			"tag": "0004_agent_entry_created_by",
-			"breakpoints": true
-		},
-		{
-			"idx": 5,
-			"version": "7",
-			"when": 1788405287529,
-			"tag": "0005_agent_term_actor",
-			"breakpoints": true
-		},
-		{
-			"idx": 6,
-			"version": "7",
-			"when": 1788415048503,
-			"tag": "0006_agent_entry_deleted_at",
-			"breakpoints": true
-		},
-		{
-			"idx": 7,
-			"version": "7",
-			"when": 1788421723338,
-			"tag": "0007_agent_domain",
-			"breakpoints": true
-		},
-		{
-			"idx": 8,
-			"version": "7",
-			"when": 1788494653585,
-			"tag": "0008_agent_term_review",
-			"breakpoints": true
-		},
-		{
-			"idx": 9,
-			"version": "7",
-			"when": 1789084432955,
-			"tag": "0009_agent_decision",
-			"breakpoints": true
-		},
-		{
-			"idx": 10,
-			"version": "7",
-			"when": 1789085414678,
-			"tag": "0010_secret_storm",
-			"breakpoints": true
-		}
-	]
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1788262388205,
+      "tag": "0000_tired_marvex",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788331699192,
+      "tag": "0001_flaky_boom_boom",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788392215235,
+      "tag": "0002_agent_artifact",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1788399332265,
+      "tag": "0003_agent_project",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1788404501241,
+      "tag": "0004_agent_entry_created_by",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788405287529,
+      "tag": "0005_agent_term_actor",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788415048503,
+      "tag": "0006_agent_entry_deleted_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788421723338,
+      "tag": "0007_agent_domain",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788494653585,
+      "tag": "0008_agent_term_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789084432955,
+      "tag": "0009_agent_decision",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789085414678,
+      "tag": "0010_secret_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789278016739,
+      "tag": "0011_spec_tabs",
+      "breakpoints": true
+    }
+  ]
 }

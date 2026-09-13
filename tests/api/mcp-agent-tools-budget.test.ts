@@ -22,7 +22,9 @@ import { createModernMcpHandler } from "../../apps/api/src/mcp/modern";
  * total 9264 for 13 tools.
  */
 const MAX_BYTES_PER_TOOL = 2560;
-const MAX_BYTES_TOTAL = 12288;
+// 2026-09-13 (KAN-19): re-baselined from 12,288B when the six spec-tab tools
+// (requirements/design/task-link/coverage) were added; see DESIGN.md §5.2.
+const MAX_BYTES_TOTAL = 18432;
 
 const protocolVersion = "2026-07-28";
 
@@ -89,7 +91,7 @@ function definitionBytes(tool: ToolDefinition) {
 }
 
 describe("agent_* tool definition budget (tools/list)", () => {
-  it("keeps every agent tool under 2560 bytes and the set under 12288 bytes", async () => {
+  it("keeps every agent tool under 2560 bytes and the set under 18432 bytes", async () => {
     const tools = await listTools();
     const agentTools = tools.filter((tool) => tool.name.startsWith("agent_"));
     expect(agentTools.map((t) => t.name).sort()).toEqual([
@@ -97,6 +99,8 @@ describe("agent_* tool definition budget (tools/list)", () => {
       "agent_artifact_presign",
       "agent_artifact_put_text",
       "agent_brief",
+      "agent_design_get",
+      "agent_design_put",
       "agent_doc_get",
       "agent_doc_put",
       "agent_domain_get",
@@ -107,6 +111,10 @@ describe("agent_* tool definition budget (tools/list)", () => {
       "agent_lease_release",
       "agent_log_append",
       "agent_log_tail",
+      "agent_requirement_coverage_put",
+      "agent_requirements_get",
+      "agent_requirements_put",
+      "agent_task_link",
       "agent_term_propose",
       "agent_term_resolve",
     ]);

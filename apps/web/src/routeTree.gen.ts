@@ -63,8 +63,12 @@ import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProject
 import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdOverviewRouteImport } from './routes/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/overview'
 import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTimelineRouteImport } from './routes/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/timeline'
 import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDecisionsDecisionIdRouteImport } from './routes/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId'
+import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignIndexRouteImport } from './routes/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/design.index'
+import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignFeatureRouteImport } from './routes/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/design.$feature'
 import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsIndexRouteImport } from './routes/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/docs.index'
 import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsSlugRouteImport } from './routes/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/docs.$slug'
+import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsIndexRouteImport } from './routes/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/requirements.index'
+import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsFeatureRouteImport } from './routes/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/requirements.$feature'
 import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTaskTaskIdRouteImport } from './routes/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/task/$taskId_'
 import { Route as LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsArtifactArtifactIdRouteImport } from './routes/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/docs.artifact.$artifactId'
 
@@ -419,6 +423,24 @@ const LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDecisionsD
         LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute,
     } as any,
   )
+const LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignIndexRoute =
+  LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignIndexRouteImport.update(
+    {
+      id: '/project/$projectId/design/',
+      path: '/project/$projectId/design/',
+      getParentRoute: () =>
+        LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute,
+    } as any,
+  )
+const LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignFeatureRoute =
+  LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignFeatureRouteImport.update(
+    {
+      id: '/project/$projectId/design/$feature',
+      path: '/project/$projectId/design/$feature',
+      getParentRoute: () =>
+        LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute,
+    } as any,
+  )
 const LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsIndexRoute =
   LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsIndexRouteImport.update(
     {
@@ -433,6 +455,24 @@ const LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsSlugRo
     {
       id: '/project/$projectId/docs/$slug',
       path: '/project/$projectId/docs/$slug',
+      getParentRoute: () =>
+        LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute,
+    } as any,
+  )
+const LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsIndexRoute =
+  LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsIndexRouteImport.update(
+    {
+      id: '/project/$projectId/requirements/',
+      path: '/project/$projectId/requirements/',
+      getParentRoute: () =>
+        LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute,
+    } as any,
+  )
+const LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsFeatureRoute =
+  LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsFeatureRouteImport.update(
+    {
+      id: '/project/$projectId/requirements/$feature',
+      path: '/project/$projectId/requirements/$feature',
       getParentRoute: () =>
         LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute,
     } as any,
@@ -509,9 +549,13 @@ export interface FileRoutesByFullPath {
   '/dashboard/workspace/$workspaceId/project/$projectId/timeline': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTimelineRoute
   '/dashboard/workspace/$workspaceId/project/$projectId/': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdIndexRoute
   '/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDecisionsDecisionIdRoute
+  '/dashboard/workspace/$workspaceId/project/$projectId/design/$feature': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignFeatureRoute
   '/dashboard/workspace/$workspaceId/project/$projectId/docs/$slug': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsSlugRoute
+  '/dashboard/workspace/$workspaceId/project/$projectId/requirements/$feature': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsFeatureRoute
   '/dashboard/workspace/$workspaceId/project/$projectId/task/$taskId': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTaskTaskIdRoute
+  '/dashboard/workspace/$workspaceId/project/$projectId/design/': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignIndexRoute
   '/dashboard/workspace/$workspaceId/project/$projectId/docs/': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsIndexRoute
+  '/dashboard/workspace/$workspaceId/project/$projectId/requirements/': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsIndexRoute
   '/dashboard/workspace/$workspaceId/project/$projectId/docs/artifact/$artifactId': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsArtifactArtifactIdRoute
 }
 export interface FileRoutesByTo {
@@ -564,9 +608,13 @@ export interface FileRoutesByTo {
   '/dashboard/workspace/$workspaceId/project/$projectId/timeline': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTimelineRoute
   '/dashboard/workspace/$workspaceId/project/$projectId': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdIndexRoute
   '/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDecisionsDecisionIdRoute
+  '/dashboard/workspace/$workspaceId/project/$projectId/design/$feature': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignFeatureRoute
   '/dashboard/workspace/$workspaceId/project/$projectId/docs/$slug': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsSlugRoute
+  '/dashboard/workspace/$workspaceId/project/$projectId/requirements/$feature': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsFeatureRoute
   '/dashboard/workspace/$workspaceId/project/$projectId/task/$taskId': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTaskTaskIdRoute
+  '/dashboard/workspace/$workspaceId/project/$projectId/design': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignIndexRoute
   '/dashboard/workspace/$workspaceId/project/$projectId/docs': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsIndexRoute
+  '/dashboard/workspace/$workspaceId/project/$projectId/requirements': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsIndexRoute
   '/dashboard/workspace/$workspaceId/project/$projectId/docs/artifact/$artifactId': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsArtifactArtifactIdRoute
 }
 export interface FileRoutesById {
@@ -625,9 +673,13 @@ export interface FileRoutesById {
   '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/timeline': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTimelineRoute
   '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdIndexRoute
   '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDecisionsDecisionIdRoute
+  '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/design/$feature': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignFeatureRoute
   '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/docs/$slug': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsSlugRoute
+  '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/requirements/$feature': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsFeatureRoute
   '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/task/$taskId_': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTaskTaskIdRoute
+  '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/design/': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignIndexRoute
   '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/docs/': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsIndexRoute
+  '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/requirements/': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsIndexRoute
   '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/docs/artifact/$artifactId': typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsArtifactArtifactIdRoute
 }
 export interface FileRouteTypes {
@@ -685,9 +737,13 @@ export interface FileRouteTypes {
     | '/dashboard/workspace/$workspaceId/project/$projectId/timeline'
     | '/dashboard/workspace/$workspaceId/project/$projectId/'
     | '/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId'
+    | '/dashboard/workspace/$workspaceId/project/$projectId/design/$feature'
     | '/dashboard/workspace/$workspaceId/project/$projectId/docs/$slug'
+    | '/dashboard/workspace/$workspaceId/project/$projectId/requirements/$feature'
     | '/dashboard/workspace/$workspaceId/project/$projectId/task/$taskId'
+    | '/dashboard/workspace/$workspaceId/project/$projectId/design/'
     | '/dashboard/workspace/$workspaceId/project/$projectId/docs/'
+    | '/dashboard/workspace/$workspaceId/project/$projectId/requirements/'
     | '/dashboard/workspace/$workspaceId/project/$projectId/docs/artifact/$artifactId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -740,9 +796,13 @@ export interface FileRouteTypes {
     | '/dashboard/workspace/$workspaceId/project/$projectId/timeline'
     | '/dashboard/workspace/$workspaceId/project/$projectId'
     | '/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId'
+    | '/dashboard/workspace/$workspaceId/project/$projectId/design/$feature'
     | '/dashboard/workspace/$workspaceId/project/$projectId/docs/$slug'
+    | '/dashboard/workspace/$workspaceId/project/$projectId/requirements/$feature'
     | '/dashboard/workspace/$workspaceId/project/$projectId/task/$taskId'
+    | '/dashboard/workspace/$workspaceId/project/$projectId/design'
     | '/dashboard/workspace/$workspaceId/project/$projectId/docs'
+    | '/dashboard/workspace/$workspaceId/project/$projectId/requirements'
     | '/dashboard/workspace/$workspaceId/project/$projectId/docs/artifact/$artifactId'
   id:
     | '__root__'
@@ -800,9 +860,13 @@ export interface FileRouteTypes {
     | '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/timeline'
     | '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/'
     | '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId'
+    | '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/design/$feature'
     | '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/docs/$slug'
+    | '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/requirements/$feature'
     | '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/task/$taskId_'
+    | '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/design/'
     | '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/docs/'
+    | '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/requirements/'
     | '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/docs/artifact/$artifactId'
   fileRoutesById: FileRoutesById
 }
@@ -1197,6 +1261,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDecisionsDecisionIdRouteImport
       parentRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute
     }
+    '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/design/': {
+      id: '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/design/'
+      path: '/project/$projectId/design'
+      fullPath: '/dashboard/workspace/$workspaceId/project/$projectId/design/'
+      preLoaderRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignIndexRouteImport
+      parentRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute
+    }
+    '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/design/$feature': {
+      id: '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/design/$feature'
+      path: '/project/$projectId/design/$feature'
+      fullPath: '/dashboard/workspace/$workspaceId/project/$projectId/design/$feature'
+      preLoaderRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignFeatureRouteImport
+      parentRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute
+    }
     '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/docs/': {
       id: '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/docs/'
       path: '/project/$projectId/docs'
@@ -1209,6 +1287,20 @@ declare module '@tanstack/react-router' {
       path: '/project/$projectId/docs/$slug'
       fullPath: '/dashboard/workspace/$workspaceId/project/$projectId/docs/$slug'
       preLoaderRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsSlugRouteImport
+      parentRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute
+    }
+    '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/requirements/': {
+      id: '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/requirements/'
+      path: '/project/$projectId/requirements'
+      fullPath: '/dashboard/workspace/$workspaceId/project/$projectId/requirements/'
+      preLoaderRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsIndexRouteImport
+      parentRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute
+    }
+    '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/requirements/$feature': {
+      id: '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/requirements/$feature'
+      path: '/project/$projectId/requirements/$feature'
+      fullPath: '/dashboard/workspace/$workspaceId/project/$projectId/requirements/$feature'
+      preLoaderRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsFeatureRouteImport
       parentRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRoute
     }
     '/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/task/$taskId_': {
@@ -1339,9 +1431,13 @@ interface LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRouteChildren {
   LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTimelineRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTimelineRoute
   LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdIndexRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdIndexRoute
   LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDecisionsDecisionIdRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDecisionsDecisionIdRoute
+  LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignFeatureRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignFeatureRoute
   LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsSlugRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsSlugRoute
+  LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsFeatureRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsFeatureRoute
   LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTaskTaskIdRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTaskTaskIdRoute
+  LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignIndexRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignIndexRoute
   LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsIndexRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsIndexRoute
+  LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsIndexRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsIndexRoute
   LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsArtifactArtifactIdRoute: typeof LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsArtifactArtifactIdRoute
 }
 
@@ -1375,12 +1471,20 @@ const LayoutAuthenticatedDashboardWorkspaceWorkspaceIdRouteChildren: LayoutAuthe
       LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdIndexRoute,
     LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDecisionsDecisionIdRoute:
       LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDecisionsDecisionIdRoute,
+    LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignFeatureRoute:
+      LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignFeatureRoute,
     LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsSlugRoute:
       LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsSlugRoute,
+    LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsFeatureRoute:
+      LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsFeatureRoute,
     LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTaskTaskIdRoute:
       LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdTaskTaskIdRoute,
+    LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignIndexRoute:
+      LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDesignIndexRoute,
     LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsIndexRoute:
       LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsIndexRoute,
+    LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsIndexRoute:
+      LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdRequirementsIndexRoute,
     LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsArtifactArtifactIdRoute:
       LayoutAuthenticatedDashboardWorkspaceWorkspaceIdProjectProjectIdDocsArtifactArtifactIdRoute,
   }

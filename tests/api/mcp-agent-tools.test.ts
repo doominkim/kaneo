@@ -7,6 +7,10 @@ const direct = vi.hoisted(() => ({
   putDomainAsAgent: vi.fn(),
   presignArtifactAsAgent: vi.fn(),
   putTextArtifactAsAgent: vi.fn(),
+  putRequirementSetAsAgent: vi.fn(),
+  putDesignAsAgent: vi.fn(),
+  putTaskLinksAsAgent: vi.fn(),
+  putRequirementCoverageAsAgent: vi.fn(),
 }));
 vi.mock("../../apps/api/src/mcp/agent-direct", () => direct);
 
@@ -976,5 +980,221 @@ describe("agent_term_resolve", () => {
     expect(lastRequest().url).toBe(
       "http://api.test/api/agent-term/ws%2F1/resolve?term=a%26b+c&projectId=p+1",
     );
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Spec tabs (KAN-19)                                                         */
+/* -------------------------------------------------------------------------- */
+
+describe("spec tab tools", () => {
+  const specTools = [
+    "agent_requirements_get",
+    "agent_requirements_put",
+    "agent_design_get",
+    "agent_design_put",
+    "agent_task_link",
+    "agent_requirement_coverage_put",
+  ];
+
+  it("[REQ-SPEC-TABS-14] registers exactly the six spec tools and no approve tool", () => {
+    for (const name of specTools) expect(tools.has(name), name).toBe(true);
+    for (const name of [...tools.keys()]) {
+      expect(name).not.toMatch(/approve|acknowledge/);
+    }
+  });
+
+  it("[REQ-SPEC-TABS-14] agent_requirements_put writes through the agent path and echoes issued keys only", async () => {
+    direct.putRequirementSetAsAgent.mockResolvedValue({
+      id: "set-1",
+      feature: "spec-tabs",
+      status: "draft",
+      updatedAt: "2026-09-13T00:00:00.000Z",
+      body: "long body",
+      items: [
+        {
+          key: "REQ-SPEC-TABS-1",
+          status: "active",
+          text: "x",
+          updatedAt: "2026-09-13T00:00:00.000Z",
+        },
+      ],
+    });
+    const result = await call("agent_requirements_put", {
+      projectId: "p1",
+      feature: "spec-tabs",
+      title: "Spec tabs",
+      items: [{ text: "WHEN ... THE SYSTEM SHALL ..." }],
+      ...identity,
+    });
+    expect(direct.putRequirementSetAsAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        projectId: "p1",
+        feature: "spec-tabs",
+        body: "",
+        items: [{ text: "WHEN ... THE SYSTEM SHALL ..." }],
+        provider: "anthropic",
+        model: "claude-opus-5",
+      }),
+    );
+    expect(result).toEqual({
+      id: "set-1",
+      feature: "spec-tabs",
+      status: "draft",
+      updatedAt: "2026-09-13T00:00:00.000Z",
+      items: [
+        {
+          key: "REQ-SPEC-TABS-1",
+          status: "active",
+          updatedAt: "2026-09-13T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+
+  it("[REQ-SPEC-TABS-16] rejects malformed keys and feature slugs before the write path", async () => {
+    for (const bad of [
+      { projectId: "p1", feature: "Spec Tabs", title: "T", ...identity },
+      {
+        projectId: "p1",
+        feature: "spec-tabs",
+        title: "T",
+        items: [{ key: "SPEC-TABS-1", text: "x" }],
+        ...identity,
+      },
+      { projectId: "p1", feature: "spec-tabs", title: "T" },
+    ]) {
+      const result = await callRaw("agent_requirements_put", bad);
+      expect(result.isError, JSON.stringify(bad).slice(0, 80)).toBe(true);
+    }
+    expect(direct.putRequirementSetAsAgent).not.toHaveBeenCalled();
+  });
+
+  it("[REQ-SPEC-TABS-14] agent_requirements_get reads over HTTP and shapes items with a covered flag", async () => {
+    apiFetch.mockResolvedValue(
+      Response.json({
+        id: "set-1",
+        feature: "spec-tabs",
+        title: "Spec tabs",
+        body: "# body",
+        status: "approved",
+        approvedAt: "2026-09-13T00:00:00.000Z",
+        sourceSlug: null,
+        updatedAt: "2026-09-13T00:00:00.000Z",
+        items: [
+          {
+            key: "REQ-SPEC-TABS-1",
+            seq: 1,
+            text: "x",
+            layer: "api",
+            status: "active",
+            updatedAt: "2026-09-13T00:00:00.000Z",
+            coverage: [{ repo: "r", testPath: "t.test.ts" }],
+            designs: [{ feature: "spec-tabs" }],
+            tasks: [{ id: "t1", number: 19 }],
+          },
+        ],
+      }),
+    );
+    const result = await call("agent_requirements_get", {
+      projectId: "p1",
+      feature: "spec-tabs",
+    });
+    expect(lastRequest().url).toBe(
+      "http://api.test/api/agent-requirement/p1/spec-tabs",
+    );
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        key: "REQ-SPEC-TABS-1",
+        covered: true,
+        designs: ["spec-tabs"],
+        tasks: [19],
+      }),
+    ]);
+    expect(result.body).toBe("# body");
+  });
+
+  it("[REQ-SPEC-TABS-14] agent_design_put passes requirementKeys through and echoes covered keys", async () => {
+    direct.putDesignAsAgent.mockResolvedValue({
+      id: "d1",
+      feature: "spec-tabs",
+      status: "draft",
+      updatedAt: "2026-09-13T00:00:00.000Z",
+      body: "b",
+      requirements: [{ key: "REQ-SPEC-TABS-1" }],
+    });
+    const result = await call("agent_design_put", {
+      projectId: "p1",
+      feature: "spec-tabs",
+      title: "Design",
+      body: "# design",
+      requirementKeys: ["REQ-SPEC-TABS-1"],
+      ...identity,
+    });
+    expect(direct.putDesignAsAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user-1",
+        requirementKeys: ["REQ-SPEC-TABS-1"],
+      }),
+    );
+    expect(result).toEqual({
+      id: "d1",
+      feature: "spec-tabs",
+      status: "draft",
+      updatedAt: "2026-09-13T00:00:00.000Z",
+      requirements: ["REQ-SPEC-TABS-1"],
+    });
+  });
+
+  it("[REQ-SPEC-TABS-7] agent_task_link replaces links and returns keys, features and the stale verdict", async () => {
+    direct.putTaskLinksAsAgent.mockResolvedValue({
+      taskId: "t1",
+      requirements: [{ key: "REQ-SPEC-TABS-2" }],
+      designs: [{ feature: "spec-tabs" }],
+      stale: { stale: false, causes: [] },
+    });
+    const result = await call("agent_task_link", {
+      projectId: "p1",
+      taskId: "t1",
+      requirementKeys: ["REQ-SPEC-TABS-2"],
+      designFeatures: ["spec-tabs"],
+      ...identity,
+    });
+    expect(result).toEqual({
+      taskId: "t1",
+      requirements: ["REQ-SPEC-TABS-2"],
+      designs: ["spec-tabs"],
+      stale: { stale: false, causes: [] },
+    });
+  });
+
+  it("[REQ-SPEC-TABS-17] agent_requirement_coverage_put relays the write-path result and its rejections", async () => {
+    direct.putRequirementCoverageAsAgent.mockResolvedValue({
+      feature: "spec-tabs",
+      repo: "r",
+      reported: 1,
+    });
+    const ok = await call("agent_requirement_coverage_put", {
+      projectId: "p1",
+      feature: "spec-tabs",
+      repo: "r",
+      entries: [{ key: "REQ-SPEC-TABS-1", testPath: "t.test.ts" }],
+      ...identity,
+    });
+    expect(ok).toEqual({ feature: "spec-tabs", repo: "r", reported: 1 });
+
+    direct.putRequirementCoverageAsAgent.mockRejectedValue(
+      new Error("400 Unknown requirement keys: REQ-SPEC-TABS-99"),
+    );
+    const bad = await callRaw("agent_requirement_coverage_put", {
+      projectId: "p1",
+      feature: "spec-tabs",
+      repo: "r",
+      entries: [{ key: "REQ-SPEC-TABS-99", testPath: "t.test.ts" }],
+      ...identity,
+    });
+    expect(bad.isError).toBe(true);
   });
 });

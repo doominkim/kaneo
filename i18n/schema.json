@@ -8947,6 +8947,12 @@
 						},
 						"domains": {
 							"type": "string"
+						},
+						"requirements": {
+							"type": "string"
+						},
+						"design": {
+							"type": "string"
 						}
 					},
 					"required": [
@@ -8956,7 +8962,9 @@
 						"knowledge",
 						"docs",
 						"sections",
-						"domains"
+						"domains",
+						"requirements",
+						"design"
 					]
 				},
 				"common": {
@@ -10889,6 +10897,364 @@
 						"deleteFailed",
 						"deleteRefused"
 					]
+				},
+				"spec": {
+					"type": "object",
+					"additionalProperties": false,
+					"properties": {
+						"requirementsPageTitle": {
+							"type": "string"
+						},
+						"designPageTitle": {
+							"type": "string"
+						},
+						"requirementsTitle": {
+							"type": "string"
+						},
+						"requirementsHint": {
+							"type": "string"
+						},
+						"designTitle": {
+							"type": "string"
+						},
+						"designHint": {
+							"type": "string"
+						},
+						"newSet": {
+							"type": "string"
+						},
+						"newDesign": {
+							"type": "string"
+						},
+						"feature": {
+							"type": "string"
+						},
+						"featureHint": {
+							"type": "string"
+						},
+						"featureInvalid": {
+							"type": "string"
+						},
+						"featureExists": {
+							"type": "string"
+						},
+						"title": {
+							"type": "string"
+						},
+						"emptySets": {
+							"type": "string"
+						},
+						"emptyDesigns": {
+							"type": "string"
+						},
+						"columnFeature": {
+							"type": "string"
+						},
+						"columnTitle": {
+							"type": "string"
+						},
+						"columnStatus": {
+							"type": "string"
+						},
+						"columnItems": {
+							"type": "string"
+						},
+						"columnRequirements": {
+							"type": "string"
+						},
+						"columnUpdated": {
+							"type": "string"
+						},
+						"columnKey": {
+							"type": "string"
+						},
+						"columnText": {
+							"type": "string"
+						},
+						"columnLayer": {
+							"type": "string"
+						},
+						"columnCoverage": {
+							"type": "string"
+						},
+						"columnDesigns": {
+							"type": "string"
+						},
+						"columnTasks": {
+							"type": "string"
+						},
+						"statusDraft": {
+							"type": "string"
+						},
+						"statusApproved": {
+							"type": "string"
+						},
+						"stale": {
+							"type": "string"
+						},
+						"staleHint": {
+							"type": "string"
+						},
+						"staleRequirement": {
+							"type": "string"
+						},
+						"staleDesign": {
+							"type": "string"
+						},
+						"unapproved": {
+							"type": "string"
+						},
+						"approve": {
+							"type": "string"
+						},
+						"approved": {
+							"type": "string"
+						},
+						"approveFailed": {
+							"type": "string"
+						},
+						"approvedAt": {
+							"type": "string"
+						},
+						"approvedHint": {
+							"type": "string"
+						},
+						"edit": {
+							"type": "string"
+						},
+						"save": {
+							"type": "string"
+						},
+						"cancel": {
+							"type": "string"
+						},
+						"saved": {
+							"type": "string"
+						},
+						"saveFailed": {
+							"type": "string"
+						},
+						"body": {
+							"type": "string"
+						},
+						"bodyHint": {
+							"type": "string"
+						},
+						"items": {
+							"type": "string"
+						},
+						"addItem": {
+							"type": "string"
+						},
+						"itemText": {
+							"type": "string"
+						},
+						"itemLayer": {
+							"type": "string"
+						},
+						"itemStatus": {
+							"type": "string"
+						},
+						"itemActive": {
+							"type": "string"
+						},
+						"itemDeferred": {
+							"type": "string"
+						},
+						"itemDropped": {
+							"type": "string"
+						},
+						"itemNoKey": {
+							"type": "string"
+						},
+						"covered": {
+							"type": "string"
+						},
+						"covered_zero": {
+							"type": "string"
+						},
+						"covered_one": {
+							"type": "string"
+						},
+						"covered_two": {
+							"type": "string"
+						},
+						"covered_few": {
+							"type": "string"
+						},
+						"covered_many": {
+							"type": "string"
+						},
+						"covered_other": {
+							"type": "string"
+						},
+						"notCovered": {
+							"type": "string"
+						},
+						"coverageTitle": {
+							"type": "string"
+						},
+						"backToRequirements": {
+							"type": "string"
+						},
+						"backToDesigns": {
+							"type": "string"
+						},
+						"requirementsCovered": {
+							"type": "string"
+						},
+						"requirementsCoveredHint": {
+							"type": "string"
+						},
+						"noRequirementSet": {
+							"type": "string"
+						},
+						"changedSinceApproval": {
+							"type": "string"
+						},
+						"derivedTasks": {
+							"type": "string"
+						},
+						"noDerivedTasks": {
+							"type": "string"
+						},
+						"taskLinksTitle": {
+							"type": "string"
+						},
+						"taskLinksEmpty": {
+							"type": "string"
+						},
+						"taskLinksEdit": {
+							"type": "string"
+						},
+						"taskLinksDialogTitle": {
+							"type": "string"
+						},
+						"taskLinksDialogHint": {
+							"type": "string"
+						},
+						"taskLinksDesign": {
+							"type": "string"
+						},
+						"acknowledge": {
+							"type": "string"
+						},
+						"acknowledged": {
+							"type": "string"
+						},
+						"acknowledgeFailed": {
+							"type": "string"
+						},
+						"acknowledgeHint": {
+							"type": "string"
+						},
+						"linkedRequirements": {
+							"type": "string"
+						},
+						"linkedRequirements_zero": {
+							"type": "string"
+						},
+						"linkedRequirements_one": {
+							"type": "string"
+						},
+						"linkedRequirements_two": {
+							"type": "string"
+						},
+						"linkedRequirements_few": {
+							"type": "string"
+						},
+						"linkedRequirements_many": {
+							"type": "string"
+						},
+						"linkedRequirements_other": {
+							"type": "string"
+						},
+						"notFound": {
+							"type": "string"
+						},
+						"forbidden": {
+							"type": "string"
+						}
+					},
+					"required": [
+						"requirementsPageTitle",
+						"designPageTitle",
+						"requirementsTitle",
+						"requirementsHint",
+						"designTitle",
+						"designHint",
+						"newSet",
+						"newDesign",
+						"feature",
+						"featureHint",
+						"featureInvalid",
+						"featureExists",
+						"title",
+						"emptySets",
+						"emptyDesigns",
+						"columnFeature",
+						"columnTitle",
+						"columnStatus",
+						"columnItems",
+						"columnRequirements",
+						"columnUpdated",
+						"columnKey",
+						"columnText",
+						"columnLayer",
+						"columnCoverage",
+						"columnDesigns",
+						"columnTasks",
+						"statusDraft",
+						"statusApproved",
+						"stale",
+						"staleHint",
+						"staleRequirement",
+						"staleDesign",
+						"unapproved",
+						"approve",
+						"approved",
+						"approveFailed",
+						"approvedAt",
+						"approvedHint",
+						"edit",
+						"save",
+						"cancel",
+						"saved",
+						"saveFailed",
+						"body",
+						"bodyHint",
+						"items",
+						"addItem",
+						"itemText",
+						"itemLayer",
+						"itemStatus",
+						"itemActive",
+						"itemDeferred",
+						"itemDropped",
+						"itemNoKey",
+						"notCovered",
+						"coverageTitle",
+						"backToRequirements",
+						"backToDesigns",
+						"requirementsCovered",
+						"requirementsCoveredHint",
+						"noRequirementSet",
+						"changedSinceApproval",
+						"derivedTasks",
+						"noDerivedTasks",
+						"taskLinksTitle",
+						"taskLinksEmpty",
+						"taskLinksEdit",
+						"taskLinksDialogTitle",
+						"taskLinksDialogHint",
+						"taskLinksDesign",
+						"acknowledge",
+						"acknowledged",
+						"acknowledgeFailed",
+						"acknowledgeHint",
+						"notFound",
+						"forbidden"
+					]
 				}
 			},
 			"required": [
@@ -10904,7 +11270,8 @@
 				"confidence",
 				"state",
 				"settings",
-				"domain"
+				"domain",
+				"spec"
 			]
 		}
 	},

@@ -27,6 +27,7 @@ import useGetProject from "@/hooks/queries/project/use-get-project";
 import useGetProjects from "@/hooks/queries/project/use-get-projects";
 import useGetTask from "@/hooks/queries/task/use-get-task";
 import { useGetActiveWorkspaceUsers } from "@/hooks/queries/workspace-users/use-get-active-workspace-users";
+import { useWorkspacePermission } from "@/hooks/use-workspace-permission";
 import { cn } from "@/lib/cn";
 import { getColumnIcon } from "@/lib/column";
 import {
@@ -39,6 +40,7 @@ import { getInitials } from "@/lib/get-initials";
 import { getPriorityLabel, getStatusDisplayLabel } from "@/lib/i18n/domain";
 import { getPriorityIcon } from "@/lib/priority";
 import { toast } from "@/lib/toast";
+import { TaskSpecLinks } from "../agent-layer/task-spec-links";
 import TaskAssigneePopover from "./task-assignee-popover";
 import TaskDueDatePopover from "./task-due-date-popover";
 import TaskLabelsPopover from "./task-labels-popover";
@@ -87,6 +89,8 @@ export default function TaskPropertiesSidebar({
   const { t } = useTranslation();
   const { data: task } = useGetTask(taskId ?? "");
   const { data: project } = useGetProject({ id: projectId, workspaceId });
+  const { canUpdateTasks } = useWorkspacePermission();
+  const canEditLinks = canUpdateTasks();
   const { data: columns = [] } = useGetColumns(projectId);
   const taskIsCompleted = isTaskCompleted(task?.status ?? "", columns);
   const { data: workspaceUsers } = useGetActiveWorkspaceUsers(workspaceId);
@@ -762,6 +766,14 @@ export default function TaskPropertiesSidebar({
               )}
             </div>
           </div>
+          {task ? (
+            <TaskSpecLinks
+              workspaceId={workspaceId}
+              projectId={projectId}
+              taskId={task.id}
+              canEdit={canEditLinks}
+            />
+          ) : null}
         </div>
       </div>
     </div>

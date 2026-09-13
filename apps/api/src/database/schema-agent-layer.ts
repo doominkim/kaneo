@@ -861,3 +861,212 @@ export type NewAgentProject = typeof agentProjectTable.$inferInsert;
 export type AgentDomain = typeof agentDomainTable.$inferSelect;
 export type NewAgentDomain = typeof agentDomainTable.$inferInsert;
 export type AgentProjectDomain = typeof agentProjectDomainTable.$inferSelect;
+
+/* -------------------------------------------------------------------------- */
+/* spec tabs — requirements · design · task links (KAN-19)                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A requirement set is the project's spec for one feature: the human-approved
+ * list of what to build, kept as rows (not free text) so a key survives edits
+ * and tests can point at it. `feature` is the slug that binds requirements,
+ * design and tasks together. `nextSeq` issues item keys; it never goes down,
+ * so a dropped key is never reused.
+ *
+ * Approval is document-level and human-only (`approvedBy` is a user, there is
+ * no actor column). `approvedAt` is kept when the set goes back to draft: the
+ * stale computation compares downstream `approvedAt` against item `updatedAt`,
+ * not against the set's status.
+ */
+export const agentRequirementSetTable = pgTable(
+  "agent_requirement_set",
+  {
+    id: text("id")
+      .$defaultFn(() => createId())
+      .primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaceTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projectTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    /** ^[a-z0-9][a-z0-9-]{0,63}$ — validated at the API layer */
+    feature: text("feature").notNull(),
+    title: text("title").notNull(),
+    /** markdown: background, scope, out-of-scope. Items are rows, not body. */
+    body: text("body").notNull().default(""),
+    /** draft | approved */
+    status: text("status").notNull().default("draft"),
+    approvedAt: timestamp("approved_at", { mode: "date" }),
+    approvedBy: text("approved_by").references(() => userTable.id, { onDelete: "set null", onUpdate: "cascade" }),
+    /** next item seq to issue; monotonic */
+    nextSeq: integer("next_seq").notNull().default(1),
+    /** the document slug this set was migrated from (REQ-SPEC-TABS-17), or NULL */
+    sourceSlug: text("source_slug"),
+    updatedBy: text("updated_by").references(() => userTable.id, { onDelete: "set null", onUpdate: "cascade" }),
+    actorId: text("actor_id").references(() => agentActorTable.id, { onDelete: "set null", onUpdate: "cascade" }),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("agent_requirement_set_project_feature_unique").on(table.projectId, table.feature),
+    index("agent_requirement_set_project_idx").on(table.projectId),
+  ],
+);
+
+/**
+ * One requirement. `key` is `REQ-<FEATURE>-<seq>`, unique per project, and is
+ * the string tests and commits cite. Rows are never deleted — status goes to
+ * `dropped` — because a deleted key would orphan the tests that reference it.
+ * `updatedAt` moves only when `text` or `status` changes; it is the upstream
+ * clock for the stale computation.
+ */
+export const agentRequirementItemTable = pgTable(
+  "agent_requirement_item",
+  {
+    id: text("id")
+      .$defaultFn(() => createId())
+      .primaryKey(),
+    setId: text("set_id")
+      .notNull()
+      .references(() => agentRequirementSetTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projectTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    key: text("key").notNull(),
+    seq: integer("seq").notNull(),
+    /** EARS sentence */
+    text: text("text").notNull(),
+    /** unit | api | e2e | free text */
+    layer: text("layer"),
+    /** active | deferred | dropped */
+    status: text("status").notNull().default("active"),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("agent_requirement_item_project_key_unique").on(table.projectId, table.key),
+    index("agent_requirement_item_set_idx").on(table.setId),
+  ],
+);
+
+/** The design for one feature. One per (project, feature); split the feature if two are needed. */
+export const agentDesignTable = pgTable(
+  "agent_design",
+  {
+    id: text("id")
+      .$defaultFn(() => createId())
+      .primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaceTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projectTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    feature: text("feature").notNull(),
+    title: text("title").notNull(),
+    /** markdown, ≤ 200KB enforced in Zod */
+    body: text("body").notNull(),
+    /** draft | approved */
+    status: text("status").notNull().default("draft"),
+    approvedAt: timestamp("approved_at", { mode: "date" }),
+    approvedBy: text("approved_by").references(() => userTable.id, { onDelete: "set null", onUpdate: "cascade" }),
+    sourceSlug: text("source_slug"),
+    updatedBy: text("updated_by").references(() => userTable.id, { onDelete: "set null", onUpdate: "cascade" }),
+    actorId: text("actor_id").references(() => agentActorTable.id, { onDelete: "set null", onUpdate: "cascade" }),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("agent_design_project_feature_unique").on(table.projectId, table.feature),
+    index("agent_design_project_idx").on(table.projectId),
+  ],
+);
+
+/** Which requirement items a design covers. Structure, not history: stale is computed from timestamps. */
+export const agentDesignRequirementTable = pgTable(
+  "agent_design_requirement",
+  {
+    designId: text("design_id")
+      .notNull()
+      .references(() => agentDesignTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => agentRequirementItemTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.designId, table.itemId] }),
+    index("agent_design_requirement_item_idx").on(table.itemId),
+  ],
+);
+
+/**
+ * task ↔ requirement item. `acknowledgedAt` is the task side's clock: a human
+ * pressing "확인" after an upstream change sets it, which clears the stale flag
+ * without touching the upstream row or the task itself.
+ */
+export const agentTaskRequirementTable = pgTable(
+  "agent_task_requirement",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => agentRequirementItemTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    acknowledgedAt: timestamp("acknowledged_at", { mode: "date" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.taskId, table.itemId] }),
+    index("agent_task_requirement_item_idx").on(table.itemId),
+  ],
+);
+
+/** task ↔ design. Same acknowledgement semantics as agent_task_requirement. */
+export const agentTaskDesignTable = pgTable(
+  "agent_task_design",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => taskTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    designId: text("design_id")
+      .notNull()
+      .references(() => agentDesignTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+    acknowledgedAt: timestamp("acknowledged_at", { mode: "date" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.taskId, table.designId] }),
+    index("agent_task_design_design_idx").on(table.designId),
+  ],
+);
+
+/**
+ * spec-check's report: which test files cite which requirement key. Stored
+ * per (item, repo, path); whether the test passes is not recorded here —
+ * that is the test runner's job.
+ */
+export const agentRequirementCoverageTable = pgTable(
+  "agent_requirement_coverage",
+  {
+    id: text("id")
+      .$defaultFn(() => createId())
+      .primaryKey(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => agentRequirementItemTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+    /** e.g. "doominkim/sandbox" */
+    repo: text("repo").notNull(),
+    /** repo-relative test file path */
+    testPath: text("test_path").notNull(),
+    testName: text("test_name"),
+    actorId: text("actor_id").references(() => agentActorTable.id, { onDelete: "set null", onUpdate: "cascade" }),
+    reportedAt: timestamp("reported_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique("agent_requirement_coverage_item_repo_path_unique").on(table.itemId, table.repo, table.testPath),
+    index("agent_requirement_coverage_item_idx").on(table.itemId),
+  ],
+);

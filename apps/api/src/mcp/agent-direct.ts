@@ -3,10 +3,17 @@ import { Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import presignArtifact from "../agent-artifact/controllers/presign-artifact";
 import putTextArtifact from "../agent-artifact/controllers/put-text-artifact";
+import getDesign from "../agent-design/controllers/get-design";
+import putDesign from "../agent-design/controllers/put-design";
 import putDocument from "../agent-document/controllers/put-document";
 import createDomain from "../agent-domain/controllers/create-domain";
 import updateDomain from "../agent-domain/controllers/update-domain";
 import resolveActor from "../agent-entry/controllers/resolve-actor";
+import getRequirementSet from "../agent-requirement/controllers/get-set";
+import putRequirementCoverage from "../agent-requirement/controllers/put-coverage";
+import putRequirementSet from "../agent-requirement/controllers/put-set";
+import getTaskLinks from "../agent-task-link/controllers/get-task-links";
+import putTaskLinks from "../agent-task-link/controllers/put-task-links";
 import db, { schema } from "../database";
 import { hasWorkspacePermission } from "../utils/require-workspace-permission";
 import { validateWorkspaceAccess } from "../utils/validate-workspace-access";
@@ -217,6 +224,128 @@ export function putTextArtifactAsAgent(
       contentType: input.contentType,
       text: input.text,
       taskId: input.taskId,
+    });
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Spec tabs (KAN-19): requirements, designs, task links, coverage             */
+/* -------------------------------------------------------------------------- */
+
+type AgentSession = { sessionId?: string | null };
+
+function entryAuthorOf(input: AgentPrincipal & AgentSession) {
+  return {
+    userId: input.userId,
+    provider: input.provider,
+    model: input.model,
+    sessionId: input.sessionId ?? null,
+  };
+}
+
+/**
+ * Requirement set as an agent: always lands as `draft` (REQ-SPEC-TABS-14);
+ * approval has no agent path. Returns the set with its items so the caller
+ * learns the keys that were issued.
+ */
+export function putRequirementSetAsAgent(
+  input: AgentPrincipal &
+    AgentSession & {
+      feature: string;
+      title: string;
+      body: string;
+      items: Array<{
+        key?: string;
+        text: string;
+        layer?: string | null;
+        status?: "active" | "deferred" | "dropped";
+      }>;
+      sourceSlug?: string | null;
+    },
+) {
+  return asToolCall(async () => {
+    const auth = await authorizeAgentWrite(input);
+    await putRequirementSet({
+      workspaceId: auth.workspaceId,
+      projectId: input.projectId,
+      feature: input.feature,
+      title: input.title,
+      body: input.body,
+      items: input.items,
+      sourceSlug: input.sourceSlug,
+      author: { actorId: auth.actorId },
+      entryAuthor: entryAuthorOf(input),
+    });
+    return getRequirementSet(input.projectId, input.feature);
+  });
+}
+
+export function putDesignAsAgent(
+  input: AgentPrincipal &
+    AgentSession & {
+      feature: string;
+      title: string;
+      body: string;
+      requirementKeys?: string[];
+      sourceSlug?: string | null;
+    },
+) {
+  return asToolCall(async () => {
+    const auth = await authorizeAgentWrite(input);
+    await putDesign({
+      workspaceId: auth.workspaceId,
+      projectId: input.projectId,
+      feature: input.feature,
+      title: input.title,
+      body: input.body,
+      requirementKeys: input.requirementKeys,
+      sourceSlug: input.sourceSlug,
+      author: { actorId: auth.actorId },
+      entryAuthor: entryAuthorOf(input),
+    });
+    return getDesign(input.projectId, input.feature);
+  });
+}
+
+/**
+ * Task links are attribution-free mapping rows, but the write still goes
+ * through the agent authorization so an MCP caller without task:update is
+ * refused the same way a human would be.
+ */
+export function putTaskLinksAsAgent(
+  input: AgentPrincipal & {
+    taskId: string;
+    requirementKeys?: string[];
+    designFeatures?: string[];
+  },
+) {
+  return asToolCall(async () => {
+    await authorizeAgentWrite(input);
+    await putTaskLinks({
+      projectId: input.projectId,
+      taskId: input.taskId,
+      requirementKeys: input.requirementKeys,
+      designFeatures: input.designFeatures,
+    });
+    return getTaskLinks(input.projectId, input.taskId);
+  });
+}
+
+export function putRequirementCoverageAsAgent(
+  input: AgentPrincipal & {
+    feature: string;
+    repo: string;
+    entries: Array<{ key: string; testPath: string; testName?: string | null }>;
+  },
+) {
+  return asToolCall(async () => {
+    const auth = await authorizeAgentWrite(input);
+    return putRequirementCoverage({
+      projectId: input.projectId,
+      feature: input.feature,
+      repo: input.repo,
+      entries: input.entries,
+      actorId: auth.actorId,
     });
   });
 }

@@ -17,10 +17,19 @@ import {
   MAX_DOMAIN_TITLE_LENGTH,
 } from "../agent-domain/schema";
 import { parseSlugPath, resolveSlugPath } from "../agent-domain/slug-path";
+import { FEATURE_PATTERN, KEY_PATTERN } from "../agent-requirement/keys";
+import {
+  MAX_ITEM_TEXT_LENGTH,
+  MAX_REQUIREMENT_BODY_BYTES,
+} from "../agent-requirement/schema";
 import {
   presignArtifactAsAgent,
+  putDesignAsAgent,
   putDocumentAsAgent,
   putDomainAsAgent,
+  putRequirementCoverageAsAgent,
+  putRequirementSetAsAgent,
+  putTaskLinksAsAgent,
   putTextArtifactAsAgent,
 } from "./agent-direct";
 import type { McpToolRegistrar } from "./tools";
@@ -798,5 +807,260 @@ export function registerAgentTools(
           },
         ),
       ),
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* Spec tabs (KAN-19) — requirements / design / task links / coverage      */
+  /* ---------------------------------------------------------------------- */
+
+  type RequirementItemOut = {
+    key: string;
+    seq: number;
+    text: string;
+    layer: string | null;
+    status: string;
+    updatedAt: string;
+    coverage: Array<{ repo: string; testPath: string }>;
+    designs: Array<{ feature: string }>;
+    tasks: Array<{ id: string; number: number | null }>;
+  };
+  type RequirementSetOut = {
+    id: string;
+    feature: string;
+    title: string;
+    body: string;
+    status: string;
+    approvedAt: string | null;
+    sourceSlug: string | null;
+    updatedAt: string;
+    items: RequirementItemOut[];
+  };
+  const shapeRequirementSet = (set: RequirementSetOut, offset: number) => ({
+    id: set.id,
+    feature: set.feature,
+    title: set.title,
+    status: set.status,
+    approvedAt: set.approvedAt,
+    sourceSlug: set.sourceSlug,
+    updatedAt: set.updatedAt,
+    items: set.items.map((item) => ({
+      key: item.key,
+      text: item.text,
+      layer: item.layer,
+      status: item.status,
+      updatedAt: item.updatedAt,
+      covered: item.coverage.length > 0,
+      designs: item.designs.map((d) => d.feature),
+      tasks: item.tasks.map((t) => t.number ?? t.id),
+    })),
+    ...sliceBody(set.body, offset),
+  });
+
+  reg(
+    "agent_requirements_get",
+    {
+      description:
+        "Requirement set for `feature`: items (key, text, status, covered, designs, tasks) plus a body slice. Omit `feature` to list sets.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        feature: z.string().regex(FEATURE_PATTERN).optional(),
+        offset: z.number().int().min(0).default(0),
+      }),
+    },
+    (args) =>
+      guard(async () => {
+        if (!args.feature) {
+          const { sets } = await api.json<{ sets: unknown[] }>(
+            `/api/agent-requirement/${encodeURIComponent(args.projectId)}`,
+          );
+          return { sets };
+        }
+        const set = await api.json<RequirementSetOut>(
+          `/api/agent-requirement/${encodeURIComponent(args.projectId)}/${encodeURIComponent(args.feature)}`,
+        );
+        return shapeRequirementSet(set, args.offset);
+      }),
+  );
+
+  reg(
+    "agent_requirements_put",
+    {
+      description:
+        "Upsert the requirement set for `feature` as this agent; always draft (humans approve in the UI). `items` is partial: no `key` = new REQ-<FEATURE>-<n>, existing key = edit, status dropped = retire (never deleted). Text changes make dependent designs/tasks stale. Returns the issued keys.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        feature: z.string().regex(FEATURE_PATTERN),
+        title: z.string().min(1).max(200),
+        body: utf8String(MAX_REQUIREMENT_BODY_BYTES, "body").default(""),
+        items: z
+          .array(
+            z.object({
+              key: z.string().regex(KEY_PATTERN).optional(),
+              text: z.string().min(1).max(MAX_ITEM_TEXT_LENGTH),
+              layer: z.string().max(64).nullable().optional(),
+              status: z.enum(["active", "deferred", "dropped"]).optional(),
+            }),
+          )
+          .max(500)
+          .default([]),
+        sourceSlug: z.string().max(64).nullable().optional(),
+        ...agentIdentity,
+      }),
+    },
+    (args) =>
+      guard(async () => {
+        const set = await putRequirementSetAsAgent({ ...args, userId });
+        return {
+          id: set.id,
+          feature: set.feature,
+          status: set.status,
+          updatedAt: set.updatedAt,
+          items: set.items.map((item) => ({
+            key: item.key,
+            status: item.status,
+            updatedAt: item.updatedAt,
+          })),
+        };
+      }),
+  );
+
+  type DesignOut = {
+    id: string;
+    feature: string;
+    title: string;
+    body: string;
+    status: string;
+    approvedAt: string | null;
+    updatedAt: string;
+    stale: { stale: boolean; causes: unknown[] };
+    requirements: Array<{
+      key: string;
+      status: string;
+      changedSinceApproval: boolean;
+    }>;
+    tasks: Array<{ id: string; number: number | null }>;
+  };
+
+  reg(
+    "agent_design_get",
+    {
+      description:
+        "Design for `feature`: stale verdict, covered requirement keys, derived tasks, body slice. Omit `feature` to list designs.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        feature: z.string().regex(FEATURE_PATTERN).optional(),
+        offset: z.number().int().min(0).default(0),
+      }),
+    },
+    (args) =>
+      guard(async () => {
+        if (!args.feature) {
+          const { designs } = await api.json<{ designs: unknown[] }>(
+            `/api/agent-design/${encodeURIComponent(args.projectId)}`,
+          );
+          return { designs };
+        }
+        const design = await api.json<DesignOut>(
+          `/api/agent-design/${encodeURIComponent(args.projectId)}/${encodeURIComponent(args.feature)}`,
+        );
+        return {
+          id: design.id,
+          feature: design.feature,
+          title: design.title,
+          status: design.status,
+          approvedAt: design.approvedAt,
+          updatedAt: design.updatedAt,
+          stale: design.stale,
+          requirements: design.requirements,
+          tasks: design.tasks.map((t) => t.number ?? t.id),
+          ...sliceBody(design.body, args.offset),
+        };
+      }),
+  );
+
+  reg(
+    "agent_design_put",
+    {
+      description:
+        "Upsert the design for `feature` as this agent (draft; humans approve). `requirementKeys` replaces the covered items; unknown keys fail.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        feature: z.string().regex(FEATURE_PATTERN),
+        title: z.string().min(1).max(200),
+        body: utf8String(MAX_REQUIREMENT_BODY_BYTES, "body"),
+        requirementKeys: z
+          .array(z.string().regex(KEY_PATTERN))
+          .max(500)
+          .optional(),
+        sourceSlug: z.string().max(64).nullable().optional(),
+        ...agentIdentity,
+      }),
+    },
+    (args) =>
+      guard(async () => {
+        const design = await putDesignAsAgent({ ...args, userId });
+        return {
+          id: design.id,
+          feature: design.feature,
+          status: design.status,
+          updatedAt: design.updatedAt,
+          requirements: design.requirements.map((r) => r.key),
+        };
+      }),
+  );
+
+  reg(
+    "agent_task_link",
+    {
+      description:
+        "Bind a task to the requirement keys / design features it implements (each list sent is replaced). Upstream changes then flag the task stale; only a human can acknowledge.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        taskId: z.string(),
+        requirementKeys: z
+          .array(z.string().regex(KEY_PATTERN))
+          .max(200)
+          .optional(),
+        designFeatures: z
+          .array(z.string().regex(FEATURE_PATTERN))
+          .max(50)
+          .optional(),
+        ...agentIdentity,
+      }),
+    },
+    (args) =>
+      guard(async () => {
+        const links = await putTaskLinksAsAgent({ ...args, userId });
+        return {
+          taskId: links.taskId,
+          requirements: links.requirements.map((r) => r.key),
+          designs: links.designs.map((d) => d.feature),
+          stale: links.stale,
+        };
+      }),
+  );
+
+  reg(
+    "agent_requirement_coverage_put",
+    {
+      description:
+        "Report which tests cite which requirement keys for one repo (spec-check output). Replaces that repo's coverage for the feature; unknown keys fail.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        feature: z.string().regex(FEATURE_PATTERN),
+        repo: z.string().min(1).max(200),
+        entries: z
+          .array(
+            z.object({
+              key: z.string().regex(KEY_PATTERN),
+              testPath: z.string().min(1).max(300),
+              testName: z.string().max(300).nullable().optional(),
+            }),
+          )
+          .max(2000),
+        ...agentIdentity,
+      }),
+    },
+    (args) => guard(() => putRequirementCoverageAsAgent({ ...args, userId })),
   );
 }
