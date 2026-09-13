@@ -26,6 +26,7 @@ import {
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { toast } from "@/lib/toast";
 import { AgentAuthorBadge } from "./agent-author-badge";
+import { isDocMode, RequirementDoc } from "./requirement-doc";
 import { RequirementKeyChip, SpecStatusBadge } from "./spec-badges";
 
 type ItemDraft = AgentRequirementItemInput & { draftId: string };
@@ -38,6 +39,8 @@ type RequirementSetPageProps = {
   authorName?: string | null;
   canEdit: boolean;
   startInEdit?: boolean;
+  /** Mounted inside the feature page: the feature header already has the back link. */
+  embedded?: boolean;
 };
 
 function toDrafts(items: AgentRequirementItem[]): ItemDraft[] {
@@ -64,6 +67,7 @@ export function RequirementSetPage({
   authorName,
   canEdit,
   startInEdit = false,
+  embedded = false,
 }: RequirementSetPageProps) {
   const { t } = useTranslation();
   const [isEditing, setIsEditing] = useState(startInEdit && canEdit);
@@ -72,6 +76,9 @@ export function RequirementSetPage({
   const [drafts, setDrafts] = useState<ItemDraft[]>(() => toDrafts(set.items));
   const put = usePutAgentRequirementSet();
   const approve = useApproveAgentRequirementSet();
+  // The document is the source of truth once it carries criterion lines
+  // (REQ-FEATURE-HUB-23): rows are shown from it and edited through it.
+  const docMode = isDocMode(set.body);
 
   useEffect(() => {
     if (!isEditing) {
@@ -85,7 +92,7 @@ export function RequirementSetPage({
   const canSave =
     !put.isPending &&
     trimmedTitle.length > 0 &&
-    drafts.every((draft) => draft.text.trim().length > 0);
+    (docMode || drafts.every((draft) => draft.text.trim().length > 0));
 
   const handleSave = async () => {
     if (!canSave) return;
@@ -97,11 +104,13 @@ export function RequirementSetPage({
           title: trimmedTitle,
           body,
           sourceSlug: set.sourceSlug,
-          items: drafts.map(({ draftId: _draftId, ...draft }) => ({
-            ...draft,
-            text: draft.text.trim(),
-            layer: draft.layer?.trim() ? draft.layer.trim() : null,
-          })),
+          items: docMode
+            ? []
+            : drafts.map(({ draftId: _draftId, ...draft }) => ({
+                ...draft,
+                text: draft.text.trim(),
+                layer: draft.layer?.trim() ? draft.layer.trim() : null,
+              })),
         },
       });
       toast.success(t("agentLayer:spec.saved"));
@@ -134,14 +143,16 @@ export function RequirementSetPage({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border/80 px-3 py-2.5 sm:px-4">
-        <Link
-          to="/dashboard/workspace/$workspaceId/project/$projectId/requirements"
-          params={{ workspaceId, projectId }}
-          className="flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
-        >
-          <ArrowLeft className="size-3.5" />
-          {t("agentLayer:spec.backToRequirements")}
-        </Link>
+        {embedded ? null : (
+          <Link
+            to="/dashboard/workspace/$workspaceId/project/$projectId/feature"
+            params={{ workspaceId, projectId }}
+            className="flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
+          >
+            <ArrowLeft className="size-3.5" />
+            {t("agentLayer:spec.backToFeatures")}
+          </Link>
+        )}
         <span className="font-mono text-xs text-muted-foreground">
           {set.feature}
         </span>
@@ -231,237 +242,265 @@ export function RequirementSetPage({
             </div>
           </div>
 
-          <section className="space-y-1.5">
-            <h2 className="text-xs font-medium text-foreground/70">
-              {t("agentLayer:spec.body")}
-            </h2>
-            {isEditing ? (
-              <>
+          {docMode ? (
+            isEditing ? (
+              <section className="space-y-1.5">
                 <Textarea
                   value={body}
                   onChange={(event) => setBody(event.target.value)}
-                  rows={8}
+                  rows={28}
                   className="font-mono text-xs"
                   data-testid="set-body"
                 />
                 <p className="text-xs text-muted-foreground">
-                  {t("agentLayer:spec.bodyHint")}
+                  {t("agentLayer:spec.docEditHint")}
                 </p>
-              </>
-            ) : set.body.trim() ? (
-              <div className="prose prose-sm max-w-none dark:prose-invert">
-                <MarkdownRenderer content={set.body} />
-              </div>
-            ) : null}
-          </section>
+              </section>
+            ) : (
+              <RequirementDoc
+                body={set.body}
+                items={set.items}
+                workspaceId={workspaceId}
+                projectId={projectId}
+                projectSlug={projectSlug}
+              />
+            )
+          ) : (
+            <>
+              <section className="space-y-1.5">
+                <h2 className="text-xs font-medium text-foreground/70">
+                  {t("agentLayer:spec.body")}
+                </h2>
+                {isEditing ? (
+                  <>
+                    <Textarea
+                      value={body}
+                      onChange={(event) => setBody(event.target.value)}
+                      rows={8}
+                      className="font-mono text-xs"
+                      data-testid="set-body"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t("agentLayer:spec.bodyHint")}
+                    </p>
+                  </>
+                ) : set.body.trim() ? (
+                  <div className="prose prose-sm max-w-none dark:prose-invert">
+                    <MarkdownRenderer content={set.body} />
+                  </div>
+                ) : null}
+              </section>
 
-          <section className="space-y-2">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xs font-medium text-foreground/70">
-                {t("agentLayer:spec.items")} ({set.items.length})
-              </h2>
-              {isEditing ? (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() =>
-                    setDrafts((current) => [
-                      ...current,
-                      {
-                        draftId: `new-${current.length}-${Date.now()}`,
-                        text: "",
-                        layer: null,
-                        status: "active",
-                      },
-                    ])
-                  }
-                  data-testid="add-item"
-                >
-                  <Plus />
-                  {t("agentLayer:spec.addItem")}
-                </Button>
-              ) : null}
-            </div>
-            <Table data-testid="requirement-items">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-44">
-                    {t("agentLayer:spec.columnKey")}
-                  </TableHead>
-                  <TableHead>{t("agentLayer:spec.columnText")}</TableHead>
-                  <TableHead className="w-20">
-                    {t("agentLayer:spec.columnLayer")}
-                  </TableHead>
-                  <TableHead className="w-24">
-                    {t("agentLayer:spec.columnStatus")}
-                  </TableHead>
-                  {isEditing ? null : (
-                    <>
+              <section className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xs font-medium text-foreground/70">
+                    {t("agentLayer:spec.items")} ({set.items.length})
+                  </h2>
+                  {isEditing ? (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      onClick={() =>
+                        setDrafts((current) => [
+                          ...current,
+                          {
+                            draftId: `new-${current.length}-${Date.now()}`,
+                            text: "",
+                            layer: null,
+                            status: "active",
+                          },
+                        ])
+                      }
+                      data-testid="add-item"
+                    >
+                      <Plus />
+                      {t("agentLayer:spec.addItem")}
+                    </Button>
+                  ) : null}
+                </div>
+                <Table data-testid="requirement-items">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-44">
+                        {t("agentLayer:spec.columnKey")}
+                      </TableHead>
+                      <TableHead>{t("agentLayer:spec.columnText")}</TableHead>
+                      <TableHead className="w-20">
+                        {t("agentLayer:spec.columnLayer")}
+                      </TableHead>
                       <TableHead className="w-24">
-                        {t("agentLayer:spec.columnCoverage")}
+                        {t("agentLayer:spec.columnStatus")}
                       </TableHead>
-                      <TableHead className="w-28">
-                        {t("agentLayer:spec.columnDesigns")}
-                      </TableHead>
-                      <TableHead className="w-28">
-                        {t("agentLayer:spec.columnTasks")}
-                      </TableHead>
-                    </>
-                  )}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {isEditing
-                  ? drafts.map((draft) => (
-                      <TableRow key={draft.draftId} data-testid="item-row">
-                        <TableCell className="font-mono text-xs">
-                          {draft.key ?? (
-                            <span className="text-muted-foreground">
-                              {t("agentLayer:spec.itemNoKey")}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Textarea
-                            value={draft.text}
-                            onChange={(event) =>
-                              updateDraft(draft.draftId, {
-                                text: event.target.value,
-                              })
-                            }
-                            rows={2}
-                            className="text-xs"
-                            placeholder={t("agentLayer:spec.itemText")}
-                            data-testid="item-text"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            value={draft.layer ?? ""}
-                            onChange={(event) =>
-                              updateDraft(draft.draftId, {
-                                layer: event.target.value,
-                              })
-                            }
-                            className="h-7 text-xs"
-                            placeholder="api"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <select
-                            value={draft.status ?? "active"}
-                            onChange={(event) =>
-                              updateDraft(draft.draftId, {
-                                status: event.target
-                                  .value as ItemDraft["status"],
-                              })
-                            }
-                            className="h-7 rounded-md border border-input bg-background px-1 text-xs"
-                            data-testid="item-status"
-                          >
-                            <option value="active">
-                              {t("agentLayer:spec.itemActive")}
-                            </option>
-                            <option value="deferred">
-                              {t("agentLayer:spec.itemDeferred")}
-                            </option>
-                            <option value="dropped">
-                              {t("agentLayer:spec.itemDropped")}
-                            </option>
-                          </select>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  : set.items.map((item) => (
-                      <TableRow
-                        key={item.id}
-                        data-testid="item-row"
-                        className={
-                          item.status === "dropped"
-                            ? "text-muted-foreground line-through"
-                            : undefined
-                        }
-                      >
-                        <TableCell>
-                          <RequirementKeyChip
-                            requirementKey={item.key}
-                            muted={item.status !== "active"}
-                          />
-                        </TableCell>
-                        <TableCell className="whitespace-pre-wrap text-xs">
-                          {item.text}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {item.layer ?? ""}
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          {t(
-                            `agentLayer:spec.item${item.status.charAt(0).toUpperCase()}${item.status.slice(1)}`,
-                          )}
-                        </TableCell>
-                        <TableCell
-                          className="text-xs"
-                          data-testid="item-coverage"
-                        >
-                          {item.coverage.length > 0 ? (
-                            <span
-                              className="text-success-foreground"
-                              title={item.coverage
-                                .map((c) => `${c.repo}: ${c.testPath}`)
-                                .join("\n")}
-                            >
-                              {t("agentLayer:spec.covered", {
-                                count: item.coverage.length,
-                              })}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground">
-                              {t("agentLayer:spec.notCovered")}
-                            </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          {item.designs.map((design) => (
-                            <Link
-                              key={design.id}
-                              to="/dashboard/workspace/$workspaceId/project/$projectId/design/$feature"
-                              params={{
-                                workspaceId,
-                                projectId,
-                                feature: design.feature,
-                              }}
-                              className="font-mono underline-offset-2 hover:underline"
-                            >
-                              {design.feature}
-                            </Link>
-                          ))}
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          <div className="flex flex-wrap gap-1">
-                            {item.tasks.map((task) => (
-                              <Link
-                                key={task.id}
-                                to="/dashboard/workspace/$workspaceId/project/$projectId/task/$taskId"
-                                params={{
-                                  workspaceId,
-                                  projectId,
-                                  taskId: task.id,
-                                }}
-                                className="underline-offset-2 hover:underline"
-                                title={task.title}
+                      {isEditing ? null : (
+                        <>
+                          <TableHead className="w-24">
+                            {t("agentLayer:spec.columnCoverage")}
+                          </TableHead>
+                          <TableHead className="w-28">
+                            {t("agentLayer:spec.columnDesigns")}
+                          </TableHead>
+                          <TableHead className="w-28">
+                            {t("agentLayer:spec.columnTasks")}
+                          </TableHead>
+                        </>
+                      )}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {isEditing
+                      ? drafts.map((draft) => (
+                          <TableRow key={draft.draftId} data-testid="item-row">
+                            <TableCell className="font-mono text-xs">
+                              {draft.key ?? (
+                                <span className="text-muted-foreground">
+                                  {t("agentLayer:spec.itemNoKey")}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Textarea
+                                value={draft.text}
+                                onChange={(event) =>
+                                  updateDraft(draft.draftId, {
+                                    text: event.target.value,
+                                  })
+                                }
+                                rows={2}
+                                className="text-xs"
+                                placeholder={t("agentLayer:spec.itemText")}
+                                data-testid="item-text"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Input
+                                value={draft.layer ?? ""}
+                                onChange={(event) =>
+                                  updateDraft(draft.draftId, {
+                                    layer: event.target.value,
+                                  })
+                                }
+                                className="h-7 text-xs"
+                                placeholder="api"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <select
+                                value={draft.status ?? "active"}
+                                onChange={(event) =>
+                                  updateDraft(draft.draftId, {
+                                    status: event.target
+                                      .value as ItemDraft["status"],
+                                  })
+                                }
+                                className="h-7 rounded-md border border-input bg-background px-1 text-xs"
+                                data-testid="item-status"
                               >
-                                {projectSlug && task.number
-                                  ? `${projectSlug}-${task.number}`
-                                  : task.title}
-                              </Link>
-                            ))}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-              </TableBody>
-            </Table>
-          </section>
+                                <option value="active">
+                                  {t("agentLayer:spec.itemActive")}
+                                </option>
+                                <option value="deferred">
+                                  {t("agentLayer:spec.itemDeferred")}
+                                </option>
+                                <option value="dropped">
+                                  {t("agentLayer:spec.itemDropped")}
+                                </option>
+                              </select>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      : set.items.map((item) => (
+                          <TableRow
+                            key={item.id}
+                            data-testid="item-row"
+                            className={
+                              item.status === "dropped"
+                                ? "text-muted-foreground line-through"
+                                : undefined
+                            }
+                          >
+                            <TableCell>
+                              <RequirementKeyChip
+                                requirementKey={item.key}
+                                muted={item.status !== "active"}
+                              />
+                            </TableCell>
+                            <TableCell className="whitespace-pre-wrap text-xs">
+                              {item.text}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {item.layer ?? ""}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {t(
+                                `agentLayer:spec.item${item.status.charAt(0).toUpperCase()}${item.status.slice(1)}`,
+                              )}
+                            </TableCell>
+                            <TableCell
+                              className="text-xs"
+                              data-testid="item-coverage"
+                            >
+                              {item.coverage.length > 0 ? (
+                                <span
+                                  className="text-success-foreground"
+                                  title={item.coverage
+                                    .map((c) => `${c.repo}: ${c.testPath}`)
+                                    .join("\n")}
+                                >
+                                  {t("agentLayer:spec.covered", {
+                                    count: item.coverage.length,
+                                  })}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">
+                                  {t("agentLayer:spec.notCovered")}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {item.designs.map((design) => (
+                                <Link
+                                  key={design.id}
+                                  to="/dashboard/workspace/$workspaceId/project/$projectId/feature/$feature"
+                                  params={{
+                                    workspaceId,
+                                    projectId,
+                                    feature: design.feature,
+                                  }}
+                                  search={{ tab: "design" }}
+                                  className="font-mono underline-offset-2 hover:underline"
+                                >
+                                  {design.feature}
+                                </Link>
+                              ))}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              <div className="flex flex-wrap gap-1">
+                                {item.tasks.map((task) => (
+                                  <Link
+                                    key={task.id}
+                                    to="/dashboard/workspace/$workspaceId/project/$projectId/task/$taskId"
+                                    params={{
+                                      workspaceId,
+                                      projectId,
+                                      taskId: task.id,
+                                    }}
+                                    className="underline-offset-2 hover:underline"
+                                    title={task.title}
+                                  >
+                                    {projectSlug && task.number
+                                      ? `${projectSlug}-${task.number}`
+                                      : task.title}
+                                  </Link>
+                                ))}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                  </TableBody>
+                </Table>
+              </section>
+            </>
+          )}
         </div>
       </div>
     </div>

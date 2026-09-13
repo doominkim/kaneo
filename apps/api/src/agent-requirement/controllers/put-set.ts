@@ -7,6 +7,7 @@ import {
   agentRequirementSetTable,
 } from "../../database/schema-agent-layer";
 import { buildKey, parseKey } from "../keys";
+import { parseRequirementDoc } from "../parse";
 import { type Author, authorColumns, type EntryAuthor } from "./shared";
 
 type ItemInput = {
@@ -14,6 +15,7 @@ type ItemInput = {
   text: string;
   layer?: string | null;
   status?: "active" | "deferred" | "dropped";
+  story?: string | null;
 };
 
 type PutInput = {
@@ -48,6 +50,36 @@ function isUniqueViolation(error: unknown): boolean {
 async function putSet(input: PutInput) {
   const isAgent = "actorId" in input.author;
   const result = await db.transaction(async (tx) => {
+    // Document mode (REQ-FEATURE-HUB-23): when the body carries criterion
+    // lines, the body is the source of truth and `items` is ignored. Parsing
+    // runs before the set row is written because it can reject the request,
+    // and it needs the set's `nextSeq` to issue keys.
+    const [existingForSeq] = await tx
+      .select({ nextSeq: agentRequirementSetTable.nextSeq })
+      .from(agentRequirementSetTable)
+      .where(
+        and(
+          eq(agentRequirementSetTable.projectId, input.projectId),
+          eq(agentRequirementSetTable.feature, input.feature),
+        ),
+      )
+      .limit(1);
+    const parsed = parseRequirementDoc(
+      input.body,
+      input.feature,
+      existingForSeq?.nextSeq ?? 1,
+    );
+    const docMode = parsed.criteria.length > 0;
+    const body = docMode ? parsed.body : input.body;
+    const items: ItemInput[] = docMode
+      ? parsed.criteria.map((criterion) => ({
+          key: criterion.key,
+          text: criterion.text,
+          layer: criterion.layer,
+          story: criterion.story,
+          status: criterion.dropped ? "dropped" : undefined,
+        }))
+      : input.items;
     const [existing] = await tx
       .select()
       .from(agentRequirementSetTable)
@@ -62,7 +94,7 @@ async function putSet(input: PutInput) {
     const wasApproved = existing?.status === "approved";
     const values = {
       title: input.title,
-      body: input.body,
+      body,
       sourceSlug: input.sourceSlug ?? existing?.sourceSlug ?? null,
       status: "draft",
       ...authorColumns(input.author),
@@ -99,7 +131,7 @@ async function putSet(input: PutInput) {
       .where(eq(agentRequirementItemTable.setId, set.id));
     const byKey = new Map(current.map((item) => [item.key, item]));
 
-    let nextSeq = set.nextSeq;
+    let nextSeq = docMode ? Math.max(set.nextSeq, parsed.nextSeq) : set.nextSeq;
     const changes: Array<{
       key: string;
       previousText: string;
@@ -107,7 +139,7 @@ async function putSet(input: PutInput) {
     }> = [];
     const seenKeys = new Set<string>();
 
-    for (const item of input.items) {
+    for (const item of items) {
       if (item.key) {
         if (seenKeys.has(item.key)) {
           throw new HTTPException(400, {
@@ -119,7 +151,13 @@ async function putSet(input: PutInput) {
       const existingItem = item.key ? byKey.get(item.key) : undefined;
 
       if (existingItem) {
-        const nextStatus = item.status ?? existingItem.status;
+        // In document mode a line that is no longer struck through comes back
+        // to life; a deferred row stays deferred until the text says otherwise.
+        const nextStatus =
+          item.status ??
+          (docMode && existingItem.status === "dropped"
+            ? "active"
+            : existingItem.status);
         const changed =
           existingItem.text !== item.text || existingItem.status !== nextStatus;
         await tx
@@ -127,6 +165,7 @@ async function putSet(input: PutInput) {
           .set({
             text: item.text,
             layer: item.layer === undefined ? existingItem.layer : item.layer,
+            story: item.story === undefined ? existingItem.story : item.story,
             status: nextStatus,
             ...(changed ? { updatedAt: new Date() } : {}),
           })
@@ -161,6 +200,7 @@ async function putSet(input: PutInput) {
           seq,
           text: item.text,
           layer: item.layer ?? null,
+          story: item.story ?? null,
           status: item.status ?? "active",
         });
       } catch (error) {
@@ -170,6 +210,21 @@ async function putSet(input: PutInput) {
           });
         }
         throw error;
+      }
+    }
+
+    if (docMode) {
+      for (const row of current) {
+        if (seenKeys.has(row.key) || row.status === "dropped") continue;
+        await tx
+          .update(agentRequirementItemTable)
+          .set({ status: "dropped", updatedAt: new Date() })
+          .where(eq(agentRequirementItemTable.id, row.id));
+        changes.push({
+          key: row.key,
+          previousText: row.text,
+          previousStatus: row.status,
+        });
       }
     }
 
@@ -196,12 +251,25 @@ async function putSet(input: PutInput) {
     model: isAgent ? input.entryAuthor.model : undefined,
     sessionId: input.entryAuthor.sessionId ?? null,
   };
-  for (const change of result.changes) {
+  // One timeline entry per save, not per item: a document edit that touches
+  // twenty lines is one event to a reader. Previous sentences ride in the body
+  // so nothing is lost (REQ-SPEC-TABS-9).
+  if (result.changes.length) {
+    const keys = result.changes.map((change) => change.key);
     await appendEntry({
       ...entryBase,
       kind: "work",
-      summary: `[${change.key}] 요구사항 수정 (이전 상태 ${change.previousStatus})`,
-      body: `이전 문장:\n${change.previousText}`,
+      summary:
+        `[requirements:${input.feature}] 기준 ${keys.length}건 수정: ${keys.join(", ")}`.slice(
+          0,
+          200,
+        ),
+      body: result.changes
+        .map(
+          (change) =>
+            `## ${change.key} (이전 상태 ${change.previousStatus})\n이전 문장:\n${change.previousText}`,
+        )
+        .join("\n\n"),
     });
   }
   if (result.wasApproved) {

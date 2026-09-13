@@ -216,6 +216,132 @@ describe("API integration: requirement sets, designs, task links", () => {
     ]);
   });
 
+  it("[REQ-FEATURE-HUB-23] [REQ-FEATURE-HUB-24] a body with criterion lines is the source of truth: rows are derived, keys are issued and written back", async () => {
+    const { app, project } = await setup();
+    const doc = [
+      "# Feature 허브",
+      "",
+      "배경 문단.",
+      "",
+      "## 1. 목록",
+      "",
+      "1. 시스템은 탭을 6개 보여준다. `e2e`",
+      "2. Feature 탭을 열면 시스템은 feature 를 한 줄씩 보여준다. `e2e`",
+      "",
+      "## 2. 승인",
+      "",
+      "1. 설계를 처음 승인하면 시스템은 태스크를 stale 로 만들지 않는다. `api`",
+      "",
+    ].join("\n");
+    const created = await putSet(app, project.id, "feature-hub", {
+      title: "Feature 허브",
+      body: doc,
+      // Rows sent alongside a document are ignored: the document wins.
+      items: [{ text: "무시되는 행" }],
+    });
+    expect(created.status, await created.clone().text()).toBe(200);
+    const set = (await created.json()) as SetDetail & {
+      body: string;
+      items: Array<Item & { story: string | null }>;
+    };
+    expect(set.items.map((i) => [i.key, i.story])).toEqual([
+      ["REQ-FEATURE-HUB-1", "1. 목록"],
+      ["REQ-FEATURE-HUB-2", "1. 목록"],
+      ["REQ-FEATURE-HUB-3", "2. 승인"],
+    ]);
+    expect(set.items.some((i) => i.text === "무시되는 행")).toBe(false);
+    expect(set.body).toContain("6개 보여준다. `e2e` REQ-FEATURE-HUB-1");
+    expect(set.body).toContain(
+      "stale 로 만들지 않는다. `api` REQ-FEATURE-HUB-3",
+    );
+    expect(set.nextSeq).toBe(4);
+
+    // Saving the returned body again changes nothing: no new keys, no clock movement, no entry.
+    const before = await entriesFor(project.id);
+    const again = await putSet(app, project.id, "feature-hub", {
+      title: "Feature 허브",
+      body: set.body,
+    });
+    const same = (await again.json()) as SetDetail;
+    expect(same.items.map((i) => i.updatedAt)).toEqual(
+      set.items.map((i) => i.updatedAt),
+    );
+    expect(same.nextSeq).toBe(4);
+    expect((await entriesFor(project.id)).length).toBe(before.length);
+
+    // Editing one sentence moves only that clock and leaves one entry naming the key.
+    const edited = await putSet(app, project.id, "feature-hub", {
+      title: "Feature 허브",
+      body: set.body.replace("한 줄씩 보여준다", "한 줄씩 나열한다"),
+    });
+    const after = (await edited.json()) as SetDetail;
+    expect(after.items[1]?.text).toBe(
+      "Feature 탭을 열면 시스템은 feature 를 한 줄씩 나열한다.",
+    );
+    expect(after.items[0]?.updatedAt).toBe(set.items[0]?.updatedAt);
+    expect(after.items[1]?.updatedAt).not.toBe(set.items[1]?.updatedAt);
+    const entries = await entriesFor(project.id);
+    expect(entries.length).toBe(before.length + 1);
+    expect(entries.at(-1)?.summary).toContain("REQ-FEATURE-HUB-2");
+    expect(entries.at(-1)?.body).toContain("한 줄씩 보여준다");
+  });
+
+  it("[REQ-FEATURE-HUB-26] [REQ-FEATURE-HUB-22] a struck-through or missing line is dropped, and a line without a badge is rejected", async () => {
+    const { app, project } = await setup();
+    const doc =
+      "## A\n\n1. 시스템은 x 한다. `api`\n2. 시스템은 y 한다. `api`\n3. 시스템은 z 한다. `unit`\n";
+    const first = (await (
+      await putSet(app, project.id, "feature-hub", { title: "T", body: doc })
+    ).json()) as SetDetail & { body: string };
+
+    // Strike line 1, delete line 3 from the document.
+    const next = first.body
+      .replace(
+        "1. 시스템은 x 한다. `api` REQ-FEATURE-HUB-1",
+        "1. ~~시스템은 x 한다. `api` REQ-FEATURE-HUB-1~~",
+      )
+      .replace("3. 시스템은 z 한다. `unit` REQ-FEATURE-HUB-3\n", "");
+    const second = (await (
+      await putSet(app, project.id, "feature-hub", { title: "T", body: next })
+    ).json()) as SetDetail;
+    expect(second.items.map((i) => [i.key, i.status])).toEqual([
+      ["REQ-FEATURE-HUB-1", "dropped"],
+      ["REQ-FEATURE-HUB-2", "active"],
+      ["REQ-FEATURE-HUB-3", "dropped"],
+    ]);
+
+    // Un-striking brings it back; the key was never reused.
+    const third = (await (
+      await putSet(app, project.id, "feature-hub", {
+        title: "T",
+        body: next
+          .replace(
+            "1. ~~시스템은 x 한다. `api` REQ-FEATURE-HUB-1~~",
+            "1. 시스템은 x 한다. `api` REQ-FEATURE-HUB-1",
+          )
+          .concat("4. 시스템은 w 한다. `e2e`\n"),
+      })
+    ).json()) as SetDetail;
+    expect(third.items.map((i) => [i.key, i.status])).toEqual([
+      ["REQ-FEATURE-HUB-1", "active"],
+      ["REQ-FEATURE-HUB-2", "active"],
+      ["REQ-FEATURE-HUB-3", "dropped"],
+      ["REQ-FEATURE-HUB-4", "active"],
+    ]);
+
+    const noBadge = await putSet(app, project.id, "feature-hub", {
+      title: "T",
+      body: "## A\n\n1. 배지가 없다.\n",
+    });
+    expect(noBadge.status).toBe(400);
+    expect(await noBadge.text()).toContain("verification badge");
+    const badBadge = await putSet(app, project.id, "feature-hub", {
+      title: "T",
+      body: "## A\n\n1. 시스템은 x. `ui`\n",
+    });
+    expect(badBadge.status).toBe(400);
+  });
+
   it("[REQ-SPEC-TABS-16] rejects keys of another feature, malformed keys and duplicates in a project", async () => {
     const { app, project } = await setup();
     const wrongFeature = await putSet(app, project.id, "spec-tabs", {
@@ -395,7 +521,7 @@ describe("API integration: requirement sets, designs, task links", () => {
     expect(set.items[0]?.designs.map((d) => d.feature)).toEqual(["spec-tabs"]);
   });
 
-  it("[REQ-SPEC-TABS-7] [REQ-SPEC-TABS-8] [REQ-SPEC-TABS-10] task links go stale when upstream moves and clear on acknowledge", async () => {
+  it("[REQ-SPEC-TABS-7] [REQ-SPEC-TABS-8] [REQ-SPEC-TABS-10] [REQ-FEATURE-HUB-14] [REQ-FEATURE-HUB-15] task links go stale when upstream moves and clear on acknowledge; first design approval does not", async () => {
     const { app, project, columns } = await setup();
     const task = await seedTask(project.id, columns.todo.id, 1);
     await putSet(app, project.id, "spec-tabs", {
@@ -453,7 +579,16 @@ describe("API integration: requirement sets, designs, task links", () => {
     expect(links.stale.stale).toBe(false);
     expect(links.requirements[0]?.acknowledgedAt).toEqual(expect.any(String));
 
-    // A design approved later than the ack makes it stale again through the design link.
+    // The first approval of a design is not a change to tasks derived from it:
+    // their link clocks move with it (REQ-FEATURE-HUB-14).
+    await new Promise((r) => setTimeout(r, 5));
+    await app.request(`/api/agent-design/${project.id}/spec-tabs/approve`, {
+      method: "POST",
+    });
+    links = await getLinks(app, project.id, task.id);
+    expect(links.stale.stale).toBe(false);
+
+    // A re-approval later than the ack makes it stale through the design link (REQ-FEATURE-HUB-15).
     await new Promise((r) => setTimeout(r, 5));
     await app.request(`/api/agent-design/${project.id}/spec-tabs/approve`, {
       method: "POST",
@@ -560,6 +695,7 @@ describe("API integration: requirement sets, designs, task links", () => {
         key: "REQ-SPEC-TABS-1",
         status: "active",
         layer: "api",
+        story: null,
         updatedAt: expect.any(String),
       },
     ]);

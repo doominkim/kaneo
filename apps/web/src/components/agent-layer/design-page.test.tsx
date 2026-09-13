@@ -144,3 +144,30 @@ describe("설계 페이지", () => {
     expect(screen.queryByTestId("approve-design")).toBeNull();
   });
 });
+
+describe("설계 본문의 기준 참조", () => {
+  it("[REQ-FEATURE-HUB-25] turns [n.m] and [REQ-key] references into chips and counts the criteria never mentioned", () => {
+    const requirementSet = {
+      body: "## 1. A\n\n1. 시스템은 a. `api` REQ-SPEC-TABS-1\n2. 시스템은 b. `api` REQ-SPEC-TABS-2\n",
+      items: [],
+    } as never;
+    render(
+      <DesignPage
+        design={makeDesign({
+          body: "본문에서 [1.1] 과 [REQ-SPEC-TABS-1] 을 참조한다.",
+        })}
+        requirementSet={requirementSet}
+        workspaceId="ws"
+        projectId="p1"
+        canEdit
+      />,
+    );
+    const mentions = screen.getByTestId("design-mentions");
+    expect(mentions.textContent).toContain(
+      'agentLayer:spec.docMentioned:{"mentioned":1,"total":2}',
+    );
+    expect(mentions.textContent).toContain("1.2");
+    // The rendered body carries the reference as a code span (a chip in the markdown renderer).
+    expect(screen.getByText(/본문에서/).textContent).toContain("`1.1`");
+  });
+});

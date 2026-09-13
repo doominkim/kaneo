@@ -2359,7 +2359,8 @@
 			"timeline": "Timeline",
 			"domains": "Domains",
 			"design": "Design",
-			"requirements": "Requirements"
+			"requirements": "Requirements",
+			"feature": "Features"
 		},
 		"overview": {
 			"doneTasks": "Done",
@@ -2713,7 +2714,40 @@
 			"taskLinksEmpty": "Not linked to any requirement or design.",
 			"taskLinksTitle": "Requirements & design",
 			"title": "Title",
-			"unapproved": "Not approved"
+			"unapproved": "Not approved",
+			"allFeatures": "All features",
+			"backToFeatures": "All features",
+			"columnCoverageRatio": "Covered",
+			"columnDesign": "Design",
+			"columnTaskProgress": "Tasks",
+			"createDesign": "Create an empty design",
+			"createDesignHere": "This feature has no design yet.",
+			"createRequirements": "Create requirements",
+			"createRequirementsHere": "This feature has a design but no requirement document yet.",
+			"criteriaHeading": "Criteria",
+			"docEditHint": "The document is the source of truth: `## story` headings, criteria as `n. sentence `unit|api|e2e``. Keys are issued on save.",
+			"docMentioned": "{{mentioned}} of {{total}} criteria referenced",
+			"docUnmentioned": "Not referenced:",
+			"emptyFeatures": "No features yet.",
+			"featureFilter": "Feature",
+			"featurePageTitle": "{{name}} – Features",
+			"featureTasksHint": "Tasks linked to this feature's requirements or design. Tasks created here are linked automatically.",
+			"featureTitle": "Features",
+			"newFeature": "New feature",
+			"newTask": "New task",
+			"noDesign": "No design",
+			"noFeatureTasks": "No tasks derived from this feature yet.",
+			"noRequirements": "No requirements",
+			"otherStory": "Other",
+			"staleCount": "{{count}} stale",
+			"tabDesign": "Design",
+			"tabRequirements": "Requirements",
+			"tabTasks": "Tasks",
+			"taskCreated": "Task created and linked.",
+			"taskCreateFailed": "Could not create the task.",
+			"taskCriteria": "Criteria this task implements",
+			"taskTitle": "Title",
+			"viaDesign": "via design"
 		}
 	}
 }

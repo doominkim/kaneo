@@ -23,6 +23,7 @@ const requirementSetKeysSchema = z
         key: z.string(),
         status: z.string(),
         layer: z.string().nullable(),
+        story: z.string().nullable(),
         updatedAt: responseTimestamp,
       }),
     ),

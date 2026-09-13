@@ -84,6 +84,7 @@ function makeSet(
         text: "탭 순서",
         layer: "e2e",
         status: "active",
+        story: null,
         createdAt: "2026-09-13T00:00:00.000Z",
         updatedAt: "2026-09-13T00:00:00.000Z",
         coverage: [
@@ -115,6 +116,7 @@ function makeSet(
         text: "set 저장",
         layer: "api",
         status: "active",
+        story: null,
         createdAt: "2026-09-13T00:00:00.000Z",
         updatedAt: "2026-09-13T00:00:00.000Z",
         coverage: [],

@@ -1,0 +1,1 @@
+ALTER TABLE "agent_requirement_item" ADD COLUMN "story" text;

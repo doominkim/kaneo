@@ -30,6 +30,7 @@ export const requirementItemInput = z.object({
   text: z.string().min(1).max(MAX_ITEM_TEXT_LENGTH),
   layer: z.string().max(64).nullable().optional(),
   status: z.enum(["active", "deferred", "dropped"]).optional(),
+  story: z.string().max(200).nullable().optional(),
 });
 
 export const putRequirementSetBody = z.object({
@@ -40,7 +41,11 @@ export const putRequirementSetBody = z.object({
       (value) => Buffer.byteLength(value, "utf8") <= MAX_REQUIREMENT_BODY_BYTES,
       { message: "body must be at most 200KB" },
     )
-    .default(""),
+    .default("")
+    .openapi({
+      description:
+        "The requirement document. When it contains criterion lines (`n. <sentence> `unit|api|e2e` [REQ-key]` under a `##` story), the document is the source of truth: rows are derived from it, keys are issued and written back, and `items` is ignored.",
+    }),
   items: z.array(requirementItemInput).max(500).default([]),
   sourceSlug: z.string().max(64).nullable().optional().openapi({
     description:

@@ -11,18 +11,22 @@ import CreateTaskModal from "@/components/shared/modals/create-task-modal";
 import TaskDetailsSheet from "@/components/task/task-details-sheet";
 import { Input } from "@/components/ui/input";
 import { shortcuts } from "@/constants/shortcuts";
+import { useAgentFeatures } from "@/hooks/queries/agent-layer/use-agent-features";
+import { useAgentTaskLinkBadges } from "@/hooks/queries/agent-layer/use-agent-task-links";
 import useGetLabelsByWorkspace from "@/hooks/queries/label/use-get-labels-by-workspace";
 import { useGetTasks } from "@/hooks/queries/task/use-get-tasks";
 import { useGetActiveWorkspaceUsers } from "@/hooks/queries/workspace-users/use-get-active-workspace-users";
 import { useBoardSort } from "@/hooks/use-board-sort";
 import { useRegisterShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { useTaskFiltersWithLabelsSupport } from "@/hooks/use-task-filters-with-labels-support";
+import { filterTasksByFeature } from "@/lib/feature-filter";
 import { sortTasks } from "@/lib/sort-tasks";
 import useProjectStore from "@/store/project";
 import { useUserPreferencesStore } from "@/store/user-preferences";
 
 type BoardSearchParams = {
   taskId?: string;
+  feature?: string;
 };
 
 export const Route = createFileRoute(
@@ -31,6 +35,7 @@ export const Route = createFileRoute(
   component: RouteComponent,
   validateSearch: (search: Record<string, unknown>): BoardSearchParams => ({
     taskId: typeof search.taskId === "string" ? search.taskId : undefined,
+    feature: typeof search.feature === "string" ? search.feature : undefined,
   }),
 });
 
@@ -170,16 +175,55 @@ function RouteComponent() {
     clearFilters,
   } = useTaskFiltersWithLabelsSupport(project, projectId, boardSearchQuery);
 
+  // Feature filter (REQ-FEATURE-HUB-12): a search param so the URL can be
+  // shared, applied on top of the stored board filters.
+  const featureFilter = Route.useSearch().feature ?? null;
+  const featureBadges = useAgentTaskLinkBadges(projectId);
+  const features = useAgentFeatures(projectId);
   const sortedProject = useMemo(() => {
-    if (!filteredProject || sort.field === "position") return filteredProject;
+    if (!filteredProject) return filteredProject;
     return {
       ...filteredProject,
-      columns: filteredProject.columns.map((column) => ({
-        ...column,
-        tasks: sortTasks(column.tasks, sort),
-      })),
+      columns: filteredProject.columns.map((column) => {
+        const tasks = filterTasksByFeature(
+          column.tasks,
+          featureBadges.data,
+          featureFilter,
+        );
+        return {
+          ...column,
+          tasks: sort.field === "position" ? tasks : sortTasks(tasks, sort),
+        };
+      }),
     };
-  }, [filteredProject, sort]);
+  }, [filteredProject, sort, featureBadges.data, featureFilter]);
+
+  const featureSelect =
+    features.data && features.data.features.length > 0 ? (
+      <select
+        value={featureFilter ?? ""}
+        onChange={(event) =>
+          navigate({
+            to: ".",
+            search: (prev: BoardSearchParams) => ({
+              ...prev,
+              feature: event.target.value || undefined,
+            }),
+            replace: true,
+          })
+        }
+        aria-label={t("agentLayer:spec.featureFilter")}
+        className="h-7 rounded-md border border-input bg-background px-2 text-xs"
+        data-testid="board-feature-filter"
+      >
+        <option value="">{t("agentLayer:spec.allFeatures")}</option>
+        {features.data.features.map((f) => (
+          <option key={f.feature} value={f.feature}>
+            {f.feature}
+          </option>
+        ))}
+      </select>
+    ) : null;
 
   const boardHeaderSearch = isBoardSearchMounted ? (
     <div
@@ -215,7 +259,12 @@ function RouteComponent() {
       projectId={projectId}
       workspaceId={workspaceId}
       activeView="board"
-      headerActions={boardHeaderSearch}
+      headerActions={
+        <>
+          {featureSelect}
+          {boardHeaderSearch}
+        </>
+      }
     >
       <PageTitle
         title={`${project?.name} · ${viewMode === "board" ? t("tasks:view.board") : t("tasks:view.list")}`}

@@ -15,12 +15,11 @@ vi.mock("react-i18next", () => ({
 afterEach(() => cleanup());
 
 describe("project sections", () => {
-  it("[REQ-SPEC-TABS-1] orders the tabs 개요·타임라인·요구사항·설계·태스크·지식·문서", () => {
+  it("[REQ-SPEC-TABS-1] [REQ-FEATURE-HUB-1] orders the tabs 개요·타임라인·Feature·태스크·지식·문서", () => {
     expect(SECTIONS.map((section) => section.section)).toEqual([
       "overview",
       "timeline",
-      "requirements",
-      "design",
+      "feature",
       "tasks",
       "knowledge",
       "docs",
@@ -32,40 +31,35 @@ describe("project sections", () => {
     expect(labels).toEqual([
       "agentLayer:nav.overview",
       "agentLayer:nav.timeline",
-      "agentLayer:nav.requirements",
-      "agentLayer:nav.design",
+      "agentLayer:nav.feature",
       "agentLayer:nav.tasks",
       "agentLayer:nav.knowledge",
       "agentLayer:nav.docs",
     ]);
   });
 
-  it("[REQ-SPEC-TABS-1] resolves the requirements and design URLs to their own sections", () => {
+  it("[REQ-FEATURE-HUB-1] resolves feature URLs to the Feature section", () => {
     expect(
-      resolveProjectView("/dashboard/workspace/ws/project/p1/requirements"),
-    ).toBe("requirements");
+      resolveProjectView("/dashboard/workspace/ws/project/p1/feature"),
+    ).toBe("feature");
     expect(
       resolveProjectView(
-        "/dashboard/workspace/ws/project/p1/requirements/spec-tabs",
+        "/dashboard/workspace/ws/project/p1/feature/spec-tabs",
       ),
-    ).toBe("requirements");
-    expect(
-      resolveProjectView("/dashboard/workspace/ws/project/p1/design/spec-tabs"),
-    ).toBe("design");
-    expect(sectionOfView("requirements")).toBe("requirements");
-    expect(sectionOfView("design")).toBe("design");
+    ).toBe("feature");
+    expect(sectionOfView("feature")).toBe("feature");
   });
 
-  it("[REQ-SPEC-TABS-1] clicking a tab navigates to that view", () => {
+  it("[REQ-FEATURE-HUB-1] clicking a tab navigates to that view", () => {
     const onSelectView = vi.fn();
     render(
       <ProjectSectionTabs activeView="board" onSelectView={onSelectView} />,
     );
-    fireEvent.click(screen.getByText("agentLayer:nav.requirements"));
-    fireEvent.click(screen.getByText("agentLayer:nav.design"));
+    fireEvent.click(screen.getByText("agentLayer:nav.feature"));
+    fireEvent.click(screen.getByText("agentLayer:nav.docs"));
     expect(onSelectView.mock.calls.map((call) => call[0])).toEqual([
-      "requirements",
-      "design",
+      "feature",
+      "docs",
     ]);
   });
 });

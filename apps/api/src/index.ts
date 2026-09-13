@@ -20,6 +20,7 @@ import agentDesign from "./agent-design";
 import agentDocument from "./agent-document";
 import agentDomain from "./agent-domain";
 import agentEntry from "./agent-entry";
+import agentFeature from "./agent-feature";
 import agentLease from "./agent-lease";
 import agentProject from "./agent-project";
 import agentRequirement from "./agent-requirement";
@@ -596,6 +597,7 @@ export function createApp() {
   const agentRequirementApi = api.route("/agent-requirement", agentRequirement);
   const agentDesignApi = api.route("/agent-design", agentDesign);
   const agentTaskLinkApi = api.route("/agent-task-link", agentTaskLink);
+  const agentFeatureApi = api.route("/agent-feature", agentFeature);
   const requirementSetApi = api.route("/requirement-set", requirementSet);
   const agentProjectApi = api.route("/agent-project", agentProject);
   const agentArtifactApi = api.route("/agent-artifact", agentArtifact);
@@ -781,6 +783,7 @@ export function createApp() {
     agentRequirementApi,
     agentDesignApi,
     agentTaskLinkApi,
+    agentFeatureApi,
     requirementSetApi,
     agentProjectApi,
     agentArtifactApi,
@@ -921,6 +924,7 @@ const {
   agentRequirementApi,
   agentDesignApi,
   agentTaskLinkApi,
+  agentFeatureApi,
   requirementSetApi,
   agentProjectApi,
   agentArtifactApi,
@@ -978,6 +982,7 @@ export type AppType =
   | typeof agentRequirementApi
   | typeof agentDesignApi
   | typeof agentTaskLinkApi
+  | typeof agentFeatureApi
   | typeof requirementSetApi
   | typeof agentProjectApi
   | typeof agentArtifactApi

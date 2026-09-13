@@ -15,6 +15,7 @@ async function getSetKeys(projectId: string, feature: string) {
       key: agentRequirementItemTable.key,
       status: agentRequirementItemTable.status,
       layer: agentRequirementItemTable.layer,
+      story: agentRequirementItemTable.story,
       updatedAt: agentRequirementItemTable.updatedAt,
     })
     .from(agentRequirementItemTable)

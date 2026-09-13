@@ -94,4 +94,8 @@ export const agentLayerKeys = {
     ["agent-task-links", projectId, "badges"] as const,
   taskLinks: (projectId: string, taskId: string) =>
     ["agent-task-links", projectId, "task", taskId] as const,
+  features: (projectId: string) =>
+    ["agent-features", projectId, "list"] as const,
+  featureTasks: (projectId: string, feature: string) =>
+    ["agent-features", projectId, "tasks", feature] as const,
 };

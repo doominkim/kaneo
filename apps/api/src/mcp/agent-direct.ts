@@ -254,7 +254,7 @@ export function putRequirementSetAsAgent(
       feature: string;
       title: string;
       body: string;
-      items: Array<{
+      items?: Array<{
         key?: string;
         text: string;
         layer?: string | null;
@@ -271,7 +271,7 @@ export function putRequirementSetAsAgent(
       feature: input.feature,
       title: input.title,
       body: input.body,
-      items: input.items,
+      items: input.items ?? [],
       sourceSlug: input.sourceSlug,
       author: { actorId: auth.actorId },
       entryAuthor: entryAuthorOf(input),

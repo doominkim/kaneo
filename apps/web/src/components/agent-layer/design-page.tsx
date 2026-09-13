@@ -15,6 +15,7 @@ import {
 } from "@/hooks/mutations/agent-layer/use-agent-spec";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { toast } from "@/lib/toast";
+import { criterionNumbers } from "./requirement-doc";
 import {
   RequirementKeyChip,
   SpecStatusBadge,
@@ -31,6 +32,8 @@ type DesignPageProps = {
   projectSlug?: string;
   canEdit: boolean;
   startInEdit?: boolean;
+  /** Mounted inside the feature page: the feature header already has the back link. */
+  embedded?: boolean;
 };
 
 /**
@@ -46,6 +49,7 @@ export function DesignPage({
   projectSlug,
   canEdit,
   startInEdit = false,
+  embedded = false,
 }: DesignPageProps) {
   const { t } = useTranslation();
   const [isEditing, setIsEditing] = useState(startInEdit && canEdit);
@@ -68,6 +72,28 @@ export function DesignPage({
   const trimmedTitle = title.trim();
   const canSave =
     !put.isPending && trimmedTitle.length > 0 && body.trim().length > 0;
+
+  // Criterion references in the body (REQ-FEATURE-HUB-25): `[1.2]` by story
+  // number or `[REQ-…-n]` by key. The count of covered-but-unmentioned keys is
+  // the useful part: a design that forgot a criterion says so at the top.
+  const numbers = requirementSet
+    ? criterionNumbers(requirementSet.body)
+    : new Map<string, string>();
+  const keyByNumber = new Map(
+    [...numbers].map(([key, number]) => [number, key]),
+  );
+  const referenced = new Set<string>();
+  const renderedBody = design.body.replace(
+    /\[(REQ-[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+|\d+\.\d+)\]/g,
+    (_match, token: string) => {
+      const key = token.startsWith("REQ-") ? token : keyByNumber.get(token);
+      if (key) referenced.add(key);
+      return `\`${numbers.get(key ?? "") ?? token}\``;
+    },
+  );
+  const unmentioned = design.requirements
+    .map((r) => r.key)
+    .filter((key) => !referenced.has(key));
 
   const handleSave = async () => {
     if (!canSave) return;
@@ -105,14 +131,16 @@ export function DesignPage({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border/80 px-3 py-2.5 sm:px-4">
-        <Link
-          to="/dashboard/workspace/$workspaceId/project/$projectId/design"
-          params={{ workspaceId, projectId }}
-          className="flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
-        >
-          <ArrowLeft className="size-3.5" />
-          {t("agentLayer:spec.backToDesigns")}
-        </Link>
+        {embedded ? null : (
+          <Link
+            to="/dashboard/workspace/$workspaceId/project/$projectId/feature"
+            params={{ workspaceId, projectId }}
+            className="flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:underline"
+          >
+            <ArrowLeft className="size-3.5" />
+            {t("agentLayer:spec.backToFeatures")}
+          </Link>
+        )}
         <span className="font-mono text-xs text-muted-foreground">
           {design.feature}
         </span>
@@ -195,6 +223,33 @@ export function DesignPage({
 
           <StaleCauses stale={design.stale} />
 
+          {design.requirements.length > 0 ? (
+            <div
+              className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
+              data-testid="design-mentions"
+            >
+              <span>
+                {t("agentLayer:spec.docMentioned", {
+                  mentioned: design.requirements.length - unmentioned.length,
+                  total: design.requirements.length,
+                })}
+              </span>
+              {unmentioned.length > 0 ? (
+                <>
+                  <span>{t("agentLayer:spec.docUnmentioned")}</span>
+                  {unmentioned.map((key) => (
+                    <RequirementKeyChip
+                      key={key}
+                      requirementKey={numbers.get(key) ?? key}
+                      muted
+                      className="text-[10px]"
+                    />
+                  ))}
+                </>
+              ) : null}
+            </div>
+          ) : null}
+
           <section className="space-y-1.5">
             <h2 className="text-xs font-medium text-foreground/70">
               {t("agentLayer:spec.requirementsCovered")}
@@ -245,12 +300,13 @@ export function DesignPage({
                     className="inline-flex items-center gap-1"
                   >
                     <Link
-                      to="/dashboard/workspace/$workspaceId/project/$projectId/requirements/$feature"
+                      to="/dashboard/workspace/$workspaceId/project/$projectId/feature/$feature"
                       params={{
                         workspaceId,
                         projectId,
                         feature: design.feature,
                       }}
+                      search={{ tab: "requirements" }}
                       title={requirement.text}
                     >
                       <RequirementKeyChip
@@ -290,7 +346,7 @@ export function DesignPage({
               />
             ) : (
               <div className="prose prose-sm max-w-none dark:prose-invert">
-                <MarkdownRenderer content={design.body} />
+                <MarkdownRenderer content={renderedBody} />
               </div>
             )}
           </section>

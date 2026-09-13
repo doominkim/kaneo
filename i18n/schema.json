@@ -8953,6 +8953,9 @@
 						},
 						"design": {
 							"type": "string"
+						},
+						"feature": {
+							"type": "string"
 						}
 					},
 					"required": [
@@ -8964,7 +8967,8 @@
 						"sections",
 						"domains",
 						"requirements",
-						"design"
+						"design",
+						"feature"
 					]
 				},
 				"common": {
@@ -11174,6 +11178,123 @@
 						},
 						"forbidden": {
 							"type": "string"
+						},
+						"featurePageTitle": {
+							"type": "string"
+						},
+						"featureTitle": {
+							"type": "string"
+						},
+						"newFeature": {
+							"type": "string"
+						},
+						"emptyFeatures": {
+							"type": "string"
+						},
+						"columnDesign": {
+							"type": "string"
+						},
+						"columnTaskProgress": {
+							"type": "string"
+						},
+						"columnCoverageRatio": {
+							"type": "string"
+						},
+						"noRequirements": {
+							"type": "string"
+						},
+						"noDesign": {
+							"type": "string"
+						},
+						"staleCount": {
+							"type": "string"
+						},
+						"staleCount_zero": {
+							"type": "string"
+						},
+						"staleCount_one": {
+							"type": "string"
+						},
+						"staleCount_two": {
+							"type": "string"
+						},
+						"staleCount_few": {
+							"type": "string"
+						},
+						"staleCount_many": {
+							"type": "string"
+						},
+						"staleCount_other": {
+							"type": "string"
+						},
+						"tabRequirements": {
+							"type": "string"
+						},
+						"tabDesign": {
+							"type": "string"
+						},
+						"tabTasks": {
+							"type": "string"
+						},
+						"backToFeatures": {
+							"type": "string"
+						},
+						"createRequirementsHere": {
+							"type": "string"
+						},
+						"createRequirements": {
+							"type": "string"
+						},
+						"createDesignHere": {
+							"type": "string"
+						},
+						"createDesign": {
+							"type": "string"
+						},
+						"featureTasksHint": {
+							"type": "string"
+						},
+						"noFeatureTasks": {
+							"type": "string"
+						},
+						"newTask": {
+							"type": "string"
+						},
+						"taskTitle": {
+							"type": "string"
+						},
+						"taskCriteria": {
+							"type": "string"
+						},
+						"taskCreated": {
+							"type": "string"
+						},
+						"taskCreateFailed": {
+							"type": "string"
+						},
+						"viaDesign": {
+							"type": "string"
+						},
+						"featureFilter": {
+							"type": "string"
+						},
+						"allFeatures": {
+							"type": "string"
+						},
+						"docMentioned": {
+							"type": "string"
+						},
+						"docUnmentioned": {
+							"type": "string"
+						},
+						"criteriaHeading": {
+							"type": "string"
+						},
+						"otherStory": {
+							"type": "string"
+						},
+						"docEditHint": {
+							"type": "string"
 						}
 					},
 					"required": [
@@ -11253,7 +11374,39 @@
 						"acknowledgeFailed",
 						"acknowledgeHint",
 						"notFound",
-						"forbidden"
+						"forbidden",
+						"featurePageTitle",
+						"featureTitle",
+						"newFeature",
+						"emptyFeatures",
+						"columnDesign",
+						"columnTaskProgress",
+						"columnCoverageRatio",
+						"noRequirements",
+						"noDesign",
+						"tabRequirements",
+						"tabDesign",
+						"tabTasks",
+						"backToFeatures",
+						"createRequirementsHere",
+						"createRequirements",
+						"createDesignHere",
+						"createDesign",
+						"featureTasksHint",
+						"noFeatureTasks",
+						"newTask",
+						"taskTitle",
+						"taskCriteria",
+						"taskCreated",
+						"taskCreateFailed",
+						"viaDesign",
+						"featureFilter",
+						"allFeatures",
+						"docMentioned",
+						"docUnmentioned",
+						"criteriaHeading",
+						"otherStory",
+						"docEditHint"
 					]
 				}
 			},

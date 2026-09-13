@@ -2,7 +2,10 @@ import { eq } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import appendEntry from "../../agent-entry/controllers/append-entry";
 import db from "../../database";
-import { agentDesignTable } from "../../database/schema-agent-layer";
+import {
+  agentDesignTable,
+  agentTaskDesignTable,
+} from "../../database/schema-agent-layer";
 import { requireDesign } from "./shared";
 
 /** Human-only, like requirement approval (REQ-SPEC-TABS-6). */
@@ -14,18 +17,33 @@ async function approveDesign(input: {
 }) {
   const design = await requireDesign(input.projectId, input.feature);
   const now = new Date();
-  const [approved] = await db
-    .update(agentDesignTable)
-    .set({
-      status: "approved",
-      approvedAt: now,
-      approvedBy: input.userId,
-      updatedAt: now,
-    })
-    .where(eq(agentDesignTable.id, design.id))
-    .returning();
-  if (!approved)
-    throw new HTTPException(500, { message: "Failed to approve design" });
+  const firstApproval = design.approvedAt === null;
+  const approved = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(agentDesignTable)
+      .set({
+        status: "approved",
+        approvedAt: now,
+        approvedBy: input.userId,
+        updatedAt: now,
+      })
+      .where(eq(agentDesignTable.id, design.id))
+      .returning();
+    if (!row) {
+      throw new HTTPException(500, { message: "Failed to approve design" });
+    }
+    // First approval is not a change to tasks already derived from the
+    // draft (REQ-FEATURE-HUB-14): their clocks move with it so nothing goes
+    // stale. A re-approval leaves the links alone, so the usual comparison
+    // flags them (REQ-FEATURE-HUB-15).
+    if (firstApproval) {
+      await tx
+        .update(agentTaskDesignTable)
+        .set({ acknowledgedAt: now })
+        .where(eq(agentTaskDesignTable.designId, design.id));
+    }
+    return row;
+  });
   await appendEntry({
     workspaceId: input.workspaceId,
     userId: input.userId,

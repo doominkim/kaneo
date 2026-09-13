@@ -26,6 +26,7 @@ import {
   useAgentTaskLinkBadges,
   useAgentTaskLinks,
 } from "@/hooks/queries/agent-layer/use-agent-task-links";
+import { featuresOfBadge } from "@/lib/feature-filter";
 import { toast } from "@/lib/toast";
 import { RequirementKeyChip, StaleBadge, StaleCauses } from "./spec-badges";
 
@@ -40,24 +41,21 @@ export function TaskSpecBadges({
   const badges = useAgentTaskLinkBadges(projectId);
   const badge = badges.data?.get(taskId);
   if (!badge) return null;
+  // Feature name and count instead of every key (REQ-FEATURE-HUB-11): the
+  // card answers "which feature, how much, is it stale" and nothing more.
   return (
     <div
       className="mb-2 flex flex-wrap items-center gap-1"
       data-testid="task-spec-badges"
     >
-      {badge.requirementKeys.map((key) => (
-        <RequirementKeyChip
-          key={key}
-          requirementKey={key}
-          className="text-[10px]"
-        />
-      ))}
-      {badge.designFeatures.map((feature) => (
+      {[...featuresOfBadge(badge)].map(([feature, count]) => (
         <span
           key={feature}
           className="rounded border border-border/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+          data-testid="feature-badge"
         >
-          design:{feature}
+          {feature}
+          {count > 0 ? ` · REQ ${count}` : ""}
         </span>
       ))}
       <StaleBadge stale={badge.stale} />
@@ -128,16 +126,39 @@ export function TaskSpecLinks({
           </p>
         ) : (
           <>
+            <div
+              className="flex flex-wrap gap-1"
+              data-testid="task-feature-links"
+            >
+              {[
+                ...new Set([
+                  ...data.requirements.map((r) => r.feature),
+                  ...data.designs.map((d) => d.feature),
+                ]),
+              ].map((feature) => (
+                <span key={feature} data-testid="task-feature-link">
+                  <Link
+                    to="/dashboard/workspace/$workspaceId/project/$projectId/feature/$feature"
+                    params={{ workspaceId, projectId, feature }}
+                    search={{ tab: "tasks" }}
+                    className="rounded border border-border/70 px-1.5 py-0.5 font-mono text-[10px] underline-offset-2 hover:underline"
+                  >
+                    {feature}
+                  </Link>
+                </span>
+              ))}
+            </div>
             <div className="flex flex-wrap gap-1">
               {data.requirements.map((requirement) => (
                 <Link
                   key={requirement.key}
-                  to="/dashboard/workspace/$workspaceId/project/$projectId/requirements/$feature"
+                  to="/dashboard/workspace/$workspaceId/project/$projectId/feature/$feature"
                   params={{
                     workspaceId,
                     projectId,
                     feature: requirement.feature,
                   }}
+                  search={{ tab: "requirements" }}
                   title={requirement.text}
                 >
                   <RequirementKeyChip
@@ -149,8 +170,9 @@ export function TaskSpecLinks({
               {data.designs.map((design) => (
                 <Link
                   key={design.designId}
-                  to="/dashboard/workspace/$workspaceId/project/$projectId/design/$feature"
+                  to="/dashboard/workspace/$workspaceId/project/$projectId/feature/$feature"
                   params={{ workspaceId, projectId, feature: design.feature }}
+                  search={{ tab: "design" }}
                   className="rounded border border-border/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
                   title={design.title}
                 >

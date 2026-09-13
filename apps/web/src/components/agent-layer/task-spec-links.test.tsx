@@ -101,11 +101,13 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("task 배지와 링크", () => {
-  it("[REQ-SPEC-TABS-13] the board card shows the task's keys, design and a stale mark from one project query", () => {
+  it("[REQ-SPEC-TABS-13] [REQ-FEATURE-HUB-11] the board card shows feature · REQ count and a stale mark, not every key", () => {
     render(<TaskSpecBadges projectId="p1" taskId="t1" />);
     const badges = screen.getByTestId("task-spec-badges");
-    expect(badges.textContent).toContain("REQ-SPEC-TABS-7");
-    expect(badges.textContent).toContain("design:spec-tabs");
+    expect(
+      screen.getAllByTestId("feature-badge").map((b) => b.textContent),
+    ).toEqual(["spec-tabs · REQ 1"]);
+    expect(badges.textContent).not.toContain("REQ-SPEC-TABS-7");
     expect(screen.getByTestId("stale-badge")).toBeTruthy();
     expect(mocks.badges).toHaveBeenCalledWith("p1");
   });
@@ -113,6 +115,15 @@ describe("task 배지와 링크", () => {
   it("[REQ-SPEC-TABS-13] a card without links renders nothing", () => {
     const { container } = render(<TaskSpecBadges projectId="p1" taskId="t2" />);
     expect(container.innerHTML).toBe("");
+  });
+
+  it("[REQ-FEATURE-HUB-13] the detail sidebar links each feature name to the feature page", () => {
+    render(
+      <TaskSpecLinks workspaceId="ws" projectId="p1" taskId="t1" canEdit />,
+    );
+    expect(
+      screen.getAllByTestId("task-feature-link").map((l) => l.textContent),
+    ).toEqual(["spec-tabs"]);
   });
 
   it("[REQ-SPEC-TABS-10] the detail sidebar names the stale cause and lets an editor acknowledge it", () => {

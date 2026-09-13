@@ -1198,3 +1198,69 @@ describe("spec tab tools", () => {
     expect(bad.isError).toBe(true);
   });
 });
+
+describe("agent_brief features", () => {
+  it("[REQ-FEATURE-HUB-17] boots with each feature's requirement/design status, task progress and stale count", async () => {
+    apiFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/agent-feature/")) {
+        return Response.json({
+          features: [
+            {
+              feature: "feature-hub",
+              title: "Feature 허브",
+              requirements: {
+                status: "approved",
+                itemCount: 26,
+                activeCount: 25,
+                coveredCount: 4,
+              },
+              design: { status: "approved", stale: true },
+              tasks: { total: 8, done: 2, stale: 1 },
+            },
+            {
+              feature: "beta",
+              title: "Beta",
+              requirements: null,
+              design: { status: "draft", stale: false },
+              tasks: { total: 0, done: 0, stale: 0 },
+            },
+          ],
+        });
+      }
+      return Response.json({});
+    });
+    const result = await call("agent_brief", { projectId: "p1" });
+    expect(result.features).toEqual([
+      {
+        feature: "feature-hub",
+        requirements: "approved",
+        design: "stale",
+        tasks: "2/8",
+        staleTasks: 1,
+      },
+      {
+        feature: "beta",
+        requirements: null,
+        design: "draft",
+        tasks: "0/0",
+        staleTasks: 0,
+      },
+    ]);
+    expect(
+      apiFetch.mock.calls.some(
+        (c) => String(c[0]) === "http://api.test/api/agent-feature/p1",
+      ),
+    ).toBe(true);
+  });
+
+  it("[REQ-FEATURE-HUB-17] degrades to an empty feature list when the endpoint fails", async () => {
+    apiFetch.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes("/api/agent-feature/")
+        ? new Response("boom", { status: 500 })
+        : Response.json({}),
+    );
+    const result = await call("agent_brief", { projectId: "p1" });
+    expect(result.features).toEqual([]);
+  });
+});

@@ -85,6 +85,13 @@
       "when": 1789278016739,
       "tag": "0011_spec_tabs",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789291336536,
+      "tag": "0012_feature_hub",
+      "breakpoints": true
     }
   ]
 }

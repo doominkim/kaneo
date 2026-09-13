@@ -886,10 +886,16 @@ export const agentRequirementSetTable = pgTable(
       .primaryKey(),
     workspaceId: text("workspace_id")
       .notNull()
-      .references(() => workspaceTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => workspaceTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     projectId: text("project_id")
       .notNull()
-      .references(() => projectTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => projectTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     /** ^[a-z0-9][a-z0-9-]{0,63}$ — validated at the API layer */
     feature: text("feature").notNull(),
     title: text("title").notNull(),
@@ -898,18 +904,30 @@ export const agentRequirementSetTable = pgTable(
     /** draft | approved */
     status: text("status").notNull().default("draft"),
     approvedAt: timestamp("approved_at", { mode: "date" }),
-    approvedBy: text("approved_by").references(() => userTable.id, { onDelete: "set null", onUpdate: "cascade" }),
+    approvedBy: text("approved_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
     /** next item seq to issue; monotonic */
     nextSeq: integer("next_seq").notNull().default(1),
     /** the document slug this set was migrated from (REQ-SPEC-TABS-17), or NULL */
     sourceSlug: text("source_slug"),
-    updatedBy: text("updated_by").references(() => userTable.id, { onDelete: "set null", onUpdate: "cascade" }),
-    actorId: text("actor_id").references(() => agentActorTable.id, { onDelete: "set null", onUpdate: "cascade" }),
+    updatedBy: text("updated_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    actorId: text("actor_id").references(() => agentActorTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
   },
   (table) => [
-    unique("agent_requirement_set_project_feature_unique").on(table.projectId, table.feature),
+    unique("agent_requirement_set_project_feature_unique").on(
+      table.projectId,
+      table.feature,
+    ),
     index("agent_requirement_set_project_idx").on(table.projectId),
   ],
 );
@@ -929,10 +947,16 @@ export const agentRequirementItemTable = pgTable(
       .primaryKey(),
     setId: text("set_id")
       .notNull()
-      .references(() => agentRequirementSetTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => agentRequirementSetTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     projectId: text("project_id")
       .notNull()
-      .references(() => projectTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => projectTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     key: text("key").notNull(),
     seq: integer("seq").notNull(),
     /** EARS sentence */
@@ -941,11 +965,16 @@ export const agentRequirementItemTable = pgTable(
     layer: text("layer"),
     /** active | deferred | dropped */
     status: text("status").notNull().default("active"),
+    /** The `##` story heading the criterion sits under in the document (feature-hub); null = 기타 */
+    story: text("story"),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
   },
   (table) => [
-    unique("agent_requirement_item_project_key_unique").on(table.projectId, table.key),
+    unique("agent_requirement_item_project_key_unique").on(
+      table.projectId,
+      table.key,
+    ),
     index("agent_requirement_item_set_idx").on(table.setId),
   ],
 );
@@ -959,10 +988,16 @@ export const agentDesignTable = pgTable(
       .primaryKey(),
     workspaceId: text("workspace_id")
       .notNull()
-      .references(() => workspaceTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => workspaceTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     projectId: text("project_id")
       .notNull()
-      .references(() => projectTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => projectTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     feature: text("feature").notNull(),
     title: text("title").notNull(),
     /** markdown, ≤ 200KB enforced in Zod */
@@ -970,15 +1005,27 @@ export const agentDesignTable = pgTable(
     /** draft | approved */
     status: text("status").notNull().default("draft"),
     approvedAt: timestamp("approved_at", { mode: "date" }),
-    approvedBy: text("approved_by").references(() => userTable.id, { onDelete: "set null", onUpdate: "cascade" }),
+    approvedBy: text("approved_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
     sourceSlug: text("source_slug"),
-    updatedBy: text("updated_by").references(() => userTable.id, { onDelete: "set null", onUpdate: "cascade" }),
-    actorId: text("actor_id").references(() => agentActorTable.id, { onDelete: "set null", onUpdate: "cascade" }),
+    updatedBy: text("updated_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    actorId: text("actor_id").references(() => agentActorTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
   },
   (table) => [
-    unique("agent_design_project_feature_unique").on(table.projectId, table.feature),
+    unique("agent_design_project_feature_unique").on(
+      table.projectId,
+      table.feature,
+    ),
     index("agent_design_project_idx").on(table.projectId),
   ],
 );
@@ -989,10 +1036,16 @@ export const agentDesignRequirementTable = pgTable(
   {
     designId: text("design_id")
       .notNull()
-      .references(() => agentDesignTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => agentDesignTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     itemId: text("item_id")
       .notNull()
-      .references(() => agentRequirementItemTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => agentRequirementItemTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
   },
   (table) => [
@@ -1011,10 +1064,16 @@ export const agentTaskRequirementTable = pgTable(
   {
     taskId: text("task_id")
       .notNull()
-      .references(() => taskTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => taskTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     itemId: text("item_id")
       .notNull()
-      .references(() => agentRequirementItemTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => agentRequirementItemTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
     acknowledgedAt: timestamp("acknowledged_at", { mode: "date" }),
   },
@@ -1030,10 +1089,16 @@ export const agentTaskDesignTable = pgTable(
   {
     taskId: text("task_id")
       .notNull()
-      .references(() => taskTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => taskTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     designId: text("design_id")
       .notNull()
-      .references(() => agentDesignTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => agentDesignTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
     acknowledgedAt: timestamp("acknowledged_at", { mode: "date" }),
   },
@@ -1056,17 +1121,29 @@ export const agentRequirementCoverageTable = pgTable(
       .primaryKey(),
     itemId: text("item_id")
       .notNull()
-      .references(() => agentRequirementItemTable.id, { onDelete: "cascade", onUpdate: "cascade" }),
+      .references(() => agentRequirementItemTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
     /** e.g. "doominkim/sandbox" */
     repo: text("repo").notNull(),
     /** repo-relative test file path */
     testPath: text("test_path").notNull(),
     testName: text("test_name"),
-    actorId: text("actor_id").references(() => agentActorTable.id, { onDelete: "set null", onUpdate: "cascade" }),
-    reportedAt: timestamp("reported_at", { mode: "date" }).defaultNow().notNull(),
+    actorId: text("actor_id").references(() => agentActorTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    reportedAt: timestamp("reported_at", { mode: "date" })
+      .defaultNow()
+      .notNull(),
   },
   (table) => [
-    unique("agent_requirement_coverage_item_repo_path_unique").on(table.itemId, table.repo, table.testPath),
+    unique("agent_requirement_coverage_item_repo_path_unique").on(
+      table.itemId,
+      table.repo,
+      table.testPath,
+    ),
     index("agent_requirement_coverage_item_idx").on(table.itemId),
   ],
 );

@@ -27,6 +27,7 @@ function useInvalidateSpec() {
       "agent-requirements",
       "agent-designs",
       "agent-task-links",
+      "agent-features",
     ]) {
       queryClient.invalidateQueries({ queryKey: [prefix, projectId] });
     }

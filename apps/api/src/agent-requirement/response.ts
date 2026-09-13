@@ -41,6 +41,9 @@ export const requirementItemSchema = z
     status: z
       .string()
       .openapi({ description: "`active`, `deferred` or `dropped`." }),
+    story: z.string().nullable().openapi({
+      description: "The `##` story heading the criterion sits under, or null.",
+    }),
     createdAt: responseTimestamp,
     updatedAt: responseTimestamp.openapi({
       description:

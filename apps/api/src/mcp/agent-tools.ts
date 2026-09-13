@@ -120,6 +120,13 @@ type DocumentDetail = {
   body: string;
 };
 
+type FeatureSummaryOut = {
+  feature: string;
+  requirements: { status: string } | null;
+  design: { status: string; stale: boolean } | null;
+  tasks: { total: number; done: number; stale: number };
+};
+
 type DomainNode = {
   id: string;
   parentId: string | null;
@@ -313,7 +320,7 @@ export function registerAgentTools(
     "agent_brief",
     {
       description:
-        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries (deleted ones hidden), live claims, the 20 most recently updated document titles (slug/title/updatedAt — deliverables, not a knowledge base; judge them by author and age; documentsTotal shows what was cut), and the project's linked domain pages (`domains`, read them with agent_domain_get). Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
+        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries (deleted ones hidden), live claims, the 20 most recently updated document titles (slug/title/updatedAt — deliverables, not a knowledge base; judge them by author and age; documentsTotal shows what was cut), and the project's linked domain pages (`domains`, read them with agent_domain_get), and `features` (requirement/design status, task progress, stale count per feature). Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
       inputSchema: z.object({
         projectId: z.string(),
         entries: z.number().int().min(1).max(20).default(5),
@@ -323,33 +330,39 @@ export function registerAgentTools(
       guard(async () => {
         // Fetched in parallel, then shaped. The cost the caller pays is the
         // shaped size, not the sum of the three responses.
-        const [board, log, leases, docs, settings] = await Promise.all([
-          api
-            .json<BoardResponse>(
-              `/api/task/tasks/${encodeURIComponent(args.projectId)}`,
-            )
-            .catch(() => ({}) as BoardResponse),
-          api
-            .json<{ entries?: unknown[] }>(
-              `/api/agent-entry/${encodeURIComponent(args.projectId)}?limit=${args.entries}`,
-            )
-            .catch(() => ({ entries: [] })),
-          api
-            .json<{ leases?: unknown[] }>(
-              `/api/agent-lease/${encodeURIComponent(args.projectId)}`,
-            )
-            .catch(() => ({ leases: [] })),
-          api
-            .json<{ documents?: DocumentSummary[] }>(
-              `/api/agent-document/${encodeURIComponent(args.projectId)}`,
-            )
-            .catch(() => ({ documents: [] })),
-          api
-            .json<ProjectSettings>(
-              `/api/agent-project/${encodeURIComponent(args.projectId)}`,
-            )
-            .catch(() => ({}) as ProjectSettings),
-        ]);
+        const [board, log, leases, docs, settings, features] =
+          await Promise.all([
+            api
+              .json<BoardResponse>(
+                `/api/task/tasks/${encodeURIComponent(args.projectId)}`,
+              )
+              .catch(() => ({}) as BoardResponse),
+            api
+              .json<{ entries?: unknown[] }>(
+                `/api/agent-entry/${encodeURIComponent(args.projectId)}?limit=${args.entries}`,
+              )
+              .catch(() => ({ entries: [] })),
+            api
+              .json<{ leases?: unknown[] }>(
+                `/api/agent-lease/${encodeURIComponent(args.projectId)}`,
+              )
+              .catch(() => ({ leases: [] })),
+            api
+              .json<{ documents?: DocumentSummary[] }>(
+                `/api/agent-document/${encodeURIComponent(args.projectId)}`,
+              )
+              .catch(() => ({ documents: [] })),
+            api
+              .json<ProjectSettings>(
+                `/api/agent-project/${encodeURIComponent(args.projectId)}`,
+              )
+              .catch(() => ({}) as ProjectSettings),
+            api
+              .json<{ features?: FeatureSummaryOut[] }>(
+                `/api/agent-feature/${encodeURIComponent(args.projectId)}`,
+              )
+              .catch(() => ({ features: [] })),
+          ]);
 
         return {
           project: board.data?.name ?? args.projectId,
@@ -364,6 +377,19 @@ export function registerAgentTools(
           domains: (settings.domains ?? [])
             .slice(0, BRIEF_DOMAIN_CAP)
             .map((d) => ({ id: d.id, title: d.title })),
+          // What is being built and how far along (REQ-FEATURE-HUB-17); the
+          // documents themselves are one agent_requirements_get away.
+          features: (features.features ?? []).map((f) => ({
+            feature: f.feature,
+            requirements: f.requirements?.status ?? null,
+            design: f.design
+              ? f.design.stale
+                ? "stale"
+                : f.design.status
+              : null,
+            tasks: `${f.tasks.done}/${f.tasks.total}`,
+            staleTasks: f.tasks.stale,
+          })),
         };
       }),
   );
@@ -886,7 +912,7 @@ export function registerAgentTools(
     "agent_requirements_put",
     {
       description:
-        "Upsert the requirement set for `feature` as this agent; always draft (humans approve in the UI). `items` is partial: no `key` = new REQ-<FEATURE>-<n>, existing key = edit, status dropped = retire (never deleted). Text changes make dependent designs/tasks stale. Returns the issued keys.",
+        "Upsert the requirement set for `feature` as this agent; always draft (humans approve in the UI). Send the document in `body`: `## story` headings, criteria as `n. <sentence> `unit|api|e2e` [REQ-key]`; keys are issued and written back, `~~line~~` = dropped, missing badge = 400. `items` is the legacy row mode and is ignored when the body has criteria. Text changes make dependent designs/tasks stale. Returns the keys.",
       inputSchema: z.object({
         projectId: z.string(),
         feature: z.string().regex(FEATURE_PATTERN),
