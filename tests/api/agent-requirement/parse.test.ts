@@ -94,6 +94,18 @@ describe("parseRequirementDoc", () => {
     ).toThrow(/unit \| api \| e2e/);
   });
 
+  it("[REQ-FEATURE-HUB-22] a sentence may carry its own code spans; only the last one is the badge", () => {
+    const parsed = parseRequirementDoc(
+      "## A\n\n1. 커밋·`dev`/`main` push 는 시스템은 승인 뒤에만 한다. `e2e`\n",
+      "feature-hub",
+      1,
+    );
+    expect(parsed.criteria[0]?.layer).toBe("e2e");
+    expect(parsed.criteria[0]?.text).toBe(
+      "커밋·`dev`/`main` push 는 시스템은 승인 뒤에만 한다.",
+    );
+  });
+
   it("[REQ-FEATURE-HUB-23] rejects keys of another feature and duplicate keys", () => {
     expect(() =>
       parseRequirementDoc(

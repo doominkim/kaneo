@@ -26,7 +26,8 @@ export type ParsedRequirementDoc = {
 const STORY_RE = /^##\s+(.+?)\s*$/;
 const NUMBERED_RE = /^(\s*)(\d+)\.\s+(.*?)\s*$/;
 const STRIKE_RE = /^~~(.*)~~$/;
-const BADGE_RE = /`([a-z0-9]+)`/;
+/** The badge is the LAST code span on the line; sentences may carry their own code spans. */
+const BADGE_RE = /`([a-z0-9]+)`\s*$/;
 const TRAILING_KEY_RE = new RegExp(
   `\\s*(${KEY_PATTERN.source.slice(1, -1)})\\s*$`,
 );
@@ -90,7 +91,7 @@ export function parseRequirementDoc(
     }
 
     const badge = BADGE_RE.exec(content);
-    if (!badge || badge.index + badge[0].length !== content.length) {
+    if (!badge) {
       throw new HTTPException(400, {
         message: `criterion without verification badge (line ${i + 1}): ${content.slice(0, 40)}`,
       });
