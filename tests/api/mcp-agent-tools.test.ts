@@ -567,8 +567,9 @@ function domainPage(body: string) {
       slug: `child-${i}`,
       title: `Child ${i}`,
     })),
-    // Mixed on purpose: the page must show only what agent_term_resolve would
-    // answer with, or the model reads its own unreviewed proposal off the page.
+    // Mixed on purpose: the page shows only what agent_term_resolve answers
+    // with. `proposed` is a legacy value (0014 refuses it) and `disputed` is
+    // withdrawn from resolve, so neither may be listed.
     terms: [
       {
         id: "t1",
@@ -728,15 +729,15 @@ describe("agent_domain_get", () => {
       domainId: "b",
     });
 
-    // "Chargeback" is proposed and "Clawback" is disputed; neither resolves, so
-    // neither is listed here either.
+    // "Chargeback" is a legacy proposed row and "Clawback" is disputed; neither
+    // resolves, so neither is listed here either.
     expect(page.terms).toEqual(["Refund"]);
     // The total counts what is reachable, not what is filed: advertising 3
     // would send the caller looking for two terms resolve refuses to answer.
     expect(page.linksTotal.terms).toBe(1);
   });
 
-  it("caps the confirmed terms at 20 and totals them, ignoring the unreviewed ones", async () => {
+  it("caps the confirmed terms at 20 and totals them, ignoring terms that are not confirmed", async () => {
     apiFetch.mockImplementation(async () =>
       Response.json({
         ...domainPage("body"),

@@ -217,15 +217,17 @@ export const agentEntryTable = pgTable(
 /* -------------------------------------------------------------------------- */
 
 /**
- * A project ADR. Drafts are editable; accepted and superseded rows are
- * immutable at the application boundary. The append-only `agent_entry` ledger
- * remains the audit stream and receives a structured entry when a draft is
- * accepted or an accepted ADR is superseded.
+ * A project ADR. It is accepted the moment it is written — there is no draft
+ * (agent-autoapply) — and immutable at the application boundary: a change is a
+ * new ADR that supersedes this one. The append-only `agent_entry` ledger
+ * remains the audit stream and receives a structured entry when an ADR is
+ * accepted, superseded, deleted or restored.
  *
  * `sourceEntryId` promotes an older ledger decision without rewriting it.
  * `supersedesDecisionId` points from the replacement to the record it replaced;
- * the partial unique index lets drafts express no pending intent while ensuring
- * one accepted ADR cannot acquire two replacements.
+ * the partial unique index (live rows only) keeps one ADR from acquiring two
+ * live replacements, and the application keeps exactly one live accepted ADR
+ * per supersede chain.
  */
 export const agentDecisionTable = pgTable(
   "agent_decision",
@@ -283,7 +285,7 @@ export const agentDecisionTable = pgTable(
       () => agentActorTable.id,
       { onDelete: "set null", onUpdate: "cascade" },
     ),
-    /** Exactly one last-editor column is populated while the row is a draft. */
+    /** Last editor. With no drafts, it is set once at creation, like the creator. */
     updatedBy: text("updated_by").references(() => userTable.id, {
       onDelete: "set null",
       onUpdate: "cascade",
@@ -292,7 +294,7 @@ export const agentDecisionTable = pgTable(
       () => agentActorTable.id,
       { onDelete: "set null", onUpdate: "cascade" },
     ),
-    /** Acceptance is a human project-governance action. */
+    /** Set at creation (agent-autoapply): the person or API-key owner, NULL for an agent. */
     acceptedBy: text("accepted_by").references(() => userTable.id, {
       onDelete: "set null",
       onUpdate: "cascade",
@@ -374,7 +376,7 @@ export const agentDecisionCounterTable = pgTable("agent_decision_counter", {
       onDelete: "cascade",
       onUpdate: "cascade",
     }),
-  /** The number assigned to the next draft created in this project. */
+  /** The number assigned to the next ADR created in this project. */
   nextNumber: integer("next_number").notNull().default(1),
 });
 
@@ -542,14 +544,14 @@ export const agentProjectDomainTable = pgTable(
  * Workspace vocabulary. Resolution must be deterministic: the same term always
  * returns the same answer, with no embedding step and no model judgement.
  *
- * Nothing here is ever deleted. `state` only changes retrieval ranking; a
- * direct resolve always answers in full, because a rarely-used term is exactly
- * the one a new session cannot recover on its own.
+ * `state` only changes retrieval ranking; a direct resolve always answers in
+ * full, because a rarely-used term is exactly the one a new session cannot
+ * recover on its own. A wrong term is soft-deleted by a person, not removed.
  *
- * `confidence` is a gate, not a label: resolve answers with `confirmed` rows
- * only. Without that, a model reads back its own `proposed` guess in the next
- * session and treats it as settled fact — the lexicon would launder inference
- * into record.
+ * A proposal applies at once as `confirmed` (agent-autoapply), and `disputed`
+ * withdraws a term from resolve. What keeps a model from reading back its own
+ * guess as settled fact is the review marker, not a gate: resolve relays
+ * `reviewed`, and `reviewedAt` stays NULL until a person has read the term.
  */
 export const agentTermTable = pgTable(
   "agent_term",
@@ -625,8 +627,8 @@ export const agentTermTable = pgTable(
      */
     /**
      * The person who reviewed it. Only ever a `user`: the MCP path cannot set
-     * this, because review is a human act, and a model that could confirm its
-     * own proposal is not a gate.
+     * this, because review is a human act, and a model that could mark its own
+     * term reviewed would empty the unreviewed flag of meaning.
      */
     reviewerId: text("reviewer_id").references(() => userTable.id, {
       onDelete: "set null",
@@ -909,16 +911,17 @@ export type AgentProjectDomain = typeof agentProjectDomainTable.$inferSelect;
 /* -------------------------------------------------------------------------- */
 
 /**
- * A requirement set is the project's spec for one feature: the human-approved
- * list of what to build, kept as rows (not free text) so a key survives edits
- * and tests can point at it. `feature` is the slug that binds requirements,
- * design and tasks together. `nextSeq` issues item keys; it never goes down,
- * so a dropped key is never reused.
+ * A requirement set is the project's spec for one feature: the list of what to
+ * build, kept as rows (not free text) so a key survives edits and tests can
+ * point at it. `feature` is the slug that binds requirements, design and tasks
+ * together. `nextSeq` issues item keys; it never goes down, so a dropped key
+ * is never reused.
  *
- * Approval is document-level and human-only (`approvedBy` is a user, there is
- * no actor column). `approvedAt` is kept when the set goes back to draft: the
- * stale computation compares downstream `approvedAt` against item `updatedAt`,
- * not against the set's status.
+ * Every save applies at once (agent-autoapply): `status` stays `approved`, and
+ * `approvedAt`/`approvedBy` record the save, not a person's approval.
+ * `reviewedAt` is the review marker. The stale computation compares item
+ * `updatedAt` against the design's `revisedAt` and each task link's
+ * acknowledgement, never against this set's status.
  */
 export const agentRequirementSetTable = pgTable(
   "agent_requirement_set",
@@ -1137,9 +1140,10 @@ export const agentDesignRequirementTable = pgTable(
 );
 
 /**
- * task ↔ requirement item. `acknowledgedAt` is the task side's clock: a human
- * pressing "확인" after an upstream change sets it, which clears the stale flag
- * without touching the upstream row or the task itself.
+ * task ↔ requirement item. `acknowledgedAt` is the task side's clock: a person
+ * pressing "확인", or an agent calling `agent_task_link` with `acknowledge`,
+ * sets it after an upstream change, which clears the stale flag without
+ * touching the upstream row or the task itself.
  */
 export const agentTaskRequirementTable = pgTable(
   "agent_task_requirement",

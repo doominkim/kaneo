@@ -1,12 +1,45 @@
 # Handoff — Agent Layer / Kaneo 운영
 
-> 2026-09-02 기준 · 인계 대상: Claude
+> 2026-09-14 기준 (최초 작성 2026-09-02) · 인계 대상: Claude
 >
 > [DESIGN.md](./DESIGN.md)는 구현 전 설계 snapshot일 수 있다. 현재 운영 상태의 정본은 이 문서의 실측과 Git/Argo 런타임 확인이다.
 
-## 현재 상태 — 인스턴스 잠금·MCP 보안·타임존 핀(`agent.16`)까지 운영 반영 완료
+## 현재 상태 — agent-autoapply(`agent.24`) 운영 반영 (2026-09-14)
 
-Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-prod`는 해당 이미지와 S3 첨부 스토리지를 사용 중이다. 첨부 UI의 실제 로그인 사용자 업로드만 아직 브라우저 환경 문제로 확인하지 못했다. **다음 작업의 첫 순서는 로그인한 Kaneo에서 파일 하나를 올리고, 다운로드·삭제까지 확인하는 것**이다.
+Agent Layer 즉시 적용 모델(재생성된 KAN 프로젝트의 KAN-9, 설계는 DESIGN §4.8)이 운영에 올라갔다. ADR·요구사항·설계·지식 항목 쓰기는 곧바로 적용되고, 에이전트·API 키가 쓴 것은 사람이 열어볼 때까지 미확인으로 표시된다. 승인 UI·draft·proposed 는 없어졌다. **새 웹 UI 는 배포 전 브라우저로 확인하지 않았다**(사용자 결정, 컴포넌트 테스트만).
+
+| 대상 | 상태 | 근거 |
+|---|---|---|
+| Kaneo 코드 | `feat/agent-autoapply` `60ebbcb3` (교차 모델 리뷰 차단 항목 수정 포함) | `git log 0e252888..60ebbcb3` |
+| 이미지 | `ghcr.io/doominkim/kaneo:2.22.0-agent.24` | [GitHub Actions run 34811083195](https://github.com/doominkim/kaneo/actions/runs/34811083195) |
+| GitOps manifest | platform [PR #1](https://github.com/doominkim/platform/pull/1) squash merge `39f29ba0` | 이미지 태그 `agent.24` |
+| Pod | `kaneo-prod-78cdc5bbdc-6td5t`, 배포 2026-09-14 06:11:49Z | 운영 실측 |
+| DB | agent 마이그레이션 15개(0000~0014) 적용, `draft`·`proposed` 행 0, `agent_spec_revision` 4+4, CHECK 4개 + `agent_spec_revision_one_target`, `agent_decision_supersedes_unique` 는 삭제 행 제외 | 운영 DB 조회 |
+| 직전 배포 | `2.22.0-agent.23` (`0e252888`, feature-hub) | 아래 KAN-19 절 |
+
+운영 모델 요약 (상세 DESIGN §4.8):
+
+- 쓰기 즉시 적용. 에이전트·API 키 쓰기는 미확인(`reviewed_at` NULL), 사람이 세션으로 쓴 것은 확인됨. 읽기 권한이 있는 사람이 열면 확인된다.
+- 삭제·복구는 사람만(소프트 삭제). ADR·요구사항·설계는 `project:update` + 타임라인 기록, 지식 항목은 `workspace:update` + 컬럼만. 요구사항·설계는 리비전(요구사항은 기준 행 스냅샷 포함)과 되돌리기가 있다. 삭제된 문서에 쓰면 409.
+- ADR 은 수정하지 않고 `supersedesDecisionId` 로 대체한다. 대체 체인마다 live accepted ADR 은 정확히 하나다.
+- MCP: `agent_decision_list/get/put`, `agent_task_link` `acknowledge`, `agent_brief.decisions {accepted, unreviewed}`·feature 별 `requirementsReviewed`/`designReviewed`, 조회 도구의 `reviewed`. 도구 25개, 정의 합계 20,953B / 예산 21,504B.
+
+### 백업과 롤백
+
+- 백업: ops 호스트 `~/kaneo-backups/kaneo-2026-09-14-pre-autoapply.dump` (271K, 배포 직전), 로컬 사본 `~/.agents/artifacts/kaneo/kaneo-2026-09-14-pre-autoapply.dump`, sha256 `d8236853ca95f534639a15cadc6b9cca679fa34b33f57c1e5b00b2a5cfd7d2e2` (로컬 사본 실측).
+- **down 마이그레이션은 없다.** 0013 이 draft·proposed 행을 적용 상태로 바꿨고 0014 가 `draft`·`proposed` 를 CHECK 로 거부하므로, 이미지만 `agent.23` 으로 되돌리면 agent.23 코드의 draft·proposed 쓰기가 실패한다.
+- 롤백은 사용자 승인 후 **백업 dump 복원 + 이미지 태그 `agent.23` 복귀**(platform `39f29ba0` revert)를 한 작업 창에서 한다. 배포 이후의 쓰기는 사라진다. 이후 절차와 확인은 아래 "롤백과 장애 대응"을 따른다.
+
+### 후속
+
+1. 운영에서 새 UI 브라우저 확인 — 미확인 배지와 열람 시 확인, 요구사항·설계 리비전·되돌리기, ADR 대체·삭제·복구 배너, 지식 항목 삭제됨 필터·복구, 도메인 사이드바 미확인 수.
+2. 리뷰 finding 13 — 지식 항목 canonical 대소문자 무시 유일성. unique 제약은 대소문자를 구분하지만 resolve 는 `lower(trim())` 로 맞추므로 대소문자만 다른 두 항목이 resolve 를 모호하게 만든다. 보류.
+3. 설계 문서 stale 재저장 — stale 은 이제 `revised_at` 기준이라, 커버하는 요구사항 항목이 설계 마지막 수정보다 나중에 바뀐 설계는 stale 로 보인다. 내용을 갱신해 다시 저장해야 풀린다. Kaneo 쪽 작업은 매니저가 처리한다.
+4. 리뷰 finding 12 — 외부 API 계약 변경(approve·accept 라우트 제거, 응답 필드 변경). 단일 사용자 인스턴스·API 키 0개라 수용했다. API 키나 외부 클라이언트가 생기면 다시 본다.
+
+## 이력: 첫 운영 반영 — 인스턴스 잠금·MCP 보안·타임존 핀(`agent.16`~`agent.18`, 2026-09-03 기준)
+
+이 절은 그 시점의 기록이다. Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-prod`는 해당 이미지와 S3 첨부 스토리지를 사용 중이다. 첨부 UI의 실제 로그인 사용자 업로드만 아직 브라우저 환경 문제로 확인하지 못했다. **다음 작업의 첫 순서는 로그인한 Kaneo에서 파일 하나를 올리고, 다운로드·삭제까지 확인하는 것**이다.
 
 | 대상 | 확정 상태 | 근거 |
 |---|---|---|
@@ -33,14 +66,15 @@ Kaneo Agent Layer는 `agent-layer` 브랜치에 push 되었고, 운영 `kaneo-pr
 | 지식 항목 자산화 | `agent_term` + resolve |
 | MCP 조회 + 점유 | MCP 8개 도구 + `agent_lease` |
 
-**어휘 (2026-09-04, KAN-16).** 사람 면과 문서에서는 `agent_term`에 저장되는 것을 "용어"가 아니라 **지식 항목**이라 부른다. 이름 붙은 검수된 사실 한 건(정의·별칭·혼동 금지 목록·DB/코드 앵커)이며, 사람이 확정하기 전까지 에이전트가 읽지 못한다. 이름 없는 서술은 지식 항목이 아니라 도메인 페이지 본문이고, 그쪽은 검수 없이 바로 읽히되 작성자·갱신 시각이 함께 나온다. 검수(확정·이의)는 지식 탭이 아니라 **도메인 페이지**에서 하고, 지식 탭은 확정된 항목만 보여주는 읽기 전용이다.
+**어휘 (2026-09-04, KAN-16).** 사람 면과 문서에서는 `agent_term`에 저장되는 것을 "용어"가 아니라 **지식 항목**이라 부른다. 이름 붙은 사실 한 건(정의·별칭·혼동 금지 목록·DB/코드 앵커)이다. `agent.24`(2026-09-14)부터는 쓰는 즉시 에이전트가 읽고, 에이전트·API 키가 쓴 항목은 사람이 열어볼 때까지 미확인으로 표시된다(그 전에는 사람이 확정해야 읽혔다). 이름 없는 서술은 지식 항목이 아니라 도메인 페이지 본문이고, 그쪽은 확인 표시 없이 작성자·갱신 시각이 함께 나온다. 확정·이의는 지식 탭이 아니라 **도메인 페이지**에서 하고, 지식 탭은 확정된 항목을 보여주며 정의를 펼치면 확인, 삭제·복구를 한다.
 
 식별자는 바꾸지 않는다 — DB `agent_term`, API `/api/agent-term`, MCP `agent_term_resolve`·`agent_term_propose`는 그대로다. Claude·Codex 두 하네스가 그 툴 이름으로 붙어 있어 바꾸면 배포 순간 양쪽이 깨진다. 도메인 언어와 저장소 이름을 분리한 의도된 처리다. 아래 이력에 나오는 "용어사전"은 그 시점의 호칭이므로 소급해 고치지 않는다.
 
 주요 Agent Layer 커밋은 아래와 같다.
 
 ```
-0e252888  현재 agent-layer 배포 대상 (2.22.0-agent.23, 2026-09-13)
+60ebbcb3  현재 배포 대상 (2.22.0-agent.24, feature agent-autoapply, 2026-09-14)
+0e252888  직전 배포 대상 (2.22.0-agent.23, feature-hub, 2026-09-13)
 8dd35aca  agent.18 배포 대상이었음
 c8f9fd22  feat(agent-layer): 에이전트 전용 MCP 툴셋 8개 추가
 6d1cff67  feat(agent-layer): 태스크 점유(lease) API 모듈 추가
@@ -146,11 +180,11 @@ DATABASE_URL="postgresql://dominic@localhost:5432/kaneo_test" pnpm --filter @kan
 
 ## 요구사항·설계·Feature 허브 (KAN-19 spec-tabs → feature-hub, 2026-09-13)
 
-같은 날 두 번 배포했다. `agent.22`(`25c270b7`, spec-tabs): 요구사항·설계를 Kaneo 1급 엔티티로(`agent_requirement_*`·`agent_design*`·`agent_task_*`·coverage, drizzle-agent 0011), MCP 툴 6개, 승인·확인은 사람 세션만. `agent.23`(`0e252888`, feature-hub): 사용자 실측 피드백으로 요구사항·설계 탭을 **Feature 탭 하나**(목록 + 상세 서브 탭 요구사항/설계/태스크)로 합치고, **요구사항 문서를 정본**으로 바꿨다 — `## 스토리` 절 아래 `n. 문장 \`unit|api|e2e\` REQ-키` 줄을 `agent-requirement/parse.ts` 가 행으로 파생하고 키를 발급해 본문에 써넣는다(`story` 컬럼, 0012). 기준 문장은 한국어 "조건 → 시스템은 → 결과" 형식(EARS 영어 키워드 폐기, 사용자 결정). 설계 첫 승인은 태스크를 stale 로 만들지 않는다. `/agent-feature` 요약 API, `agent_brief.features[]`.
+같은 날 두 번 배포했다. `agent.22`(`25c270b7`, spec-tabs): 요구사항·설계를 Kaneo 1급 엔티티로(`agent_requirement_*`·`agent_design*`·`agent_task_*`·coverage, drizzle-agent 0011), MCP 툴 6개, 승인·확인은 사람 세션만(`agent.24`에서 폐기 — 맨 위 현재 상태). `agent.23`(`0e252888`, feature-hub): 사용자 실측 피드백으로 요구사항·설계 탭을 **Feature 탭 하나**(목록 + 상세 서브 탭 요구사항/설계/태스크)로 합치고, **요구사항 문서를 정본**으로 바꿨다 — `## 스토리` 절 아래 `n. 문장 \`unit|api|e2e\` REQ-키` 줄을 `agent-requirement/parse.ts` 가 행으로 파생하고 키를 발급해 본문에 써넣는다(`story` 컬럼, 0012). 기준 문장은 한국어 "조건 → 시스템은 → 결과" 형식(EARS 영어 키워드 폐기, 사용자 결정). 설계 첫 승인은 태스크를 stale 로 만들지 않는다. `/agent-feature` 요약 API, `agent_brief.features[]`.
 
 같은 날 사용자 결정으로 **운영 DB 를 fika 요구사항만 남기고 비웠다**(프로젝트 9개·task 72·타임라인 311). 백업 `~/kaneo-backups/kaneo-2026-09-13-pre-wipe.dump`(ops 호스트)·`~/.agents/artifacts/kaneo/`(로컬). KAN 프로젝트는 `b2bgnm0yp59zn2vvhe8c7ftr` 로 재생성됐고 feature-hub 가 첫 feature 다. 이 문서의 KAN #1~#19 등 옛 task ID 는 전부 무효다.
 
-정본: 요구사항·설계는 Kaneo Feature 탭(KAN feature-hub, FIK admin-qa). 레포 `docs/specs/<feature>/requirements.md` 는 spec-check 용 키 목록 사본이고 `docs/specs/kaneo.json` 포인터 방식(sandbox)으로 옮겨가는 중이다. 하네스 쪽은 `~/.agents/skills/spec-driven/SKILL.md`. 미결: admin-qa 요구사항의 문서 모드 재저장(메뉴별 스토리), 툴 정의 예산 재산정(18,432B, DESIGN.md §5.2), spec-check 가 픽스처 문자열의 키를 매핑으로 세는 한계.
+정본: 요구사항·설계는 Kaneo Feature 탭(KAN feature-hub, FIK admin-qa). 레포 `docs/specs/<feature>/requirements.md` 는 spec-check 용 키 목록 사본이고 `docs/specs/kaneo.json` 포인터 방식(sandbox)으로 옮겨가는 중이다. 하네스 쪽은 `~/.agents/skills/spec-driven/SKILL.md`. 미결: admin-qa 요구사항의 문서 모드 재저장(메뉴별 스토리), spec-check 가 픽스처 문자열의 키를 매핑으로 세는 한계. 툴 정의 예산은 `agent.24`에서 21,504B로 재산정했다(DESIGN.md §5.2).
 
 ## Linear → Kaneo 전환 (2026-09-02)
 
@@ -208,7 +242,7 @@ fika.ing(Mac Studio, macOS 15.6.1, k3s·PostgreSQL 17·MinIO·Redis 호스트)�
 
 ## 오래된 정보 폐기
 
-- `2.22.0-agent.2`~`agent.22`는 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.23`(feature-hub)다.
+- `2.22.0-agent.2`~`agent.23`은 더 이상 배포 대상이 아니다. 현재는 `2.22.0-agent.24`(agent-autoapply)이고, 직전은 `agent.23`(feature-hub)이다.
 - `apps/kaneo/prod.yaml`은 미커밋/빈 `sealedEnv` 상태가 아니다. `eb024ce`가 운영에 반영되었다.
 - TLS 발급/배포는 pending이 아니다. `files.kit.io.kr`은 정상 HTTPS다.
 - 운영 DB/auth/S3 secret은 Bitwarden과 SealedSecret으로 이미 주입되어 있다. 값을 문서나 명령 출력에 적지 않는다.

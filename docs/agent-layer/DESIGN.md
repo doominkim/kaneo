@@ -7,6 +7,7 @@
 > 개정 2026-09-02 — 사람 뷰 5탭, 개요=파생 이력 뷰(핸드오프 + 타임라인 트리), `agent_document`·`agent_project` 테이블, entry에 `refs.branch`·`effort`·`usage`, core_paths 서버 측 판정, MCP 툴 10개 (KAN-6)
 > 개정 2026-09-03 — §2.3 면 분리 폐기 — 타임라인 기록은 사람·AI 공용 노트, 작성자만 표시 (KAN-12)
 > 개정 2026-09-04 — 어휘: 사람이 보는 이름은 "용어"가 아니라 **지식 항목**. 검수 자리는 지식 탭에서 도메인 페이지로 이동 (KAN-16, §4.4·§6)
+> 개정 2026-09-14 — agent-autoapply (KAN-9): 승인 게이트·draft·proposed 폐기. 쓰기는 즉시 적용되고 사람이 사후에 확인·삭제·복구·되돌리기를 한다. ADR 대체 체인, 요구사항·설계 리비전, MCP ADR 도구, drizzle-agent 0013/0014 (§2.4·§4.2·§4.4·§4.8·§5.2·§6·§10)
 
 ---
 
@@ -69,7 +70,7 @@ Linear 실패 자체는 실재한다. AI는 append만 하고 compact를 안 한�
 
 감쇠는 **저장이 아니라 인출**에 적용한다. 직접 물으면(`resolve`) 항상 100% 답한다.
 
-**삭제 대신 숨김.** 타임라인 기록 행은 수정도 삭제도 되지 않는다. 사람이 지운 행은 `deleted_at`/`deleted_by`만 찍히고 다른 열은 그대로 남는다(soft delete, `drizzle-agent/0006`). 기본 읽기(목록·단건·`agent_brief`·`agent_log_tail`·`agent_entry_get`·트리 집계·최신 handoff 선택)는 숨긴 행을 제외하고, `project:update`를 가진 사람만 `includeDeleted=true`로 다시 볼 수 있으며 같은 권한으로 복구한다. 숨길 수 있는 사람은 그 행의 사람 작성자 본인 또는 `project:update` 보유자다 — 에이전트 행에는 사람 작성자가 없으므로 후자만 해당한다. 지식 항목(§4.4)은 반대로 `proposed` 상태에서만 하드 삭제한다: 아직 아무도 의존하지 않은 제안이기 때문이며, 확정된 항목은 삭제 대신 `retired` 툼스톤으로 남긴다.
+**삭제 대신 숨김.** 타임라인 기록 행은 수정도 삭제도 되지 않는다. 사람이 지운 행은 `deleted_at`/`deleted_by`만 찍히고 다른 열은 그대로 남는다(soft delete, `drizzle-agent/0006`). 기본 읽기(목록·단건·`agent_brief`·`agent_log_tail`·`agent_entry_get`·트리 집계·최신 handoff 선택)는 숨긴 행을 제외하고, `project:update`를 가진 사람만 `includeDeleted=true`로 다시 볼 수 있으며 같은 권한으로 복구한다. 숨길 수 있는 사람은 그 행의 사람 작성자 본인 또는 `project:update` 보유자다 — 에이전트 행에는 사람 작성자가 없으므로 후자만 해당한다. 2026-09-14(agent-autoapply, `0013`)부터 지식 항목·요구사항·설계·ADR도 같은 소프트 삭제다(§4.8): 지식 항목은 `workspace:update`로 숨기고 복구하며 타임라인 기록을 남기지 않고, 요구사항·설계·ADR은 `project:update`로 숨기고 복구하며 타임라인 기록을 남긴다. 에이전트에게는 삭제 도구가 없다.
 
 ---
 
@@ -156,19 +157,21 @@ Task 본문은 고정 크기(명세)를 유지하고, 증가는 전부 `entry`�
 | `agent_actor` | AI 행위자. `provider`, `model`, `on_behalf_of` → 기존 `user` |
 | `agent_entry` | append-only 타임라인 기록. `project_id`, **`task_id` nullable**, `decision` jsonb, `effort`·`agent_label`·`usage`(§4.3) |
 | `agent_lease` | 점유. `task_id`(unique), `session_id`, `expires_at` |
-| `agent_term` | 지식 항목(§4.4). `canonical`, `aliases`, `not_to_confuse_with` |
+| `agent_term` | 지식 항목(§4.4). `canonical`, `aliases`, `not_to_confuse_with`, `confidence`(confirmed/disputed — `proposed`는 0014 CHECK 거부), `reviewer_id`/`reviewed_at`(확인 표시), `deleted_at`/`deleted_by`(0013) |
 | `agent_document` | 사람이 읽는 산출물. `project_id`+`slug` unique, **`task_id` nullable**(FK task, `SET NULL`), `title`, `body`(markdown), `updated_by`(user, nullable) / `actor_id`(`agent_actor`, nullable), `updated_at` |
 | `agent_project` | 프로젝트별 설정. `project_id` PK, `core_paths` jsonb, `active_task_threshold`(기본 20), `done_archive_days`(기본 30) |
 | `agent_domain` | 워크스페이스 도메인 지식 페이지 트리(§4.7). `workspace_id`, `parent_id`(self, `SET NULL`), `slug`(레벨별 unique), `title`, `body`(markdown), `position`, `updated_by` / `actor_id` |
 | `agent_project_domain` | 프로젝트 ↔ 도메인 페이지 링크. PK (`project_id`, `domain_id`), 양쪽 `CASCADE` |
-| `agent_requirement_set` | 요구사항 문서(KAN-19, 2026-09-13). `project_id`+`feature` unique, `title`, `body`, `status`(draft/approved), `approved_at`/`approved_by`(사람만), `next_seq`(키 발급 카운터, 재사용 없음), `source_slug`(이관 원본 문서), `updated_by` / `actor_id` |
-| `agent_requirement_item` | 요구사항 항목 행. `set_id`(CASCADE), `project_id`+`key`(`REQ-<FEATURE>-<n>`) unique, `seq`, `text`, `layer`(unit/api/e2e), `story`(문서의 `##` 절 제목, feature-hub 2026-09-13), `status`(active/deferred/dropped — 삭제 없음), `updated_at`은 text·status 변경 시에만 이동(stale 계산의 시계). **문서가 정본**: `set.body` 에 기준 줄(`n. 문장 \`unit|api|e2e\` REQ-키`)이 있으면 `agent-requirement/parse.ts` 가 행을 파생하고 키를 발급해 본문에 써넣는다. 취소선 = dropped, 본문에서 사라진 키도 dropped |
-| `agent_design` | 설계 문서. `project_id`+`feature` unique, `title`, `body`, `status`, `approved_at`/`approved_by`, `source_slug`, `updated_by` / `actor_id` |
+| `agent_requirement_set` | 요구사항 문서(KAN-19, 2026-09-13). `project_id`+`feature` unique, `title`, `body`, `status`(approved 만 — `draft`는 0014 CHECK 거부), `approved_at`/`approved_by`(저장 시각·사람 작성자, 승인이 아니다), `next_seq`(키 발급 카운터, 재사용 없음), `source_slug`(이관 원본 문서), `updated_by` / `actor_id`, `reviewed_at`/`reviewed_by`·`deleted_at`/`deleted_by`·`revised_at`(0013, §4.8) |
+| `agent_requirement_item` | 요구사항 항목 행. `set_id`(CASCADE), `project_id`+`key`(`REQ-<FEATURE>-<n>`) unique, `seq`, `text`, `layer`(unit/api/e2e), `story`(문서의 `##` 절 제목, feature-hub 2026-09-13), `status`(active/deferred/dropped — 삭제 없음), `updated_at`은 text·layer·story·status 변경 시에만 이동(stale 계산의 시계). **문서가 정본**: `set.body` 에 기준 줄(`n. 문장 \`unit|api|e2e\` REQ-키`)이 있으면 `agent-requirement/parse.ts` 가 행을 파생하고 키를 발급해 본문에 써넣는다. 취소선 = dropped, 본문에서 사라진 키도 dropped |
+| `agent_design` | 설계 문서. `project_id`+`feature` unique, `title`, `body`, `status`(approved 만), `approved_at`/`approved_by`(저장 시각·사람 작성자), `source_slug`, `updated_by` / `actor_id`, `reviewed_at`/`reviewed_by`·`deleted_at`/`deleted_by`·`revised_at`(0013) |
 | `agent_design_requirement` | 설계 ↔ 요구사항 항목. PK (`design_id`, `item_id`) |
-| `agent_task_requirement` / `agent_task_design` | task ↔ 항목 / task ↔ 설계. PK (`task_id`, …), `created_at`·`acknowledged_at`이 그 링크의 시계. task CASCADE |
+| `agent_task_requirement` / `agent_task_design` | task ↔ 항목 / task ↔ 설계. PK (`task_id`, …), `created_at`·`acknowledged_at`이 그 링크의 시계. `acknowledged_actor_id`(에이전트 확인)·`reviewed_at`(0013). task CASCADE |
 | `agent_requirement_coverage` | spec-check 결과. (`item_id`, `repo`, `test_path`) unique, `test_name`, `reported_at`, `actor_id`. 통과 여부는 저장하지 않는다 |
+| `agent_spec_revision` | 요구사항·설계 리비전(0013, §4.8). `set_id`/`design_id` 중 정확히 하나(CHECK `agent_spec_revision_one_target`), `title`, `body`, `requirement_keys`(설계), `items`(요구사항 행 스냅샷, 0014), `created_by` / `actor_id`, `reverted_from_id` |
+| `agent_decision` | 프로젝트 ADR(0009, §4.8). `number`(프로젝트 내 증가, `agent_decision_counter`), `title`, `context`, `decision`, `alternatives`, `consequences`, `reversible`, `refs`, `status`(accepted/superseded — `draft`는 0014 CHECK 거부), `supersedes_decision_id`(RESTRICT, 삭제 행을 뺀 partial unique), `created_by` / `created_actor_id`, `accepted_at`/`accepted_by`, `reviewed_at`/`reviewed_by`·`deleted_at`/`deleted_by`(0013). task 링크는 `agent_decision_task` |
 
-**stale은 저장하지 않는다(KAN-19 결정).** 설계: `approved_at` 이후에 바뀐 항목이 있으면 stale, 미승인이면 stale 아님(그냥 미승인). task: 링크마다 `coalesce(acknowledged_at, created_at)` 이후에 항목 `updated_at` 또는 설계 `approved_at`이 움직였으면 stale, 원인 키를 함께 돌려준다. 재승인·확인(acknowledge)이 시계를 옮겨 stale을 푼다. 계산은 `apps/api/src/agent-requirement/stale.ts` 한 곳.
+**stale은 저장하지 않는다(KAN-19 결정).** 설계: 커버하는 항목의 `updated_at`이 설계 `revised_at`보다 뒤면 stale. task: 링크마다 `coalesce(acknowledged_at, created_at)` 이후에 항목 `updated_at` 또는 설계 `revised_at`이 움직였으면 stale, 원인 키를 함께 돌려준다. 설계는 내용(제목·본문·커버 키)을 바꿔 저장해야 `revised_at`이 옮겨져 풀리고, 같은 내용 재저장은 시계를 옮기지 않는다. task는 확인(acknowledge — 사람, 또는 에이전트의 `agent_task_link` `acknowledge`)이 푼다. 계산은 `apps/api/src/agent-requirement/stale.ts` 한 곳. 2026-09-13까지는 승인 시각(`approved_at`)이 시계였다.
 
 **모든 테이블에 `agent_` prefix를 붙인다.** upstream이 `entry`·`term` 같은 흔한 이름을 나중에 쓸 수 있고, prefix가 있어야 마이그레이션 범위를 이름으로 가를 수 있다.
 
@@ -245,17 +248,18 @@ canonical: 급여코드
 aliases: [보험코드, 청구코드, BenefitCode]
 not_to_confuse_with: [claim-code]     # 동의어 목록보다 중요
 anchors: [{ kind: db, table: benefits, column: benefit_cd }]
-confidence: confirmed | proposed | disputed
+confidence: confirmed | disputed      # proposed 는 0014 CHECK 가 거부
+reviewed_at: null                     # NULL = 사람이 아직 확인하지 않음
 ```
 
 - **`not_to_confuse_with`가 핵심 필드.** "이건 다른 거다"가 사고를 더 많이 막는다.
 - 앵커는 **검색으로 못 찾는 매핑만** 담는다. `symbol: BenefitCode`는 grep으로 5초면 나오므로 게이트 1에 걸린다. `보험코드 → benefit_cd`는 검색어가 코드에 없으므로 담는다.
-- 모델이 제안한 항목은 `proposed`. 사람이 승인해야 `confirmed`. **자동 승인 금지.**
+- 제안은 즉시 `confirmed`로 적용된다(2026-09-14, §4.8). 에이전트·API 키가 쓴 항목은 사람이 열어볼 때까지 미확인이고, resolve 가 `reviewed`로 알린다. 틀린 항목은 사람이 `disputed`(resolve 에서 빠짐)나 소프트 삭제로 되돌린다. 2026-09-13까지는 `proposed` → 사람 확정 → `confirmed` 게이트였다.
 
-**이름 규약 (2026-09-04, KAN-16).** 여기 저장되는 한 건은 이름 붙은 **검수된 사실**이다 — canonical 이름에 정의·별칭·혼동 금지 목록·DB/코드 앵커가 붙는다. 사람 면과 문서에서는 이것을 "지식 항목"이라 부른다. "용어"는 담기는 것보다 좁아서, 이름 붙은 규칙("보험코드 필수 규칙")이나 매핑을 여기 넣기를 주저하게 만들었다.
+**이름 규약 (2026-09-04, KAN-16).** 여기 저장되는 한 건은 이름 붙은 **사실**이다 — canonical 이름에 정의·별칭·혼동 금지 목록·DB/코드 앵커가 붙는다. 사람 면과 문서에서는 이것을 "지식 항목"이라 부른다. "용어"는 담기는 것보다 좁아서, 이름 붙은 규칙("보험코드 필수 규칙")이나 매핑을 여기 넣기를 주저하게 만들었다.
 
-- **지식 항목** = 이름 있음, 검수 있음. 사람이 확정하기 전까지 에이전트가 읽지 못한다.
-- **도메인 페이지 본문**(§4.7) = 이름 없는 서술. 검수를 거치지 않고 바로 읽히되 마지막 작성자와 갱신 시각이 함께 나온다.
+- **지식 항목** = 이름 있음, 확인 표시(`reviewed`) 있음. 쓰는 즉시 읽힌다.
+- **도메인 페이지 본문**(§4.7) = 이름 없는 서술, 확인 표시 없음. 바로 읽히되 마지막 작성자와 갱신 시각이 함께 나온다.
 
 이 구분이 **모델을 이름 기반으로 유지하는 근거**다. `agent_term_resolve`는 이름으로 정확히 일치시키는 결정적 조회이고 임베딩·랭킹·모델 판단을 쓰지 않는 것이 §2.1의 핵심이므로, 저장되는 모든 항목에는 이름이 있어야 한다. 이름을 붙일 수 없는 서술은 지식 항목이 아니라 도메인 페이지 본문이다.
 
@@ -312,6 +316,21 @@ active/dormant ──앵커 깨짐──▶ stale ──검수──▶ active |
 
 **slug는 ASCII다.** 한글 제목은 `title`에 두고 slug는 `[a-z0-9-]`로 쓴다. `slugPath`도 slug 기준이므로 `약국/입고내역` 같은 경로는 400이다 — 사람 뷰는 title로 표시하고 경로는 slug로 만든다.
 
+### 4.8 즉시 적용·사후 확인 (agent-autoapply, 2026-09-14)
+
+2026-09-14 사용자 결정(KAN-9)으로 승인 게이트를 없앴다. **쓰기는 즉시 적용되고, 사람은 사후에 확인·삭제·복구·되돌리기를 한다.** §2.2의 위험(확신에 찬 틀린 답)은 게이트가 아니라 미확인 표시와 사람의 삭제로 다룬다.
+
+| 항목 | 규칙 |
+|---|---|
+| 적용 | 요구사항 set·설계는 저장 즉시 `approved`, ADR은 생성 즉시 `accepted`, 지식 항목은 제안 즉시 `confirmed`. `approved_at`/`accepted_at`은 적용 시각이지 사람 승인이 아니다(에이전트 쓰기면 `approved_by`/`accepted_by`는 NULL) |
+| 미확인 | `reviewed_at` NULL(지식 항목은 `reviewer_id`/`reviewed_at`). 에이전트 쓰기와 API 키 쓰기(작성자는 키 소유자)는 미확인이고, 사람이 세션으로 쓴 것은 그 사람의 확인이다. 에이전트 저장은 이전 확인을 지운다. 읽기 권한이 있는 사람이 열면 `POST …/review`로 확인된다 — 사람 세션 전용(API 키 403), MCP 도구 없음 |
+| task 링크 확인 | `acknowledged_at`을 사람 또는 에이전트(`agent_task_link` `acknowledge`)가 옮긴다. 에이전트 확인은 `acknowledged_actor_id`와 타임라인 기록을 남기고 `reviewed_at`은 NULL이다. API 키 확인도 미확인 |
+| 삭제·복구 | 소프트 삭제(`deleted_at`/`deleted_by`). 요구사항·설계·ADR은 `project:update`, 문서 변경과 타임라인 기록을 한 트랜잭션으로. 지식 항목은 `workspace:update`, 컬럼만. 삭제된 것은 읽기·요약·배지·resolve에서 빠지고 링크 행은 보존된다. 삭제된 문서에 쓰면 409. 에이전트용 삭제 도구는 없다 |
+| 리비전 | `agent_spec_revision`. 내용(제목·본문·기준 행 또는 커버 키)이 바뀐 저장만 리비전을 남기고 `revised_at`을 옮긴다. 요구사항 리비전은 기준 행 스냅샷 `items`를 담아 행만 바뀐 저장도 되돌린다. 되돌리기(`POST …/revisions/{id}/revert`, `task:update`)도 새 리비전(`reverted_from_id`)이다 |
+| ADR 체인 | ADR은 수정하지 않는다(PATCH 409). 새 ADR이 `supersedesDecisionId`로 대체하면 같은 트랜잭션에서 옛 ADR이 `superseded`가 된다. 불변식: 대체 체인마다 live accepted ADR 정확히 하나(체인 루트 행 잠금으로 직렬화). accepted ADR을 지우면 가장 가까운 live 조상이 다시 accepted, superseded ADR의 삭제·복구는 다른 ADR을 바꾸지 않는다, 순서가 어긋난 복구는 409 |
+| 지식 항목 | 제안 즉시 `confirmed`(미확인). 확정·이의는 `workspace:update`이고 `disputed`는 resolve에서 빠진다. resolve는 삭제되지 않은 confirmed 항목을 `reviewed`와 함께 준다. 이름이 이미 있으면 삭제된 항목이라도 409 |
+| 마이그레이션 | `0013_agent_autoapply`: 위 컬럼과 `agent_spec_revision`. 기존 approved·accepted·confirmed는 확인됨으로 두고, draft→approved·accepted와 proposed→confirmed는 미확인으로 전환, 문서마다 기준 리비전 1개. `0014_agent_autoapply_integrity`: 기본값을 approved·accepted·confirmed로, 남은 draft·proposed 전환, 최신 요구사항 리비전에 `items` 스냅샷, `supersedes_decision_id`를 가진 draft ADR이 있으면 마이그레이션 거부, 마지막에 `draft`·`proposed` 거부 CHECK 4개. down 마이그레이션은 없다 |
+
 ---
 
 ## 5. MCP 설계
@@ -364,7 +383,7 @@ brief(project)          세션 부팅 — 왕복 1회
 task_list / task_save
 log_append / log_tail
 lease_acquire / leases
-resolve(term)
+resolve(term)           삭제되지 않은 confirmed 항목 + reviewed
 doc_get(project, slug, offset?)  8KB(바이트) 창 + nextOffset 이어읽기. UTF-8 문자 경계 보장
 doc_put(project, slug)  title + body(≤200KB) 덮어쓰기. lease 불필요. actorId 기록
 artifact_put_text(project, name, contentType, text, taskId?)   ≤200KB 텍스트(html/md/json/txt)를 서버가 S3에 쓰고 즉시 확정. actorId 기록
@@ -373,20 +392,23 @@ artifact_finalize(project, artifactId, storageKey)             HeadObject 검증
 domain_list(workspace)                                         도메인 페이지 평면 트리(id/parentId/slug/title, ≤200)
 domain_get(workspace, domainId? | slugPath?, offset?)          페이지 메타 + 8KB 본문 창 + 링크 이름(지식 항목·프로젝트·문서·자식 각 ≤20)
 domain_put(workspace, domainId? | parentId?+slug, title, body) upsert. actorId 기록. body 전체 교체
-requirements_get(project, feature?, offset?)   요구사항 set + 항목(key/text/status/covered/designs/tasks) + 본문 창. feature 없으면 목록
-requirements_put(project, feature, title, body, items?)  body 가 문서 정본(## 스토리 + `n. 문장 `unit|api|e2e` [키]`). 기준 줄이 있으면 items 무시. 키 발급·본문 삽입, 취소선 dropped. 항상 draft. approved 를 덮으면 draft + entry
-brief 응답 features[]: feature 별 요구사항/설계 상태·태스크 진행·stale 수 (feature-hub)
-design_get(project, feature?, offset?)          설계 + stale 판정·원인 + 커버 항목 + 파생 task
-design_put(project, feature, title, body, requirementKeys[])  draft 저장, 매핑 전체 교체
-task_link(project, taskId, requirementKeys?, designFeatures?)  task 매핑 교체
+requirements_get(project, feature?, offset?)   요구사항 set(reviewed) + 항목(key/text/status/covered/designs/tasks) + 본문 창. feature 없으면 목록
+requirements_put(project, feature, title, body, items?)  body 가 문서 정본(## 스토리 + `n. 문장 `unit|api|e2e` [키]`). 기준 줄이 있으면 items 무시. 키 발급·본문 삽입, 취소선 dropped. 즉시 적용(미확인), 내용이 바뀌면 리비전. 삭제된 set 은 409
+brief 응답 features[]: feature 별 요구사항/설계 상태·requirementsReviewed/designReviewed·태스크 진행·stale 수 (feature-hub). decisions: {accepted, unreviewed}
+design_get(project, feature?, offset?)          설계(reviewed) + stale 판정·원인 + 커버 항목 + 파생 task
+design_put(project, feature, title, body, requirementKeys[])  즉시 적용(미확인), 매핑 전체 교체. 삭제된 설계는 409
+task_link(project, taskId, requirementKeys?, designFeatures?, acknowledge?)  task 매핑 교체. acknowledge = 에이전트 확인(actor·타임라인 기록, 미확인)
 requirement_coverage_put(project, feature, repo, entries[])    spec-check 결과 업로드(repo 단위 교체)
+decision_list(project, status?, q?, taskId?, limit?, before?)  ADR 목록(기본 accepted, all 은 superseded 포함). reviewed·author·task 번호. 삭제 행 제외
+decision_get(project, decisionId | number)      ADR 본문 + supersedes/supersededBy 번호 + reviewed
+decision_put(project, title, context, decision, alternatives?, consequences?, reversible?, refs?, taskIds?, supersedesDecisionId?)  즉시 accepted(미확인). 대체는 같은 트랜잭션, 이미 대체·삭제된 대상은 409
 ```
 
-approve·acknowledge 도구는 없다(REQ-SPEC-TABS-4·6·10): 승인과 stale 확인은 사람이 세션으로만 한다. REST에서도 API 키 호출자는 403.
+승인 단계가 없으므로(§4.8) approve·accept 라우트는 제거됐다. 확인(review)·삭제·복구·리비전 되돌리기에는 MCP 도구가 없고 사람이 REST로 한다(review 는 API 키 403). task 링크의 stale 확인은 사람 또는 `task_link` `acknowledge`다. 2026-09-13 spec-tabs 때는 승인과 stale 확인이 둘 다 사람 세션 전용이었다(REQ-SPEC-TABS-4·6·10).
 
-REST `GET /agent-feature/{projectId}` 는 feature 슬러그(요구사항 set ∪ 설계) 별 요약을 고정 쿼리 수로 집계하고, `/{feature}/tasks` 는 그 feature 에 링크된 태스크를 stale 판정과 함께 준다. 설계 **첫** 승인은 걸린 task_design 링크의 `acknowledged_at` 을 승인 시각으로 맞춰 태스크를 stale 로 만들지 않는다(재승인은 만든다). 웹은 요구사항·설계 탭 대신 Feature 탭 하나(목록 + 상세 서브 탭 요구사항/설계/태스크)로 간다; 옛 경로는 리다이렉트.
+REST `GET /agent-feature/{projectId}` 는 feature 슬러그(요구사항 set ∪ 설계) 별 요약을 고정 쿼리 수로 집계하고, `/{feature}/tasks` 는 그 feature 에 링크된 태스크를 stale 판정과 함께 준다. 설계 링크는 설계가 있어야 만들어지므로 설계의 첫 리비전은 링크보다 앞서 태스크를 stale 로 만들지 않고, 이후의 내용 리비전은 만든다. 웹은 요구사항·설계 탭 대신 Feature 탭 하나(목록 + 상세 서브 탭 요구사항/설계/태스크)로 간다; 옛 경로는 리다이렉트.
 
-**툴 개수 상한은 두지 않는다(2026-09-03 개정).** 대신 정의 크기 예산으로 관리한다: `tools/list` 기준 `agent_*` 툴 정의(이름·설명·inputSchema) 합계 **12,288B 이하**, 툴 하나 **2,560B 이하**. `tests/api/mcp-agent-tools-budget.test.ts`가 실제 핸들러의 `tools/list`를 직렬화해 측정하고 초과 시 실패한다. 실측(2026-09-03, 13개 툴): 합계 **9,258B**, 최대 `agent_log_append` **2,148B** — 이 툴은 inputSchema만 1,695B(필드 14개·중첩 객체 3개)라 초안의 2KB로는 `decision.why`/`rejected`를 설명할 설명문이 들어가지 않아 2.5KB로 조정했다. 도메인 툴 3개 추가 후 재실측(2026-09-03, 16개 툴): 합계 **11,924B**(잔여 364B), 최대 `agent_log_append` **2,207B**, `agent_domain_put` 894B·`agent_domain_get` 613B·`agent_domain_list` 396B. `doc_put`·`term_propose`의 `domainId`와 `brief`의 `domains` 설명이 나머지 증가분이다. 다음 툴을 추가하려면 기존 설명을 줄이거나 예산을 재산정해야 한다. **2026-09-13 재산정(KAN-19):** 요구사항·설계 툴 6개 추가로 합계 **16,984B**(신규 6개 4,801B, 최대 `agent_requirements_put` 1,260B — items 스키마가 대부분). 설명을 줄여도 12KB 안에 들어가지 않아 예산을 **18,432B**로 올렸다. 잔여 1,448B. 참고로 upstream 36개 툴 합계는 16,455B다. 근거: 툴 정의는 세션마다 상주하지만 하네스마다 비용 모델이 다르다 — Claude Code는 지연 로딩이라 개별 스키마 크기가 비용이고, Codex처럼 전체 스키마를 싣는 클라이언트는 개수×크기가 비용이다. 개수는 그 비용을 대표하지 못한다. 산출물 바이트를 MCP JSON에 싣는 단일 업로드 툴(base64)은 기각 — 1MB html이 약 35만 토큰이 된다.
+**툴 개수 상한은 두지 않는다(2026-09-03 개정).** 대신 정의 크기 예산으로 관리한다: `tools/list` 기준 `agent_*` 툴 정의(이름·설명·inputSchema) 합계 예산(현재 **21,504B**, 처음 12,288B — 연혁은 아래), 툴 하나 **2,560B 이하**. `tests/api/mcp-agent-tools-budget.test.ts`가 실제 핸들러의 `tools/list`를 직렬화해 측정하고 초과 시 실패한다. 실측(2026-09-03, 13개 툴): 합계 **9,258B**, 최대 `agent_log_append` **2,148B** — 이 툴은 inputSchema만 1,695B(필드 14개·중첩 객체 3개)라 초안의 2KB로는 `decision.why`/`rejected`를 설명할 설명문이 들어가지 않아 2.5KB로 조정했다. 도메인 툴 3개 추가 후 재실측(2026-09-03, 16개 툴): 합계 **11,924B**(잔여 364B), 최대 `agent_log_append` **2,207B**, `agent_domain_put` 894B·`agent_domain_get` 613B·`agent_domain_list` 396B. `doc_put`·`term_propose`의 `domainId`와 `brief`의 `domains` 설명이 나머지 증가분이다. 다음 툴을 추가하려면 기존 설명을 줄이거나 예산을 재산정해야 한다. **2026-09-13 재산정(KAN-19):** 요구사항·설계 툴 6개 추가로 합계 **16,984B**(신규 6개 4,801B, 최대 `agent_requirements_put` 1,260B — items 스키마가 대부분). 설명을 줄여도 12KB 안에 들어가지 않아 예산을 **18,432B**로 올렸다. 잔여 1,448B. 참고로 upstream 36개 툴 합계는 16,455B다. **2026-09-14 재산정(agent-autoapply):** ADR 도구 3개(`agent_decision_list/get/put`)와 `agent_task_link` `acknowledge`·`agent_brief` `decisions` 설명이 더해져 예산을 **21,504B**(도구 25개)로 올렸다. 실측(`60ebbcb3`): 합계 **20,953B**(잔여 551B), 최대 `agent_log_append` 2,207B, 다음 `agent_decision_put` 1,561B·`agent_requirements_put` 1,453B·`agent_term_propose` 1,366B. upstream 36개는 16,625B. 근거: 툴 정의는 세션마다 상주하지만 하네스마다 비용 모델이 다르다 — Claude Code는 지연 로딩이라 개별 스키마 크기가 비용이고, Codex처럼 전체 스키마를 싣는 클라이언트는 개수×크기가 비용이다. 개수는 그 비용을 대표하지 못한다. 산출물 바이트를 MCP JSON에 싣는 단일 업로드 툴(base64)은 기각 — 1MB html이 약 35만 토큰이 된다.
 `doc_put`·`artifact_put_text`·`artifact_presign`·`domain_put`은 HTTP를 거치지 않고 프로세스 내에서 컨트롤러를 직접 호출한다(`apps/api/src/mcp/agent-direct.ts`). MCP가 API를 부를 때 쓰는 bearer는 사용자의 일반 세션 토큰이라 API 쪽에서 MCP 호출과 `curl`을 구분할 수 없고, 따라서 `actorId`를 HTTP 필드·헤더로 열면 누구나 에이전트 저자를 사칭할 수 있다. 직접 호출 경로에서도 인가는 HTTP와 같은 원시 함수(`validateWorkspaceAccess`, `hasWorkspacePermission`, `task:update`)로 다시 수행한다.
 `doc_put`은 산출물을 남기는 경로다 — 세션 리포트를 사람에게 넘기는 유일한 쓰기 면이며, 타임라인 기록 entry를 부풀리는 대신 여기로 나간다. slug 단위 덮어쓰기라 무한 append가 구조적으로 불가능하고, task를 잡지 않는 조사·설계 세션도 써야 하므로 lease를 요구하지 않는다.
 `brief`에는 문서 목록(`slug`/`title`/`updatedAt`)만 싣고 본문은 `doc_get`으로만 나간다(§5.1 예산).
@@ -408,12 +430,13 @@ REST `GET /agent-feature/{projectId}` 는 feature 슬러그(요구사항 set ∪
 |---|---|
 | 개요 | 사람이 쓰는 프로젝트 설명(`agent_document` 예약 slug `overview`, 편집 `task:update`·삭제 `project:update`) + 최신 핸드오프 콜아웃(사람·에이전트 무관) + 라이브 섹션(열림/완료·lease) |
 | 타임라인 | 태스크 타임라인 트리 — **세로**, 최신이 위, 자식은 들여쓰기. task를 펼치면 그 task의 타임라인 기록 entry(최근 20 + 드릴다운)가 인라인으로 나오고, 그 자리에서 사람이 직접 entry를 쓸 수 있다 (2026-09-03: 메모 탭을 흡수) |
+| Feature | feature 슬러그(요구사항 set ∪ 설계) 목록 — 미확인 배지·수정 시각·삭제됨 필터와 복구. 상세는 서브 탭 요구사항·설계·태스크: 문서 본문과 미확인 배지(열면 확인), 리비전 대화상자·되돌리기, 삭제·복구, 태스크 링크의 stale·AI 확인 표시 (2026-09-13 feature-hub, 2026-09-14 §4.8) |
 | 태스크 | 기존 Kaneo 뷰 (board/backlog/calendar/gantt). 상단 탭 아래 2단 스위처로 유지 |
-| 지식 | **확정된 지식 항목**(§4.4) 목록과 결정 목록. 읽기 전용이다 — 확정·이의는 도메인 페이지에서 한다(2026-09-04, KAN-16) |
-| 도메인 (사이드바, 워크스페이스 단위) | `agent_domain` 페이지 트리(§4.7). 프로젝트 탭이 아니라 워크스페이스 사이드바 항목 "도메인"으로, 왼쪽에 트리·오른쪽에 페이지(markdown 본문 + 저자·시각 + 링크된 지식 항목·프로젝트·문서 집계). 생성·편집 `task:update`, 이동·삭제 `workspace:update`. 사람과 에이전트가 같은 페이지를 쓴다. **지식 항목 검수가 여기서 일어난다**(2026-09-04, KAN-16): 확정/미확정/이의 필터와 확정·이의 버튼이 페이지에 붙고, 사이드바 도메인 항목에는 미검수 건수 배지가, 목록 맨 아래에는 페이지가 아닌 고정 "미분류" 항목이 있다 |
+| 지식 | 서브 탭 둘, 각각 미확인 수. **지식 항목**: 확정된 지식 항목(§4.4) 목록 — 정의를 펼치면 확인, 삭제됨 토글·복구(`workspace:update`). 확정·이의·분류는 도메인 페이지에서 한다(2026-09-04, KAN-16). **결정**: ADR 목록(현재·전체·accepted·superseded·삭제됨 필터, 새 ADR·"이 결정을 대체", 대체됨·삭제됨 배너와 복구)과 `kind: decision` 타임라인 기록 목록 |
+| 도메인 (사이드바, 워크스페이스 단위) | `agent_domain` 페이지 트리(§4.7). 프로젝트 탭이 아니라 워크스페이스 사이드바 항목 "도메인"으로, 왼쪽에 트리·오른쪽에 페이지(markdown 본문 + 저자·시각 + 링크된 지식 항목·프로젝트·문서 집계). 생성·편집 `task:update`, 이동·삭제 `workspace:update`. 사람과 에이전트가 같은 페이지를 쓴다. **지식 항목 확정·이의가 여기서 일어난다**(2026-09-04, KAN-16): 확정/이의 필터와 확정·이의 버튼이 페이지에 붙고, 사이드바 도메인 항목에는 사람이 아직 열지 않은 항목의 미확인 수 배지(2026-09-14)가, 목록 맨 아래에는 페이지가 아닌 고정 "미분류" 항목이 있다 |
 | 문서 | 프로젝트를 진행하며 쌓이는 **산출물·파일 보관함**. `agent_artifact`(html 리포트·zip·pdf·md·json: 업로드·보기·다운로드·삭제)가 중심이고 `agent_document`(마크다운 텍스트, MCP `doc_put`이 남기는 산출물)는 같은 목록의 한 종류. 이름·종류·크기·연결 task·올린 주체·시각, task/날짜 그룹. 위키가 아니다 (2026-09-03 재정의) |
 
-기존 4개 URL은 건드리지 않고 형제 라우트(`overview / timeline / knowledge / docs / docs.$slug`)를 더한다. 탭 순서는 개요·타임라인·태스크·지식·문서다. `notes` 라우트는 2026-09-03에 제거했다. **기본 랜딩 탭은 Phase 1에서 board를 유지한다** — 개요로 옮기는 것은 2줄 변경이므로 dogfooding 후에 결정한다.
+기존 4개 URL은 건드리지 않고 형제 라우트(`overview / timeline / feature / knowledge / docs / docs.$slug`, ADR 상세 `decisions.$decisionId`)를 더한다. 탭 순서는 개요·타임라인·Feature·태스크·지식·문서다(Feature 는 2026-09-13 feature-hub). `notes` 라우트는 2026-09-03에 제거했다. **기본 랜딩 탭은 Phase 1에서 board를 유지한다** — 개요로 옮기는 것은 2줄 변경이므로 dogfooding 후에 결정한다.
 문서 쓰기는 `task:update`(member 포함), 삭제와 설정(`agent_project`)은 `project:update`. 편집기는 task description이 쓰는 기존 tiptap 에디터를 재사용하고, 파일·이미지 첨부는 업로드 경로가 `taskId`를 요구하므로 Phase 1a에서 제외한다(§10).
 
 **개요의 상태 부분은 파생 뷰다** (§6.3, §2.1) — 원본은 타임라인 기록과 task다. 단 하나 예외로, 사람이 쓰는 **프로젝트 설명**을 상단에 둔다(2026-09-03): `agent_document` 예약 slug `overview`에 저장해 저자·시각이 보이고, 에이전트도 `doc_put`으로 같은 slug를 쓸 수 있다. 개요가 담는 것은 셋이다.
@@ -547,11 +570,14 @@ entry N개에 같은 이름 반복 등장
 4. upstream merge 주기
 5. ~~MCP 실측~~ → **완료** (§5.0). 남은 것: tools/list 실크기 계측에 OAuth 플로우 통과 필요
 6. Kaneo 커뮤니티에 문제 제기 시점 — 작동하는 것을 보여준 뒤가 유리하나, "이 문제 겪고 계신가요"라는 **질문**은 비용 0이므로 선행 가능
-7. 문서 버전 이력 — Phase 1은 덮어쓰기. `agent_document_revision`은 컬럼 변경 없이 얹을 수 있으므로 필요해질 때 결정한다. 동시 편집은 마지막 저장 승리이며 `updatedAt` 조건부 PUT은 후속
+7. 문서 버전 이력 — `agent_document`는 아직 덮어쓰기다. 요구사항·설계는 2026-09-14부터 `agent_spec_revision`(§4.8)으로 이력과 되돌리기를 갖는다. `agent_document`에 이력이 필요해지면 같은 모양을 따른다. 동시 편집은 마지막 저장 승리이며 `updatedAt` 조건부 PUT은 후속
 8. 산출물 첨부(HTML 리포트·zip·pdf) — **구현됨(1a', 2026-09-03)**: fork 전용 `agent_artifact`(`drizzle-agent/0002`; projectId, taskId nullable SET NULL, name, contentType, size, storageKey unique, uploadedBy/actorId, `finalizedAt` — presign 시 pending 행을 먼저 쓰고 finalize가 HeadObject로 size·contentType을 대조한 뒤 활성화. pending 행은 목록·트리·URL 어디에도 노출되지 않고 storageKey를 보존하므로 미완 업로드는 삭제 API로 정리할 수 있다). 라우트(`apps/api/src/agent-artifact`): `POST /api/agent-artifact/{projectId}/presign`(task:update, 10MiB, allowlist text/html·text/markdown·text/plain·application/json·application/pdf·application/zip) → `POST …/finalize`(task:update, 멱등; 객체 없음·불일치 400, 스토리지 오류 503) → `GET …/{projectId}?taskId=`(목록, 최신순) → `GET …/{projectId}/{artifactId}/url?disposition=inline|attachment`(기본 60s, `AGENT_ARTIFACT_URL_TTL_SECONDS`; inline은 html·md·txt·json·pdf만, zip은 항상 attachment; `response-content-type`을 저장값으로 고정) → `DELETE …/{projectId}/{artifactId}`(project:update, 객체 삭제 후 행 삭제). 키 배치 `agent-artifacts/<ws>/<project>/<artifactId>/<sanitized name>`. 트리의 `attachments` 잎은 여기서 채운다. upstream `asset`·image-upload 경로는 건드리지 않았다. 미결로 남는 것: 문서 본문 안의 이미지 삽입(에디터 업로드가 taskId 의존), 만료된 pending 행·객체 자동 정리 job
 9. 30일 아카이브 cron의 부작용 — 대량 상태 전이가 activity·알림·웹훅을 한꺼번에 발생시킨다. 배치 상한과 리더 락을 함께 설계하고 사용자 승인 뒤 켠다(Phase 1c)
 10. upstream task 코멘트를 타임라인 뷰에 함께 접어 보여줄지 — **표시 전용**이다(타임라인 기록에 흡수하지 않고, 코멘트 쓰기는 여전히 upstream 기능이다). 사람·AI가 타임라인 기록을 공유하게 되면서(§2.3) 코멘트만 다른 화면에 남는 것이 맞는지가 미결이다
 11. 문서가 사실상 KB로 읽힐 위험(§2.2) — 문서는 자격 게이트를 거치지 않은 산출물인데, 에이전트가 `doc_get`으로 읽으면 낡은 리포트가 KB처럼 작동한다. 저자 종류·`updatedAt` 노출과 툴 설명은 완화일 뿐 근본 해결이 아니다
+12. 지식 항목 canonical의 대소문자 무시 유일성 — `agent_term_workspace_canonical_unique`는 대소문자를 구분하지만 resolve는 `lower(trim())`로 맞춘다. 대소문자만 다른 두 항목이 들어가면 resolve가 모호해진다. 2026-09-14 리뷰 finding 13, 보류
+13. 외부 API 계약 변경(2026-09-14) — approve·accept 라우트 제거와 응답 필드 변경(`reviewed`·삭제 필드·`changedSinceRevision`·`unreviewedTotal`)을 계약 버전 없이 배포했다. 단일 사용자 인스턴스·API 키 0개라 수용했다(리뷰 finding 12). 외부 클라이언트가 생기면 계약 버전 방식을 정한다
+14. 미확인은 게이트가 아니다(§4.8) — §2.2의 위험을 `reviewed` 표시, 사람의 이의·삭제, 에이전트 쪽 규칙(위험한 행동 전 앵커·코드 확인)으로 다룬다. 미확인 항목이 쌓이는데 사람이 열지 않는 상황에 대한 대책은 아직 없다
 
 ---
 
