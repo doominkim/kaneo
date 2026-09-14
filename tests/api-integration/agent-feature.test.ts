@@ -9,6 +9,7 @@ import {
   createProjectFixture,
   createWorkspaceMember,
 } from "./helpers/fixtures";
+import { mcpToolCall, toolJson } from "./helpers/mcp";
 
 type App = ReturnType<typeof createApp>["app"];
 type FeatureSummary = {
@@ -16,11 +17,18 @@ type FeatureSummary = {
   title: string;
   requirements: {
     status: string;
+    reviewed: boolean;
     itemCount: number;
     activeCount: number;
     coveredCount: number;
+    deletedAt: string | null;
   } | null;
-  design: { status: string; stale: boolean } | null;
+  design: {
+    status: string;
+    reviewed: boolean;
+    stale: boolean;
+    deletedAt: string | null;
+  } | null;
   tasks: { total: number; done: number; stale: number };
 };
 type FeatureTask = {
@@ -32,6 +40,7 @@ type FeatureTask = {
   stale: { stale: boolean; causes: Array<{ kind: string; key: string }> };
 };
 
+const identity = { provider: "anthropic", model: "claude-opus-5" };
 const json = (body: unknown, method = "PUT") => ({
   method,
   headers: { "content-type": "application/json" },
@@ -60,8 +69,8 @@ async function seedTask(
   return task;
 }
 
-async function setup() {
-  const member = await createWorkspaceMember();
+async function setup(role = "member") {
+  const member = await createWorkspaceMember({ role });
   const { project, columns } = await createProjectFixture({
     workspaceId: member.workspace.id,
   });
@@ -70,10 +79,29 @@ async function setup() {
   return { member, project, columns, app };
 }
 
-async function features(app: App, projectId: string) {
-  const res = await app.request(`/api/agent-feature/${projectId}`);
+async function features(app: App, projectId: string, query = "") {
+  const res = await app.request(`/api/agent-feature/${projectId}${query}`);
   expect(res.status).toBe(200);
   return ((await res.json()) as { features: FeatureSummary[] }).features;
+}
+
+async function featureTasks(app: App, projectId: string, feature: string) {
+  const res = await app.request(
+    `/api/agent-feature/${projectId}/${feature}/tasks`,
+  );
+  expect(res.status).toBe(200);
+  return ((await res.json()) as { tasks: FeatureTask[] }).tasks;
+}
+
+/** The MCP read tools reach the API over HTTP; route that into the same app. */
+function routeFetchInto(app: App) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      return app.request(`${url.pathname}${url.search}`, init);
+    }),
+  );
 }
 
 describe("API integration: feature summaries", () => {
@@ -99,9 +127,6 @@ describe("API integration: feature summaries", () => {
         ],
       }),
     );
-    await app.request(`/api/agent-requirement/${project.id}/alpha/approve`, {
-      method: "POST",
-    });
     await app.request(
       `/api/agent-design/${project.id}/alpha`,
       json({
@@ -110,9 +135,6 @@ describe("API integration: feature summaries", () => {
         requirementKeys: ["REQ-ALPHA-1", "REQ-ALPHA-2"],
       }),
     );
-    await app.request(`/api/agent-design/${project.id}/alpha/approve`, {
-      method: "POST",
-    });
     await app.request(
       `/api/agent-design/${project.id}/beta`,
       json({ title: "Beta design", body: "d" }),
@@ -150,23 +172,25 @@ describe("API integration: feature summaries", () => {
       title: "Alpha",
       requirements: {
         status: "approved",
+        reviewed: true,
         itemCount: 3,
         activeCount: 2,
         coveredCount: 1,
+        deletedAt: null,
       },
-      design: { status: "approved", stale: false },
+      design: { status: "approved", reviewed: true, stale: false },
       tasks: { total: 2, done: 1, stale: 0 },
     });
     const beta = list.find((f) => f.feature === "beta");
     expect(beta).toMatchObject({
       title: "Beta design",
       requirements: null,
-      design: { status: "draft", stale: false },
+      design: { status: "approved", stale: false },
       tasks: { total: 0, done: 0, stale: 0 },
     });
     expect(unlinked.id).toBeTruthy();
 
-    // A requirement edit after approval shows up as a stale design and a stale task.
+    // A requirement edit after the design's revision shows up as a stale design and a stale task.
     await new Promise((r) => setTimeout(r, 5));
     await db
       .update(agentRequirementItemTable)
@@ -213,11 +237,7 @@ describe("API integration: feature summaries", () => {
       json({ requirementKeys: ["REQ-BETA-1"] }),
     );
 
-    const res = await app.request(
-      `/api/agent-feature/${project.id}/alpha/tasks`,
-    );
-    expect(res.status).toBe(200);
-    const { tasks } = (await res.json()) as { tasks: FeatureTask[] };
+    const tasks = await featureTasks(app, project.id, "alpha");
     expect(
       tasks.map((t) => [t.number, t.requirementKeys, t.viaDesign]),
     ).toEqual([
@@ -230,12 +250,136 @@ describe("API integration: feature summaries", () => {
       .update(agentRequirementItemTable)
       .set({ updatedAt: new Date() })
       .where(eq(agentRequirementItemTable.key, "REQ-ALPHA-1"));
-    const after = (await (
-      await app.request(`/api/agent-feature/${project.id}/alpha/tasks`)
-    ).json()) as { tasks: FeatureTask[] };
-    expect(after.tasks[0]?.stale.causes).toEqual([
+    const after = await featureTasks(app, project.id, "alpha");
+    expect(after[0]?.stale.causes).toEqual([
       expect.objectContaining({ kind: "requirement", key: "REQ-ALPHA-1" }),
     ]);
-    expect(after.tasks[1]?.stale.stale).toBe(false);
+    expect(after[1]?.stale.stale).toBe(false);
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-6] the summary flags a document an agent wrote as unreviewed", async () => {
+    const { app, project } = await setup();
+    await mcpToolCall(app, "agent_requirements_put", {
+      projectId: project.id,
+      feature: "alpha",
+      title: "Alpha",
+      items: [{ text: "a1" }],
+      ...identity,
+    });
+    await app.request(
+      `/api/agent-design/${project.id}/alpha`,
+      json({ title: "Alpha design", body: "d" }),
+    );
+
+    expect(await features(app, project.id)).toEqual([
+      expect.objectContaining({
+        feature: "alpha",
+        requirements: expect.objectContaining({
+          status: "approved",
+          reviewed: false,
+        }),
+        design: expect.objectContaining({
+          status: "approved",
+          reviewed: true,
+        }),
+      }),
+    ]);
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-12] [REQ-AGENT-AUTOAPPLY-17] agent_brief, the feature summary and the feature task list leave a deleted document out and show it again after restore", async () => {
+    const { app, project, columns } = await setup("admin");
+    await app.request(
+      `/api/agent-requirement/${project.id}/alpha`,
+      json({ title: "Alpha", items: [{ text: "a1" }] }),
+    );
+    await app.request(
+      `/api/agent-design/${project.id}/alpha`,
+      json({
+        title: "Alpha design",
+        body: "d",
+        requirementKeys: ["REQ-ALPHA-1"],
+      }),
+    );
+    await app.request(
+      `/api/agent-requirement/${project.id}/beta`,
+      json({ title: "Beta", items: [{ text: "b1" }] }),
+    );
+    const task = await seedTask(project.id, columns.todo.id, 1);
+    await app.request(
+      `/api/agent-task-link/${project.id}/${task.id}`,
+      json({ requirementKeys: ["REQ-ALPHA-1"], designFeatures: ["alpha"] }),
+    );
+
+    routeFetchInto(app);
+    const brief = async () =>
+      toolJson<{
+        features: Array<{
+          feature: string;
+          requirements: string | null;
+          design: string | null;
+          tasks: string;
+        }>;
+      }>(await mcpToolCall(app, "agent_brief", { projectId: project.id }))
+        .features;
+    const remove = (path: string) =>
+      app.request(`/api/${path}`, { method: "DELETE" });
+    const restore = (path: string) =>
+      app.request(`/api/${path}/restore`, { method: "POST" });
+    const betaSet = `agent-requirement/${project.id}/beta`;
+    const alphaSet = `agent-requirement/${project.id}/alpha`;
+    const alphaDesign = `agent-design/${project.id}/alpha`;
+
+    expect((await brief()).map((f) => f.feature).sort()).toEqual([
+      "alpha",
+      "beta",
+    ]);
+
+    expect((await remove(betaSet)).status).toBe(200);
+    expect((await brief()).map((f) => f.feature)).toEqual(["alpha"]);
+
+    expect((await remove(alphaDesign)).status).toBe(200);
+    expect(await brief()).toEqual([
+      expect.objectContaining({
+        feature: "alpha",
+        requirements: "approved",
+        design: null,
+        tasks: "0/1",
+      }),
+    ]);
+    expect(await featureTasks(app, project.id, "alpha")).toEqual([
+      expect.objectContaining({
+        id: task.id,
+        requirementKeys: ["REQ-ALPHA-1"],
+        viaDesign: false,
+      }),
+    ]);
+
+    expect((await remove(alphaSet)).status).toBe(200);
+    expect(await brief()).toEqual([]);
+    expect(await features(app, project.id)).toEqual([]);
+    expect(await featureTasks(app, project.id, "alpha")).toEqual([]);
+    expect(
+      (await features(app, project.id, "?deleted=true"))
+        .map((f) => f.feature)
+        .sort(),
+    ).toEqual(["alpha", "beta"]);
+
+    for (const path of [betaSet, alphaSet, alphaDesign]) {
+      expect((await restore(path)).status, path).toBe(200);
+    }
+    expect(await brief()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ feature: "beta" }),
+        expect.objectContaining({
+          feature: "alpha",
+          requirements: "approved",
+          design: "approved",
+        }),
+      ]),
+    );
+    expect(await featureTasks(app, project.id, "alpha")).toEqual([
+      expect.objectContaining({ id: task.id, viaDesign: true }),
+    ]);
+    expect(await features(app, project.id, "?deleted=true")).toEqual([]);
   });
 });

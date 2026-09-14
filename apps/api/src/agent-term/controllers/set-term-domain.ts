@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { assertDomainsInWorkspace } from "../../agent-domain/controllers/domain-lookup";
 import { loadActor } from "../../agent-entry/actor-response";
@@ -28,6 +28,7 @@ async function setTermDomain(
       and(
         eq(agentTermTable.id, termId),
         eq(agentTermTable.workspaceId, workspaceId),
+        isNull(agentTermTable.deletedAt),
       ),
     )
     .returning();

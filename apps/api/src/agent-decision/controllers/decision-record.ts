@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { HTTPException } from "hono/http-exception";
 import {
@@ -13,6 +13,7 @@ import {
   agentDecisionTable,
   agentDecisionTaskTable,
 } from "../../database/schema-agent-layer";
+import type { DecisionStatus } from "./decision-fields";
 
 export const createdActor = alias(agentActorTable, "decision_created_actor");
 export const updatedActor = alias(agentActorTable, "decision_updated_actor");
@@ -62,6 +63,10 @@ type SummaryDecision = Pick<
   | "updatedBy"
   | "acceptedBy"
   | "acceptedAt"
+  | "reviewedAt"
+  | "reviewedBy"
+  | "deletedAt"
+  | "deletedBy"
   | "createdAt"
   | "updatedAt"
 >;
@@ -75,12 +80,14 @@ export type DecisionSummaryJoinRow = {
   acceptor: { id: string | null; name: string | null } | null;
 };
 
+/** A soft-deleted ADR is not found here; only the `status=deleted` listing shows it. */
 export async function getDecisionRow(projectId: string, decisionId: string) {
   const [row] = await decisionQuery()
     .where(
       and(
         eq(agentDecisionTable.id, decisionId),
         eq(agentDecisionTable.projectId, projectId),
+        isNull(agentDecisionTable.deletedAt),
       ),
     )
     .limit(1);
@@ -141,7 +148,7 @@ export function shapeDecisionSummary(
     id: decision.id,
     number: decision.number,
     title: decision.title,
-    status: decision.status as "draft" | "accepted" | "superseded",
+    status: decision.status as DecisionStatus,
     contextPreview,
     reversible: decision.reversible,
     sourceEntryId: decision.sourceEntryId,
@@ -168,21 +175,24 @@ export function shapeDecisionSummary(
     acceptor: row.acceptor?.id
       ? { userId: row.acceptor.id, name: row.acceptor.name ?? "" }
       : null,
+    reviewedBy: decision.reviewedBy,
+    deletedBy: decision.deletedBy,
+    reviewed: decision.reviewedAt !== null,
+    reviewedAt: decision.reviewedAt,
     acceptedAt: decision.acceptedAt,
+    deletedAt: decision.deletedAt,
     createdAt: decision.createdAt,
     updatedAt: decision.updatedAt,
   };
 }
 
-function toDecisionRef(
-  decision: typeof agentDecisionTable.$inferSelect | undefined,
-) {
+function toDecisionRef(decision: AgentDecision | undefined) {
   return decision
     ? {
         id: decision.id,
         number: decision.number,
         title: decision.title,
-        status: decision.status as "draft" | "accepted" | "superseded",
+        status: decision.status as DecisionStatus,
       }
     : null;
 }
@@ -192,6 +202,8 @@ export async function getDecision(projectId: string, decisionId: string) {
   if (!row) {
     throw new HTTPException(404, { message: "ADR not found" });
   }
+  // Replacement links skip deleted ADRs: a deleted replacement is not what
+  // superseded this one any more, and a deleted predecessor is not readable.
   const [tasks, supersedesRows, supersededByRows] = await Promise.all([
     loadDecisionTasks(projectId, [decisionId]),
     row.decision.supersedesDecisionId
@@ -202,6 +214,7 @@ export async function getDecision(projectId: string, decisionId: string) {
             and(
               eq(agentDecisionTable.id, row.decision.supersedesDecisionId),
               eq(agentDecisionTable.projectId, projectId),
+              isNull(agentDecisionTable.deletedAt),
             ),
           )
           .limit(1)
@@ -213,6 +226,7 @@ export async function getDecision(projectId: string, decisionId: string) {
         and(
           eq(agentDecisionTable.projectId, projectId),
           eq(agentDecisionTable.supersedesDecisionId, decisionId),
+          isNull(agentDecisionTable.deletedAt),
         ),
       )
       .limit(1),

@@ -1,7 +1,11 @@
-import { and, eq, notInArray } from "drizzle-orm";
-import { resolveItemsByKey } from "../../agent-requirement/controllers/shared";
+import { and, eq, inArray, isNull, notInArray } from "drizzle-orm";
+import {
+  liveItemIds,
+  resolveItemsByKey,
+} from "../../agent-requirement/controllers/shared";
 import db from "../../database";
 import {
+  agentDesignTable,
   agentTaskDesignTable,
   agentTaskRequirementTable,
 } from "../../database/schema-agent-layer";
@@ -11,6 +15,10 @@ import { requireTaskInProject, resolveDesignsByFeature } from "./shared";
  * Replace a task's links (REQ-SPEC-TABS-7). Links that already exist are kept
  * as-is so their `createdAt`/`acknowledgedAt` clocks survive a re-PUT; only
  * missing ones are inserted and absent ones deleted.
+ *
+ * "Absent" only covers links a caller can see. A link to a soft-deleted
+ * requirement set or design is hidden from every read, so no payload names
+ * it; it is left in place and shows again when the document is restored.
  */
 async function putTaskLinks(input: {
   projectId: string;
@@ -32,12 +40,16 @@ async function putTaskLinks(input: {
       await tx
         .delete(agentTaskRequirementTable)
         .where(
-          ids.length
-            ? and(
-                eq(agentTaskRequirementTable.taskId, input.taskId),
-                notInArray(agentTaskRequirementTable.itemId, ids),
-              )
-            : eq(agentTaskRequirementTable.taskId, input.taskId),
+          and(
+            eq(agentTaskRequirementTable.taskId, input.taskId),
+            inArray(
+              agentTaskRequirementTable.itemId,
+              liveItemIds(input.projectId),
+            ),
+            ids.length
+              ? notInArray(agentTaskRequirementTable.itemId, ids)
+              : undefined,
+          ),
         );
       if (ids.length) {
         await tx
@@ -48,15 +60,25 @@ async function putTaskLinks(input: {
     }
     if (designs) {
       const ids = designs.map((design) => design.id);
+      const liveDesignIds = db
+        .select({ id: agentDesignTable.id })
+        .from(agentDesignTable)
+        .where(
+          and(
+            eq(agentDesignTable.projectId, input.projectId),
+            isNull(agentDesignTable.deletedAt),
+          ),
+        );
       await tx
         .delete(agentTaskDesignTable)
         .where(
-          ids.length
-            ? and(
-                eq(agentTaskDesignTable.taskId, input.taskId),
-                notInArray(agentTaskDesignTable.designId, ids),
-              )
-            : eq(agentTaskDesignTable.taskId, input.taskId),
+          and(
+            eq(agentTaskDesignTable.taskId, input.taskId),
+            inArray(agentTaskDesignTable.designId, liveDesignIds),
+            ids.length
+              ? notInArray(agentTaskDesignTable.designId, ids)
+              : undefined,
+          ),
         );
       if (ids.length) {
         await tx

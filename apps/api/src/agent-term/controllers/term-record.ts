@@ -8,7 +8,7 @@ export type TermReviewer = { userId: string; name: string } | null;
 /**
  * The public term shape, in one place.
  *
- * Four controllers (propose, confirm, list, resolve) all answer with a term,
+ * Every term controller (propose, confirm, restore, list, resolve) answers with a term,
  * and they used to carry four copies of this projection. A field added to one
  * copy and not the others is a silent contract break, so they share this one.
  *
@@ -40,8 +40,11 @@ export function toTermRecord(
     reviewerId: row.reviewerId,
     reviewer,
     reviewedAt: row.reviewedAt,
+    reviewed: row.reviewedAt !== null,
     rejectReason: row.rejectReason,
     lastVerifiedAt: row.lastVerifiedAt,
+    deletedAt: row.deletedAt,
+    deletedBy: row.deletedBy,
     createdAt: row.createdAt,
   };
 }

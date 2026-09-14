@@ -8,7 +8,13 @@ import {
 } from "../../database/schema-agent-layer";
 import { buildKey, parseKey } from "../keys";
 import { parseRequirementDoc } from "../parse";
-import { type Author, authorColumns, type EntryAuthor } from "./shared";
+import {
+  type Author,
+  appliedColumns,
+  authorColumns,
+  type EntryAuthor,
+} from "./shared";
+import { insertRevision } from "./spec-revision";
 
 type ItemInput = {
   key?: string;
@@ -28,6 +34,8 @@ type PutInput = {
   sourceSlug?: string | null;
   author: Author;
   entryAuthor: EntryAuthor;
+  /** Set by a revert: the revision this save restores. */
+  revertedFromId?: string | null;
 };
 
 function isUniqueViolation(error: unknown): boolean {
@@ -44,18 +52,18 @@ function isUniqueViolation(error: unknown): boolean {
  * the clock every downstream stale check reads, and leaves the previous text on
  * the timeline (REQ-SPEC-TABS-9).
  *
- * Writing to an approved set puts it back to draft and says so on the
- * timeline (REQ-SPEC-TABS-14): approval is a statement about a specific text.
+ * Every save applies immediately (agent-autoapply): the set is `approved` as
+ * of this save and the review marker follows the author. When the title or
+ * the stored body differs from what was there, `revisedAt` moves and one
+ * revision is appended in the same transaction; an identical re-save writes
+ * neither. A soft-deleted set is refused rather than silently brought back,
+ * so a person's delete cannot be undone by the next agent write.
  */
 async function putSet(input: PutInput) {
   const isAgent = "actorId" in input.author;
   const result = await db.transaction(async (tx) => {
-    // Document mode (REQ-FEATURE-HUB-23): when the body carries criterion
-    // lines, the body is the source of truth and `items` is ignored. Parsing
-    // runs before the set row is written because it can reject the request,
-    // and it needs the set's `nextSeq` to issue keys.
-    const [existingForSeq] = await tx
-      .select({ nextSeq: agentRequirementSetTable.nextSeq })
+    const [existing] = await tx
+      .select()
       .from(agentRequirementSetTable)
       .where(
         and(
@@ -64,10 +72,20 @@ async function putSet(input: PutInput) {
         ),
       )
       .limit(1);
+    if (existing?.deletedAt) {
+      throw new HTTPException(409, {
+        message: `Requirement set ${input.feature} is deleted; restore it before saving`,
+      });
+    }
+
+    // Document mode (REQ-FEATURE-HUB-23): when the body carries criterion
+    // lines, the body is the source of truth and `items` is ignored. Parsing
+    // runs before the set row is written because it can reject the request,
+    // and it needs the set's `nextSeq` to issue keys.
     const parsed = parseRequirementDoc(
       input.body,
       input.feature,
-      existingForSeq?.nextSeq ?? 1,
+      existing?.nextSeq ?? 1,
     );
     const docMode = parsed.criteria.length > 0;
     const body = docMode ? parsed.body : input.body;
@@ -80,25 +98,18 @@ async function putSet(input: PutInput) {
           status: criterion.dropped ? "dropped" : undefined,
         }))
       : input.items;
-    const [existing] = await tx
-      .select()
-      .from(agentRequirementSetTable)
-      .where(
-        and(
-          eq(agentRequirementSetTable.projectId, input.projectId),
-          eq(agentRequirementSetTable.feature, input.feature),
-        ),
-      )
-      .limit(1);
 
-    const wasApproved = existing?.status === "approved";
+    const now = new Date();
+    const contentChanged =
+      !existing || existing.title !== input.title || existing.body !== body;
     const values = {
       title: input.title,
       body,
       sourceSlug: input.sourceSlug ?? existing?.sourceSlug ?? null,
-      status: "draft",
+      ...appliedColumns(input.author, now),
       ...authorColumns(input.author),
-      updatedAt: new Date(),
+      ...(contentChanged ? { revisedAt: now } : {}),
+      updatedAt: now,
     };
 
     let set: typeof agentRequirementSetTable.$inferSelect | undefined;
@@ -124,6 +135,7 @@ async function putSet(input: PutInput) {
         message: "Failed to save requirement set",
       });
     }
+    const setId = set.id;
 
     const current = await tx
       .select()
@@ -236,28 +248,37 @@ async function putSet(input: PutInput) {
         .returning();
     }
 
+    if (contentChanged) {
+      await insertRevision(tx, {
+        projectId: input.projectId,
+        target: { setId },
+        title: input.title,
+        body,
+        requirementKeys: null,
+        author: input.author,
+        revertedFromId: input.revertedFromId,
+        createdAt: now,
+      });
+    }
+
     return {
       set: set as typeof agentRequirementSetTable.$inferSelect,
-      wasApproved,
       changes,
     };
   });
 
-  const entryBase = {
-    workspaceId: input.workspaceId,
-    userId: input.entryAuthor.userId,
-    projectId: input.projectId,
-    provider: isAgent ? input.entryAuthor.provider : undefined,
-    model: isAgent ? input.entryAuthor.model : undefined,
-    sessionId: input.entryAuthor.sessionId ?? null,
-  };
   // One timeline entry per save, not per item: a document edit that touches
   // twenty lines is one event to a reader. Previous sentences ride in the body
   // so nothing is lost (REQ-SPEC-TABS-9).
   if (result.changes.length) {
     const keys = result.changes.map((change) => change.key);
     await appendEntry({
-      ...entryBase,
+      workspaceId: input.workspaceId,
+      userId: input.entryAuthor.userId,
+      projectId: input.projectId,
+      provider: isAgent ? input.entryAuthor.provider : undefined,
+      model: isAgent ? input.entryAuthor.model : undefined,
+      sessionId: input.entryAuthor.sessionId ?? null,
       kind: "work",
       summary:
         `[requirements:${input.feature}] 기준 ${keys.length}건 수정: ${keys.join(", ")}`.slice(
@@ -270,13 +291,6 @@ async function putSet(input: PutInput) {
             `## ${change.key} (이전 상태 ${change.previousStatus})\n이전 문장:\n${change.previousText}`,
         )
         .join("\n\n"),
-    });
-  }
-  if (result.wasApproved) {
-    await appendEntry({
-      ...entryBase,
-      kind: "work",
-      summary: `[requirements:${input.feature}] 승인된 요구사항 문서를 다시 편집해 draft 로 되돌림`,
     });
   }
 

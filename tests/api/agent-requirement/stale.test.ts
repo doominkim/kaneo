@@ -7,15 +7,7 @@ import {
 const t = (iso: string) => new Date(iso);
 
 describe("designStale", () => {
-  it("[REQ-SPEC-TABS-8] an unapproved design is not stale — it has no clock", () => {
-    expect(
-      designStale(null, [
-        { key: "REQ-X-1", updatedAt: t("2026-09-13T10:00:00Z") },
-      ]),
-    ).toEqual({ stale: false, causes: [] });
-  });
-
-  it("[REQ-SPEC-TABS-8] a requirement edited after approval makes the design stale and names the key", () => {
+  it("[REQ-AGENT-AUTOAPPLY-28] a requirement edited after the design's last revision makes it stale and names the key", () => {
     const verdict = designStale(t("2026-09-13T09:00:00Z"), [
       { key: "REQ-X-1", updatedAt: t("2026-09-13T08:00:00Z") },
       { key: "REQ-X-2", updatedAt: t("2026-09-13T10:00:00Z") },
@@ -30,12 +22,21 @@ describe("designStale", () => {
     ]);
   });
 
-  it("[REQ-SPEC-TABS-8] a requirement edited exactly at approval time is not stale", () => {
+  it("[REQ-AGENT-AUTOAPPLY-28] a requirement edited exactly at revision time is not stale", () => {
     expect(
       designStale(t("2026-09-13T09:00:00Z"), [
         { key: "REQ-X-1", updatedAt: t("2026-09-13T09:00:00Z") },
       ]).stale,
     ).toBe(false);
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-29] revising the design after the requirement change clears the verdict", () => {
+    const items = [{ key: "REQ-X-1", updatedAt: t("2026-09-13T10:00:00Z") }];
+    expect(designStale(t("2026-09-13T09:00:00Z"), items).stale).toBe(true);
+    expect(designStale(t("2026-09-13T11:00:00Z"), items)).toEqual({
+      stale: false,
+      causes: [],
+    });
   });
 });
 
@@ -71,18 +72,21 @@ describe("taskStale", () => {
     ).toBe(false);
   });
 
-  it("[REQ-SPEC-TABS-8] a design link uses the design's approvedAt; an unapproved design never makes a task stale", () => {
+  it("[REQ-AGENT-AUTOAPPLY-30] a design link made after the design's first revision is not stale", () => {
     expect(
       taskStale([
         {
           kind: "design",
           key: "spec-tabs",
-          upstreamChangedAt: null,
-          createdAt: t("2026-09-13T09:00:00Z"),
+          upstreamChangedAt: t("2026-09-13T09:00:00Z"),
+          createdAt: t("2026-09-13T09:05:00Z"),
           acknowledgedAt: null,
         },
-      ]).stale,
-    ).toBe(false);
+      ]),
+    ).toEqual({ stale: false, causes: [] });
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-31] a design revised after the link's clock makes the task stale and names the design", () => {
     const verdict = taskStale([
       {
         kind: "design",

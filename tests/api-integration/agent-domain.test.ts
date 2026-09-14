@@ -28,13 +28,13 @@ type DomainNode = {
   position: number;
   updatedAt: string;
   childCount: number;
-  proposedCount: number;
+  unreviewedCount: number;
   confirmedCount: number;
   disputedCount: number;
 };
 
 type KnowledgeCounts = {
-  proposedCount: number;
+  unreviewedCount: number;
   confirmedCount: number;
   disputedCount: number;
 };
@@ -168,7 +168,7 @@ describe("API integration: agent domain pages", () => {
 
     expect(await (await tree(app, ws)).json()).toEqual({
       domains: [],
-      unfiled: { proposedCount: 0, confirmedCount: 0, disputedCount: 0 },
+      unfiled: { unreviewedCount: 0, confirmedCount: 0, disputedCount: 0 },
     });
 
     const billing = await created(app, ws, {
@@ -217,7 +217,7 @@ describe("API integration: agent domain pages", () => {
     expect(domains[0]).not.toHaveProperty("body");
   });
 
-  it("counts the knowledge filed under each page by review outcome, and the workspace's unfiled items", async () => {
+  it("counts the knowledge filed under each page by review state, and the workspace's unfiled items, leaving soft-deleted items out", async () => {
     const member = await createWorkspaceMember();
     const other = await createWorkspaceMember({ userName: "Other" });
     const ws = member.workspace.id;
@@ -225,29 +225,45 @@ describe("API integration: agent domain pages", () => {
     const refunds = await seedDomain(ws, "refunds", { parentId: billing.id });
     await seedDomain(ws, "ops");
 
+    // Unreviewed means no person has reviewed it (`reviewedAt` null), whatever
+    // its confidence; a soft-deleted item is not counted at all.
     const seedTerm = (
       canonical: string,
-      confidence: string,
       domainId: string | null,
-      workspaceId = ws,
+      options: {
+        confidence?: string;
+        reviewed?: boolean;
+        deleted?: boolean;
+        workspaceId?: string;
+      } = {},
     ) =>
-      db
-        .insert(agentTermTable)
-        .values({ workspaceId, canonical, confidence, domainId });
+      db.insert(agentTermTable).values({
+        workspaceId: options.workspaceId ?? ws,
+        canonical,
+        confidence: options.confidence ?? "confirmed",
+        domainId,
+        reviewedAt: options.reviewed === false ? null : new Date(),
+        deletedAt: options.deleted ? new Date() : null,
+      });
 
-    await seedTerm("B1", "proposed", billing.id);
-    await seedTerm("B2", "proposed", billing.id);
-    await seedTerm("B3", "confirmed", billing.id);
-    await seedTerm("B4", "disputed", billing.id);
+    await seedTerm("B1", billing.id, { reviewed: false });
+    await seedTerm("B2", billing.id, { reviewed: false });
+    await seedTerm("B3", billing.id);
+    await seedTerm("B4", billing.id, { confidence: "disputed" });
+    await seedTerm("B5", billing.id, { reviewed: false, deleted: true });
     // A child page's items are its own; the parent does not roll them up.
-    await seedTerm("R1", "confirmed", refunds.id);
-    await seedTerm("U1", "proposed", null);
-    await seedTerm("U2", "confirmed", null);
-    await seedTerm("U3", "confirmed", null);
+    await seedTerm("R1", refunds.id);
+    await seedTerm("U1", null, { reviewed: false });
+    await seedTerm("U2", null);
+    await seedTerm("U3", null);
+    await seedTerm("U4", null, { confidence: "disputed", deleted: true });
     // Another workspace's items must not leak into either bucket.
     const foreign = await seedDomain(other.workspace.id, "foreign");
-    await seedTerm("F1", "confirmed", foreign.id, other.workspace.id);
-    await seedTerm("F2", "proposed", null, other.workspace.id);
+    await seedTerm("F1", foreign.id, { workspaceId: other.workspace.id });
+    await seedTerm("F2", null, {
+      reviewed: false,
+      workspaceId: other.workspace.id,
+    });
 
     mockAuthenticatedSession(member.user);
     const { app } = createApp();
@@ -256,18 +272,18 @@ describe("API integration: agent domain pages", () => {
     expect(
       payload.domains.map((d) => [
         d.slug,
-        d.proposedCount,
+        d.unreviewedCount,
         d.confirmedCount,
         d.disputedCount,
       ]),
     ).toEqual([
-      ["billing", 2, 1, 1],
+      ["billing", 2, 3, 1],
       ["ops", 0, 0, 0],
       ["refunds", 0, 1, 0],
     ]);
     expect(payload.unfiled).toEqual({
-      proposedCount: 1,
-      confirmedCount: 2,
+      unreviewedCount: 1,
+      confirmedCount: 3,
       disputedCount: 0,
     });
   });
@@ -275,16 +291,19 @@ describe("API integration: agent domain pages", () => {
   it("reports the unfiled counts even when the workspace has no pages at all", async () => {
     const member = await createWorkspaceMember();
     const ws = member.workspace.id;
-    await db
-      .insert(agentTermTable)
-      .values({ workspaceId: ws, canonical: "Loose", confidence: "disputed" });
+    await db.insert(agentTermTable).values({
+      workspaceId: ws,
+      canonical: "Loose",
+      confidence: "disputed",
+      reviewedAt: new Date(),
+    });
 
     mockAuthenticatedSession(member.user);
     const { app } = createApp();
 
     expect(await (await tree(app, ws)).json()).toEqual({
       domains: [],
-      unfiled: { proposedCount: 0, confirmedCount: 0, disputedCount: 1 },
+      unfiled: { unreviewedCount: 0, confirmedCount: 0, disputedCount: 1 },
     });
   });
 
@@ -441,7 +460,7 @@ describe("API integration: agent domain pages", () => {
     ]);
     expect(page.children.map((c) => c.slug)).toEqual(["partial", "chargeback"]);
     expect(page.terms).toEqual([
-      expect.objectContaining({ canonical: "Refund", confidence: "proposed" }),
+      expect.objectContaining({ canonical: "Refund", confidence: "confirmed" }),
     ]);
     expect(page.projects).toEqual([
       { id: project.id, name: "Billing v2", slug: project.slug },

@@ -1,7 +1,7 @@
 import { HTTPException } from "hono/http-exception";
 import type { EntryRefs } from "../../agent-entry/controllers/entry-fields";
 
-export type DecisionStatus = "draft" | "accepted" | "superseded";
+export type DecisionStatus = "accepted" | "superseded";
 
 export type DecisionContent = {
   title: string;

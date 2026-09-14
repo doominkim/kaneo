@@ -3,16 +3,38 @@ import { responseTimestamp, z } from "../openapi";
 
 const nullableTimestamp = responseTimestamp.nullable();
 
+/**
+ * Review marker (agent-autoapply). Saves apply immediately, so `reviewed` is
+ * the only thing that distinguishes an agent's unread write from content a
+ * person has seen. Shared with designs.
+ */
+export const reviewFields = {
+  reviewed: z.boolean().openapi({
+    description:
+      "False while the latest save came from an agent and no person has reviewed it since. A person's save, or the review endpoint, sets it.",
+  }),
+  reviewedAt: nullableTimestamp,
+};
+
+export const revisedAtField = responseTimestamp.openapi({
+  description:
+    "When the content last changed, i.e. when the newest revision was taken. An identical re-save leaves it alone.",
+});
+
 export const requirementSetSummarySchema = z
   .object({
     id: z.string(),
     feature: z.string(),
     title: z.string(),
-    status: z.string().openapi({ description: "`draft` or `approved`." }),
+    status: z
+      .string()
+      .openapi({ description: "`approved`: every save applies at once." }),
     approvedAt: nullableTimestamp,
     sourceSlug: z.string().nullable(),
     createdAt: responseTimestamp,
     updatedAt: responseTimestamp,
+    ...reviewFields,
+    revisedAt: revisedAtField,
     itemCount: z.number(),
     activeCount: z.number(),
   })
@@ -80,6 +102,9 @@ export const requirementSetSchema = z
     status: z.string(),
     approvedAt: nullableTimestamp,
     approvedBy: z.string().nullable(),
+    ...reviewFields,
+    reviewedBy: z.string().nullable(),
+    revisedAt: revisedAtField,
     nextSeq: z.number(),
     sourceSlug: z.string().nullable(),
     updatedBy: z.string().nullable(),
@@ -91,10 +116,60 @@ export const requirementSetSchema = z
   })
   .openapi("AgentRequirementSet");
 
-export const requirementSetRowSchema = requirementSetSchema
-  .omit({ items: true, actor: true })
-  .openapi("AgentRequirementSetRow");
-
 export const coverageResultSchema = z
   .object({ feature: z.string(), repo: z.string(), reported: z.number() })
   .openapi("AgentRequirementCoverageResult");
+
+/* Shared by requirement sets and designs (agent-autoapply). */
+
+export const specReviewResultSchema = z
+  .object({
+    id: z.string(),
+    feature: z.string(),
+    reviewedAt: responseTimestamp,
+    reviewedBy: z.string(),
+  })
+  .openapi("AgentSpecReviewResult");
+
+export const specDeleteResultSchema = z
+  .object({
+    id: z.string(),
+    feature: z.string(),
+    deletedAt: responseTimestamp,
+    deletedBy: z.string(),
+  })
+  .openapi("AgentSpecDeleteResult");
+
+export const specRevisionSummarySchema = z
+  .object({
+    id: z.string(),
+    title: z.string(),
+    createdAt: responseTimestamp,
+    revertedFromId: z.string().nullable().openapi({
+      description:
+        "The revision this one was restored from, when it was written by a revert.",
+    }),
+    createdBy: z.string().nullable(),
+    author: z
+      .object({ userId: z.string(), name: z.string() })
+      .nullable()
+      .openapi({ description: "The person who saved it; null for an agent." }),
+    actor: actorResponseSchema.nullable().openapi({
+      description: "The agent that saved it; null for a person.",
+    }),
+  })
+  .openapi("AgentSpecRevisionSummary");
+
+export const specRevisionListSchema = z
+  .object({ revisions: z.array(specRevisionSummarySchema) })
+  .openapi("AgentSpecRevisionList");
+
+export const specRevisionSchema = specRevisionSummarySchema
+  .extend({
+    body: z.string(),
+    requirementKeys: z.array(z.string()).nullable().openapi({
+      description:
+        "Design revisions only: the requirement keys the design covered at that moment, in item order.",
+    }),
+  })
+  .openapi("AgentSpecRevision");

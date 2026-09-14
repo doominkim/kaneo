@@ -37,18 +37,24 @@ export const termSchema = z
     }),
     reviewerId: z.string().nullable().openapi({
       description:
-        "`user` id of the person who reviewed the term, or null while it is unreviewed. Never an agent — an agent cannot review.",
+        "`user` id of the person who reviewed the term, or null while it is unreviewed. Never an agent — an agent cannot review. A person who proposes a term is its reviewer.",
     }),
     reviewer: termReviewerSchema.nullable(),
     reviewedAt: nullableResponseTimestamp.openapi({
       description:
         "When the review was recorded, or null while unreviewed. Distinct from `lastVerifiedAt`, which the re-verification schedule also stamps.",
     }),
+    reviewed: z.boolean().openapi({
+      description:
+        "False while an agent-proposed term has not been reviewed by a person. It resolves either way; this tells a reader whether anyone has looked.",
+    }),
     rejectReason: z.string().nullable().openapi({
       description:
         "Why the term was rejected; set only on a `disputed` term and cleared when it is confirmed. Re-proposing the same canonical name replays it in the 409.",
     }),
     lastVerifiedAt: nullableResponseTimestamp,
+    deletedAt: nullableResponseTimestamp,
+    deletedBy: z.string().nullable(),
     createdAt: responseTimestamp,
   })
   .openapi("AgentTerm");

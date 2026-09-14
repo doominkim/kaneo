@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
 import {
@@ -14,6 +14,23 @@ export function authorColumns(author: Author) {
     : { updatedBy: null, actorId: author.actorId };
 }
 
+/**
+ * What every save of a requirement set or design writes (agent-autoapply):
+ * the document applies at once, and the review marker follows the author. A
+ * person's save counts as their review; an agent's save clears any earlier
+ * review, because the content a person saw is no longer the content stored.
+ */
+export function appliedColumns(author: Author, now: Date) {
+  const userId = "updatedBy" in author ? author.updatedBy : null;
+  return {
+    status: "approved",
+    approvedAt: now,
+    approvedBy: userId,
+    reviewedAt: userId ? now : null,
+    reviewedBy: userId,
+  };
+}
+
 /** Who appends the timeline entries for a write: the human, or the agent on their behalf. */
 export type EntryAuthor = {
   userId: string;
@@ -22,6 +39,7 @@ export type EntryAuthor = {
   sessionId?: string | null;
 };
 
+/** A soft-deleted set is not found: every read and write path goes through here. */
 export async function findSet(projectId: string, feature: string) {
   const [set] = await db
     .select()
@@ -30,6 +48,7 @@ export async function findSet(projectId: string, feature: string) {
       and(
         eq(agentRequirementSetTable.projectId, projectId),
         eq(agentRequirementSetTable.feature, feature),
+        isNull(agentRequirementSetTable.deletedAt),
       ),
     )
     .limit(1);
@@ -44,13 +63,44 @@ export async function requireSet(projectId: string, feature: string) {
   return set;
 }
 
-/** Resolve keys to item rows inside one project; unknown keys are a 400, not a silent drop. */
+/**
+ * The project's requirement item ids whose set is not soft-deleted, as a
+ * subquery. Replace-style link writes delete only among these: a link to a
+ * deleted set's item is hidden from every read, so no payload can name it, and
+ * it must still be there when the set is restored.
+ */
+export function liveItemIds(projectId: string) {
+  return db
+    .select({ id: agentRequirementItemTable.id })
+    .from(agentRequirementItemTable)
+    .innerJoin(
+      agentRequirementSetTable,
+      and(
+        eq(agentRequirementSetTable.id, agentRequirementItemTable.setId),
+        isNull(agentRequirementSetTable.deletedAt),
+      ),
+    )
+    .where(eq(agentRequirementItemTable.projectId, projectId));
+}
+
+/**
+ * Resolve keys to item rows inside one project; unknown keys are a 400, not a
+ * silent drop. Items of a soft-deleted set count as unknown, so nothing new
+ * can be linked to a document nobody can see.
+ */
 export async function resolveItemsByKey(projectId: string, keys: string[]) {
   const unique = [...new Set(keys)];
   if (unique.length === 0) return [];
   const rows = await db
-    .select()
+    .select(getTableColumns(agentRequirementItemTable))
     .from(agentRequirementItemTable)
+    .innerJoin(
+      agentRequirementSetTable,
+      and(
+        eq(agentRequirementSetTable.id, agentRequirementItemTable.setId),
+        isNull(agentRequirementSetTable.deletedAt),
+      ),
+    )
     .where(
       and(
         eq(agentRequirementItemTable.projectId, projectId),

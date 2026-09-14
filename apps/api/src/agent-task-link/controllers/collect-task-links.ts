@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import {
   type StaleVerdict,
   type TaskLinkClock,
@@ -31,6 +31,10 @@ export type TaskLinkSummary = {
  * link, each with the upstream clock beside the link's own. Board badges,
  * feature summaries and per-feature task lists all read this one shape so
  * "stale" means the same thing on every screen.
+ *
+ * Links to a soft-deleted requirement set or design are left out entirely —
+ * no key, no feature, no stale cause — while their rows stay, so restoring
+ * the document brings them back as they were.
  */
 export async function collectTaskLinks(
   projectId: string,
@@ -56,7 +60,10 @@ export async function collectTaskLinks(
       )
       .innerJoin(
         agentRequirementSetTable,
-        eq(agentRequirementSetTable.id, agentRequirementItemTable.setId),
+        and(
+          eq(agentRequirementSetTable.id, agentRequirementItemTable.setId),
+          isNull(agentRequirementSetTable.deletedAt),
+        ),
       )
       .where(eq(taskTable.projectId, projectId)),
     db
@@ -66,7 +73,7 @@ export async function collectTaskLinks(
         title: taskTable.title,
         status: taskTable.status,
         feature: agentDesignTable.feature,
-        approvedAt: agentDesignTable.approvedAt,
+        revisedAt: agentDesignTable.revisedAt,
         createdAt: agentTaskDesignTable.createdAt,
         acknowledgedAt: agentTaskDesignTable.acknowledgedAt,
       })
@@ -74,7 +81,10 @@ export async function collectTaskLinks(
       .innerJoin(taskTable, eq(taskTable.id, agentTaskDesignTable.taskId))
       .innerJoin(
         agentDesignTable,
-        eq(agentDesignTable.id, agentTaskDesignTable.designId),
+        and(
+          eq(agentDesignTable.id, agentTaskDesignTable.designId),
+          isNull(agentDesignTable.deletedAt),
+        ),
       )
       .where(eq(taskTable.projectId, projectId)),
   ]);
@@ -127,7 +137,7 @@ export async function collectTaskLinks(
     entry.clocks.push({
       kind: "design",
       key: link.feature,
-      upstreamChangedAt: link.approvedAt,
+      upstreamChangedAt: link.revisedAt,
       createdAt: link.createdAt,
       acknowledgedAt: link.acknowledgedAt,
     });

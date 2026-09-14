@@ -1,4 +1,4 @@
-import { count, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, isNull, sql } from "drizzle-orm";
 import db from "../../database";
 import {
   agentRequirementItemTable,
@@ -6,7 +6,7 @@ import {
 } from "../../database/schema-agent-layer";
 
 async function listSets(projectId: string) {
-  return db
+  const rows = await db
     .select({
       id: agentRequirementSetTable.id,
       feature: agentRequirementSetTable.feature,
@@ -16,6 +16,8 @@ async function listSets(projectId: string) {
       sourceSlug: agentRequirementSetTable.sourceSlug,
       createdAt: agentRequirementSetTable.createdAt,
       updatedAt: agentRequirementSetTable.updatedAt,
+      reviewedAt: agentRequirementSetTable.reviewedAt,
+      revisedAt: agentRequirementSetTable.revisedAt,
       itemCount: count(agentRequirementItemTable.id),
       activeCount:
         sql<number>`count(*) filter (where ${agentRequirementItemTable.status} = 'active')`.mapWith(
@@ -27,9 +29,15 @@ async function listSets(projectId: string) {
       agentRequirementItemTable,
       eq(agentRequirementItemTable.setId, agentRequirementSetTable.id),
     )
-    .where(eq(agentRequirementSetTable.projectId, projectId))
+    .where(
+      and(
+        eq(agentRequirementSetTable.projectId, projectId),
+        isNull(agentRequirementSetTable.deletedAt),
+      ),
+    )
     .groupBy(agentRequirementSetTable.id)
     .orderBy(desc(agentRequirementSetTable.updatedAt));
+  return rows.map((row) => ({ ...row, reviewed: row.reviewedAt !== null }));
 }
 
 export default listSets;

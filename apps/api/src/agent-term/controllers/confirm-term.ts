@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { loadActor } from "../../agent-entry/actor-response";
 import db from "../../database";
@@ -6,8 +6,10 @@ import { agentTermTable } from "../../database/schema-agent-layer";
 import { loadReviewer, toTermRecord } from "./term-record";
 
 /**
- * Human review outcome. This is the only path from `proposed` to `confirmed`,
- * and the only thing that makes a term resolvable at all.
+ * Human review outcome. Terms apply on proposal (agent-autoapply), so a
+ * `confirmed` outcome records that a person checked a term that already
+ * resolves, and `disputed` withdraws it from resolve. A soft-deleted term is
+ * not found.
  *
  * The reviewer is recorded as a `user`, never as an actor: the MCP tool set
  * exposes no confirm, so a model cannot rule on its own proposal. Who signed
@@ -47,6 +49,7 @@ async function confirmTerm(
       and(
         eq(agentTermTable.id, termId),
         eq(agentTermTable.workspaceId, workspaceId),
+        isNull(agentTermTable.deletedAt),
       ),
     )
     .returning();

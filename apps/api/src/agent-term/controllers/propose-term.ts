@@ -4,7 +4,7 @@ import { assertDomainsInWorkspace } from "../../agent-domain/controllers/domain-
 import resolveActor from "../../agent-entry/controllers/resolve-actor";
 import db from "../../database";
 import { agentTermTable } from "../../database/schema-agent-layer";
-import { toTermRecord } from "./term-record";
+import { loadReviewer, toTermRecord } from "./term-record";
 
 type ProposeInput = {
   workspaceId: string;
@@ -21,12 +21,36 @@ type ProposeInput = {
   model?: string | null;
 };
 
+function conflictMessage(
+  canonical: string,
+  existing: {
+    confidence: string;
+    rejectReason: string | null;
+    deletedAt: Date | null;
+  },
+) {
+  if (existing.deletedAt) {
+    return `Term already exists and was deleted: ${canonical}; restore it instead`;
+  }
+  // A rejected term replays the reason it was rejected. A bare conflict tells
+  // the caller nothing it can act on, so the same word gets proposed again
+  // every session; the reviewer's verdict is the only thing that stops that.
+  if (existing.confidence === "disputed") {
+    return `Term already exists and was rejected: ${canonical}${
+      existing.rejectReason ? ` — ${existing.rejectReason}` : ""
+    }`;
+  }
+  return `Term already exists: ${canonical}`;
+}
+
 /**
- * Adds a term as `proposed`. It never becomes `confirmed` here.
+ * Adds a term that applies at once (agent-autoapply): it is stored
+ * `confirmed` and resolves immediately, whoever proposed it.
  *
- * Auto-confirming model output is how a lexicon dies: unreviewed entries pile
- * up, trust erodes, and an untrusted lexicon is worse than no lexicon — callers
- * stop checking the code because they got a confident answer.
+ * What changes with the author is the review marker. An agent's proposal is
+ * stored unreviewed (`reviewerId`/`reviewedAt` null) so a person can find and
+ * check it, and a wrong one is soft-deleted rather than left to resolve. A
+ * person proposing is their own review.
  *
  * Attribution follows the ledger append, not the document write: `ownerId`
  * stays the human whose session made the call and `actorId` records the model
@@ -40,6 +64,7 @@ async function proposeTerm(input: ProposeInput) {
       id: agentTermTable.id,
       confidence: agentTermTable.confidence,
       rejectReason: agentTermTable.rejectReason,
+      deletedAt: agentTermTable.deletedAt,
     })
     .from(agentTermTable)
     .where(
@@ -51,16 +76,8 @@ async function proposeTerm(input: ProposeInput) {
     .limit(1);
 
   if (existing) {
-    // A rejected term replays the reason it was rejected. A bare conflict tells
-    // the caller nothing it can act on, so the same word gets proposed again
-    // every session; the reviewer's verdict is the only thing that stops that.
     throw new HTTPException(409, {
-      message:
-        existing.confidence === "disputed"
-          ? `Term already exists and was rejected: ${input.canonical}${
-              existing.rejectReason ? ` — ${existing.rejectReason}` : ""
-            }`
-          : `Term already exists: ${input.canonical}`,
+      message: conflictMessage(input.canonical, existing),
     });
   }
 
@@ -94,8 +111,10 @@ async function proposeTerm(input: ProposeInput) {
       domainId: input.domainId ?? null,
       ownerId: input.ownerId,
       actorId: actor?.id ?? null,
-      confidence: "proposed",
+      confidence: "confirmed",
       state: "active",
+      reviewerId: actor ? null : input.ownerId,
+      reviewedAt: actor ? null : new Date(),
     })
     .returning();
 
@@ -114,6 +133,7 @@ async function proposeTerm(input: ProposeInput) {
           onBehalfOf: actor.onBehalfOf,
         }
       : null,
+    await loadReviewer(created.reviewerId),
   );
 }
 

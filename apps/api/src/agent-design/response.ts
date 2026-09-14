@@ -1,4 +1,5 @@
 import { actorResponseSchema } from "../agent-entry/actor-response";
+import { reviewFields, revisedAtField } from "../agent-requirement/response";
 import { responseTimestamp, z } from "../openapi";
 
 const staleCauseSchema = z.object({
@@ -18,6 +19,8 @@ export const designSummarySchema = z
     title: z.string(),
     status: z.string(),
     approvedAt: responseTimestamp.nullable(),
+    ...reviewFields,
+    revisedAt: revisedAtField,
     sourceSlug: z.string().nullable(),
     updatedBy: z.string().nullable(),
     actorId: z.string().nullable(),
@@ -39,6 +42,7 @@ export const designSchema = designSummarySchema
     projectId: z.string(),
     body: z.string(),
     approvedBy: z.string().nullable(),
+    reviewedBy: z.string().nullable(),
     actor: actorResponseSchema.nullable(),
     requirements: z.array(
       z.object({
@@ -47,7 +51,10 @@ export const designSchema = designSummarySchema
         text: z.string(),
         status: z.string(),
         updatedAt: responseTimestamp,
-        changedSinceApproval: z.boolean(),
+        changedSinceRevision: z.boolean().openapi({
+          description:
+            "The requirement changed after the design's `revisedAt`; it is one of the stale causes.",
+        }),
       }),
     ),
     tasks: z.array(
@@ -60,15 +67,3 @@ export const designSchema = designSummarySchema
     ),
   })
   .openapi("AgentDesign");
-
-export const designRowSchema = z
-  .object({
-    id: z.string(),
-    feature: z.string(),
-    title: z.string(),
-    status: z.string(),
-    approvedAt: responseTimestamp.nullable(),
-    approvedBy: z.string().nullable(),
-    updatedAt: responseTimestamp,
-  })
-  .openapi("AgentDesignRow");

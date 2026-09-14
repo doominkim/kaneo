@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import { actorSelection, liftActor } from "../../agent-entry/actor-response";
 import db, { schema } from "../../database";
@@ -62,7 +62,12 @@ async function getDomain(workspaceId: string, domainId: string) {
         state: agentTermTable.state,
       })
       .from(agentTermTable)
-      .where(eq(agentTermTable.domainId, domainId))
+      .where(
+        and(
+          eq(agentTermTable.domainId, domainId),
+          isNull(agentTermTable.deletedAt),
+        ),
+      )
       .orderBy(asc(agentTermTable.canonical)),
     db
       .select({

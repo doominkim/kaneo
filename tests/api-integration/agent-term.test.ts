@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const apiKeyMock = vi.hoisted(() => ({
+  verifyApiKey: vi.fn(async () => null as unknown),
+}));
+vi.mock("../../apps/api/src/utils/verify-api-key", () => apiKeyMock);
+
 import db, { schema } from "../../apps/api/src/database";
 import {
   agentActorTable,
@@ -39,8 +45,11 @@ type Term = {
   reviewerId: string | null;
   reviewer: { userId: string; name: string } | null;
   reviewedAt: string | null;
+  reviewed: boolean;
   rejectReason: string | null;
   lastVerifiedAt: string | null;
+  deletedAt: string | null;
+  deletedBy: string | null;
   createdAt: string;
 };
 
@@ -103,9 +112,33 @@ async function seedSourceEntry(workspaceId: string) {
   return { project, entry };
 }
 
+/** A real apikey row: workspace access checks the key's owner, not just the mocked verifier. */
+async function seedApiKey(userId: string) {
+  const now = new Date();
+  await db
+    .insert(schema.apikeyTable)
+    .values({
+      id: "key-1",
+      referenceId: userId,
+      userId,
+      key: "hashed",
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing();
+  apiKeyMock.verifyApiKey.mockResolvedValue({
+    valid: true,
+    key: { id: "key-1", userId, enabled: true, permissions: null },
+  });
+}
+
+const viaKey = { "x-api-key": "kaneo_test_key" };
+
 describe("API integration: agent terms", () => {
   beforeEach(async () => {
     await resetTestDatabase();
+    apiKeyMock.verifyApiKey.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -124,7 +157,7 @@ describe("API integration: agent terms", () => {
     expect(response.status).toBe(401);
   });
 
-  it("proposes a term as proposed/active and persists it", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-7] a person's proposal is confirmed at once and reviewed by that person", async () => {
     const member = await createWorkspaceMember();
 
     mockAuthenticatedSession(member.user);
@@ -147,20 +180,23 @@ describe("API integration: agent terms", () => {
       definition: "The append-only agent work record",
       aliases: ["agent_entry", "work log"],
       notToConfuseWith: ["Activity"],
-      confidence: "proposed",
+      confidence: "confirmed",
       state: "active",
       supersededBy: null,
       domainId: null,
       // No provider/model on the request: a person proposed this.
       actorId: null,
       actor: null,
-      // Proposing is not reviewing, even when a person does it.
-      reviewerId: null,
-      reviewer: null,
-      reviewedAt: null,
+      // A person's proposal is their own review.
+      reviewerId: member.user.id,
+      reviewer: { userId: member.user.id, name: member.user.name },
+      reviewed: true,
       rejectReason: null,
       lastVerifiedAt: null,
+      deletedAt: null,
+      deletedBy: null,
     });
+    expect(payload.reviewedAt).toEqual(expect.any(String));
     expect(payload.anchors).toEqual([{ kind: "db", table: "agent_entry" }]);
 
     const [persisted] = await db
@@ -171,15 +207,16 @@ describe("API integration: agent terms", () => {
     expect(persisted).toMatchObject({
       workspaceId: member.workspace.id,
       canonical: "Ledger",
-      confidence: "proposed",
+      confidence: "confirmed",
       state: "active",
       ownerId: member.user.id,
       actorId: null,
+      reviewerId: member.user.id,
       accessCount: 0,
     });
   });
 
-  it("records the proposing model when an agent proposes, and keeps it through list, resolve and review", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-4] [REQ-AGENT-AUTOAPPLY-6] an agent's proposal is confirmed and resolves at once, stays unreviewed with its model recorded, and a person's review keeps both", async () => {
     // Admin, because the review step at the end needs workspace:update.
     const member = await createWorkspaceMember({ role: "admin" });
     const { entry } = await seedSourceEntry(member.workspace.id);
@@ -215,9 +252,13 @@ describe("API integration: agent terms", () => {
     };
     expect(proposed).toMatchObject({
       canonical: "Lease",
-      confidence: "proposed",
+      confidence: "confirmed",
       actorId: expect.any(String),
       actor: expectedActor,
+      reviewerId: null,
+      reviewer: null,
+      reviewedAt: null,
+      reviewed: false,
     });
 
     // The actor row is resolved server-side as (workspace, caller, model),
@@ -249,7 +290,14 @@ describe("API integration: agent terms", () => {
     expect(listed.terms[0]).toMatchObject({
       actorId: proposed.actorId,
       actor: expectedActor,
+      reviewed: false,
     });
+
+    // It already resolves, flagged as unreviewed.
+    const early = (await (
+      await resolve(app, member.workspace.id, "agent_lease")
+    ).json()) as Resolution;
+    expect(early.term).toMatchObject({ id: proposed.id, reviewed: false });
 
     // A review records the outcome without erasing who proposed it, and adds
     // the person who ruled on it.
@@ -265,10 +313,11 @@ describe("API integration: agent terms", () => {
       actor: expectedActor,
       reviewerId: member.user.id,
       reviewer: { userId: member.user.id, name: member.user.name },
+      reviewed: true,
     });
     expect(reviewed.reviewedAt).not.toBeNull();
 
-    // Only now does it resolve, and both halves survive the round trip.
+    // Both halves survive the round trip through resolve.
     const resolved = (await (
       await resolve(app, member.workspace.id, "agent_lease")
     ).json()) as Resolution;
@@ -298,7 +347,7 @@ describe("API integration: agent terms", () => {
       definition: null,
       aliases: [],
       notToConfuseWith: [],
-      confidence: "proposed",
+      confidence: "confirmed",
     });
     expect(payload.anchors).toEqual([]);
   });
@@ -1205,24 +1254,48 @@ describe("API integration: agent terms", () => {
         .where(eq(agentTermTable.id, foreignTerm.id));
       expect(persisted?.confidence).toBe("proposed");
     });
+
+    it("[REQ-AGENT-AUTOAPPLY-9] refuses a review sent with an API key, even from a workspace:update holder", async () => {
+      const member = await createWorkspaceMember({ role: "admin" });
+      const term = await seedProposedTerm(member.workspace.id);
+
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+      await seedApiKey(member.user.id);
+
+      const response = await app.request(
+        `/api/agent-term/${member.workspace.id}/confirm`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", ...viaKey },
+          body: JSON.stringify({ termId: term.id, confidence: "confirmed" }),
+        },
+      );
+      expect(response.status).toBe(403);
+
+      const [persisted] = await db
+        .select()
+        .from(agentTermTable)
+        .where(eq(agentTermTable.id, term.id));
+      expect(persisted).toMatchObject({ reviewerId: null, reviewedAt: null });
+    });
   });
 
   /**
-   * The gate itself: a term is invisible to resolve until a person has ruled on
-   * it. Everything here is about what a later session can read back, which is
-   * the loop the gate exists to break — a model proposes an inferred
-   * definition, the next session resolves it, and the guess returns wearing the
-   * authority of a record.
+   * Terms apply on proposal (agent-autoapply). What no person has looked at is
+   * flagged (`reviewed: false`) rather than withheld, a rejection withdraws the
+   * term from resolve, and a wrong term is soft-deleted.
    */
-  describe("the human review gate", () => {
+  describe("review", () => {
     async function admin() {
       const member = await createWorkspaceMember({ role: "admin" });
       mockAuthenticatedSession(member.user);
       return { member, app: createApp().app };
     }
 
-    it("hides a proposed term from resolve, reveals it once confirmed, and hides it again when disputed", async () => {
+    it("[REQ-AGENT-AUTOAPPLY-4] an agent's term resolves at once by name and alias, a review marks it, and a dispute withdraws it", async () => {
       const { member, app } = await admin();
+      const { entry } = await seedSourceEntry(member.workspace.id);
 
       const proposed = (await (
         await propose(app, {
@@ -1230,23 +1303,26 @@ describe("API integration: agent terms", () => {
           canonical: "Ledger",
           definition: "The append-only agent work record",
           aliases: ["agent_entry"],
+          provider: "anthropic",
+          model: "claude-fable-5-1",
+          sourceEntryId: entry.id,
         })
       ).json()) as Term;
 
-      // (a) Proposed: the word exists, but resolve will not vouch for it, by
-      // canonical name or by alias.
+      // (a) Proposed: it answers right away, by canonical name or by alias,
+      // marked as not yet reviewed.
       for (const input of ["Ledger", "agent_entry"]) {
         const payload = (await (
           await resolve(app, member.workspace.id, input)
         ).json()) as Resolution;
-        expect(payload, input).toEqual({
-          match: "none",
-          term: null,
-          ambiguous: [],
+        expect(payload.term, input).toMatchObject({
+          id: proposed.id,
+          confidence: "confirmed",
+          reviewed: false,
         });
       }
 
-      // (b) Confirmed: now it answers.
+      // (b) Reviewed: still answers, now with the reviewer.
       await confirm(app, member.workspace.id, {
         termId: proposed.id,
         confidence: "confirmed",
@@ -1259,6 +1335,7 @@ describe("API integration: agent terms", () => {
         id: proposed.id,
         confidence: "confirmed",
         reviewerId: member.user.id,
+        reviewed: true,
         rejectReason: null,
       });
 
@@ -1297,8 +1374,8 @@ describe("API integration: agent terms", () => {
         .from(agentTermTable)
         .where(eq(agentTermTable.id, term.id));
       expect(untouched).toMatchObject({
-        confidence: "proposed",
-        reviewerId: null,
+        confidence: "confirmed",
+        reviewerId: member.user.id,
         rejectReason: null,
       });
 
@@ -1449,42 +1526,50 @@ describe("API integration: agent terms", () => {
       expect(direct.match).toBe("none");
     });
 
-    it("(g) ignores confidence and reviewer fields sent on a proposal", async () => {
+    it("[REQ-AGENT-AUTOAPPLY-6] (g) ignores review, confidence and delete fields sent on an agent's proposal", async () => {
       const { member, app } = await admin();
+      const { entry } = await seedSourceEntry(member.workspace.id);
 
       const payload = (await (
         await propose(app, {
           workspaceId: member.workspace.id,
           canonical: "Ledger",
-          confidence: "confirmed",
+          provider: "anthropic",
+          model: "claude-fable-5-1",
+          sourceEntryId: entry.id,
+          confidence: "disputed",
           reviewerId: member.user.id,
           reviewedAt: new Date().toISOString(),
+          deletedAt: new Date().toISOString(),
           state: "retired",
         })
       ).json()) as Term;
 
       expect(payload).toMatchObject({
-        confidence: "proposed",
+        confidence: "confirmed",
         state: "active",
         reviewerId: null,
         reviewer: null,
         reviewedAt: null,
+        reviewed: false,
+        deletedAt: null,
       });
       const [persisted] = await db
         .select()
         .from(agentTermTable)
         .where(eq(agentTermTable.id, payload.id));
       expect(persisted).toMatchObject({
-        confidence: "proposed",
+        confidence: "confirmed",
         state: "active",
         reviewerId: null,
         reviewedAt: null,
+        deletedAt: null,
       });
-      // The claim in the body bought nothing: it still does not resolve.
+      // The claim in the body bought no review: it resolves, flagged unreviewed.
       const resolved = (await (
         await resolve(app, member.workspace.id, "Ledger")
       ).json()) as Resolution;
-      expect(resolved.match).toBe("none");
+      expect(resolved.term).toMatchObject({ id: payload.id, reviewed: false });
     });
 
     it("(h) refuses an agent proposal that cites no ledger entry, and accepts one that does", async () => {
@@ -1520,8 +1605,9 @@ describe("API integration: agent terms", () => {
       });
       expect(cited.status).toBe(200);
       expect((await cited.json()) as Term).toMatchObject({
-        confidence: "proposed",
+        confidence: "confirmed",
         actorId: expect.any(String),
+        reviewed: false,
       });
     });
 
@@ -1579,7 +1665,7 @@ describe("API integration: agent terms", () => {
         .from(agentTermTable)
         .where(eq(agentTermTable.id, blankTerm.id));
       expect(untouched).toMatchObject({
-        confidence: "proposed",
+        confidence: "confirmed",
         rejectReason: null,
       });
 
@@ -1612,9 +1698,23 @@ describe("API integration: agent terms", () => {
       app: ReturnType<typeof createApp>["app"],
       workspaceId: string,
       termId: string,
+      headers: Record<string, string> = {},
     ) {
       return app.request(`/api/agent-term/${workspaceId}/${termId}`, {
         method: "DELETE",
+        headers,
+      });
+    }
+
+    function restore(
+      app: ReturnType<typeof createApp>["app"],
+      workspaceId: string,
+      termId: string,
+      headers: Record<string, string> = {},
+    ) {
+      return app.request(`/api/agent-term/${workspaceId}/${termId}/restore`, {
+        method: "POST",
+        headers,
       });
     }
 
@@ -1630,81 +1730,151 @@ describe("API integration: agent terms", () => {
           aliases: [],
           notToConfuseWith: [],
           anchors: [],
-          confidence: "proposed",
+          confidence: "confirmed",
           ...overrides,
         })
         .returning();
       return term;
     }
 
-    async function stillThere(termId: string) {
+    async function deletedAtOf(termId: string) {
       const [row] = await db
-        .select({ id: agentTermTable.id })
+        .select({ deletedAt: agentTermTable.deletedAt })
         .from(agentTermTable)
         .where(eq(agentTermTable.id, termId));
-      return row !== undefined;
+      return row?.deletedAt ?? null;
     }
 
-    it("hard-deletes a term for workspace:update", async () => {
+    it("[REQ-AGENT-AUTOAPPLY-13] soft-deletes a term for workspace:update: the row stays, list and resolve skip it, and deleted=true lists it", async () => {
       const admin = await createWorkspaceMember({ role: "admin" });
-      const term = await seedTerm(admin.workspace.id, { canonical: "Draft" });
+      const ws = admin.workspace.id;
+      const term = await seedTerm(ws, {
+        canonical: "Draft",
+        aliases: ["draft-alias"],
+      });
+      const kept = await seedTerm(ws, { canonical: "Kept" });
 
       mockAuthenticatedSession(admin.user);
       const { app } = createApp();
+      expect(
+        ((await (await resolve(app, ws, "Draft")).json()) as Resolution).match,
+      ).toBe("canonical");
 
-      const response = await remove(app, admin.workspace.id, term.id);
+      const response = await remove(app, ws, term.id);
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
         id: term.id,
         canonical: "Draft",
       });
-      expect(await stillThere(term.id)).toBe(false);
+      const [row] = await db
+        .select()
+        .from(agentTermTable)
+        .where(eq(agentTermTable.id, term.id));
+      expect(row).toMatchObject({
+        canonical: "Draft",
+        deletedBy: admin.user.id,
+      });
+      expect(row?.deletedAt).not.toBeNull();
 
-      // Gone means gone: a second delete is "not found".
-      expect((await remove(app, admin.workspace.id, term.id)).status).toBe(404);
+      const listed = (await (
+        await app.request(`/api/agent-term/${ws}`)
+      ).json()) as TermList;
+      expect(listed.terms.map((t) => t.id)).toEqual([kept.id]);
+      for (const input of ["Draft", "draft-alias"]) {
+        const payload = (await (
+          await resolve(app, ws, input)
+        ).json()) as Resolution;
+        expect(payload.match, input).toBe("none");
+      }
+      const deletedList = (await (
+        await app.request(`/api/agent-term/${ws}?deleted=true`)
+      ).json()) as TermList;
+      expect(deletedList.terms).toEqual([
+        expect.objectContaining({
+          id: term.id,
+          deletedAt: expect.any(String),
+          deletedBy: admin.user.id,
+        }),
+      ]);
+
+      // A deleted term cannot be reviewed or deleted again, and its name stays taken.
+      expect(
+        (await confirm(app, ws, { termId: term.id, confidence: "confirmed" }))
+          .status,
+      ).toBe(404);
+      expect((await remove(app, ws, term.id)).status).toBe(404);
+      const again = await propose(app, { workspaceId: ws, canonical: "Draft" });
+      expect(again.status).toBe(409);
+      await expect(again.text()).resolves.toBe(
+        "Term already exists and was deleted: Draft; restore it instead",
+      );
     });
 
-    it("deletes a confirmed or disputed term too — confidence does not gate it", async () => {
+    it("[REQ-AGENT-AUTOAPPLY-14] restoring brings a deleted term back as it was", async () => {
       const admin = await createWorkspaceMember({ role: "admin" });
-      const confirmed = await seedTerm(admin.workspace.id, {
-        canonical: "Reviewed",
-        confidence: "confirmed",
-      });
-      const disputed = await seedTerm(admin.workspace.id, {
-        confidence: "disputed",
-      });
-      const retired = await seedTerm(admin.workspace.id, {
-        confidence: "confirmed",
-        state: "retired",
+      const ws = admin.workspace.id;
+      const term = await seedTerm(ws, {
+        canonical: "Ledger",
+        reviewerId: admin.user.id,
+        reviewedAt: new Date(),
       });
 
       mockAuthenticatedSession(admin.user);
       const { app } = createApp();
 
-      const response = await remove(app, admin.workspace.id, confirmed.id);
+      // Not deleted: nothing to restore.
+      expect((await restore(app, ws, term.id)).status).toBe(404);
+
+      expect((await remove(app, ws, term.id)).status).toBe(200);
+      const restored = await restore(app, ws, term.id);
+      expect(restored.status).toBe(200);
+      expect(await restored.json()).toMatchObject({
+        id: term.id,
+        canonical: "Ledger",
+        confidence: "confirmed",
+        reviewerId: admin.user.id,
+        reviewer: { userId: admin.user.id, name: admin.user.name },
+        reviewed: true,
+        deletedAt: null,
+        deletedBy: null,
+      });
+      const resolved = (await (
+        await resolve(app, ws, "Ledger")
+      ).json()) as Resolution;
+      expect(resolved.term?.id).toBe(term.id);
+      expect((await restore(app, ws, term.id)).status).toBe(404);
+    });
+
+    it("deletes a disputed or retired term too — confidence and state do not gate it", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const disputed = await seedTerm(admin.workspace.id, {
+        canonical: "Rejected",
+        confidence: "disputed",
+      });
+      const retired = await seedTerm(admin.workspace.id, { state: "retired" });
+
+      mockAuthenticatedSession(admin.user);
+      const { app } = createApp();
+
+      const response = await remove(app, admin.workspace.id, disputed.id);
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual({
-        id: confirmed.id,
-        canonical: "Reviewed",
+        id: disputed.id,
+        canonical: "Rejected",
       });
-      expect((await remove(app, admin.workspace.id, disputed.id)).status).toBe(
-        200,
-      );
       expect((await remove(app, admin.workspace.id, retired.id)).status).toBe(
         200,
       );
-
-      expect(await stillThere(confirmed.id)).toBe(false);
-      expect(await stillThere(disputed.id)).toBe(false);
-      expect(await stillThere(retired.id)).toBe(false);
+      expect(await deletedAtOf(disputed.id)).not.toBeNull();
+      expect(await deletedAtOf(retired.id)).not.toBeNull();
     });
 
-    it("refuses a term another term supersedes to", async () => {
+    it("refuses a term a live term supersedes to", async () => {
       const admin = await createWorkspaceMember({ role: "admin" });
       const replacement = await seedTerm(admin.workspace.id, {
         canonical: "Ledger",
       });
-      await seedTerm(admin.workspace.id, {
+      const referrer = await seedTerm(admin.workspace.id, {
         canonical: "Work log",
         state: "retired",
         supersededBy: replacement.id,
@@ -1718,10 +1888,18 @@ describe("API integration: agent terms", () => {
       await expect(response.text()).resolves.toBe(
         'Term is referenced as the replacement of "Work log" and cannot be deleted',
       );
-      expect(await stillThere(replacement.id)).toBe(true);
+      expect(await deletedAtOf(replacement.id)).toBeNull();
+
+      // Once the referrer itself is deleted, nothing visible points here.
+      expect((await remove(app, admin.workspace.id, referrer.id)).status).toBe(
+        200,
+      );
+      expect(
+        (await remove(app, admin.workspace.id, replacement.id)).status,
+      ).toBe(200);
     });
 
-    it("blocks a viewer and a member (workspace:update required)", async () => {
+    it("blocks a viewer and a member from deleting and restoring (workspace:update required)", async () => {
       for (const role of ["viewer", "member"]) {
         const caller = await createWorkspaceMember({ role });
         const term = await seedTerm(caller.workspace.id);
@@ -1732,8 +1910,32 @@ describe("API integration: agent terms", () => {
         const response = await remove(app, caller.workspace.id, term.id);
         expect(response.status, role).toBe(403);
         await expect(response.text()).resolves.toBe("Insufficient permissions");
-        expect(await stillThere(term.id)).toBe(true);
+        expect(
+          (await restore(app, caller.workspace.id, term.id)).status,
+          role,
+        ).toBe(403);
+        expect(await deletedAtOf(term.id)).toBeNull();
       }
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-16] an API key cannot delete or restore a term, even for a workspace:update holder", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const term = await seedTerm(admin.workspace.id);
+
+      mockAuthenticatedSession(admin.user);
+      const { app } = createApp();
+      await seedApiKey(admin.user.id);
+
+      expect(
+        (await remove(app, admin.workspace.id, term.id, viaKey)).status,
+      ).toBe(403);
+      expect(await deletedAtOf(term.id)).toBeNull();
+
+      expect((await remove(app, admin.workspace.id, term.id)).status).toBe(200);
+      expect(
+        (await restore(app, admin.workspace.id, term.id, viaKey)).status,
+      ).toBe(403);
+      expect(await deletedAtOf(term.id)).not.toBeNull();
     });
 
     it("reports a term from another workspace as not found and leaves it", async () => {
@@ -1744,9 +1946,13 @@ describe("API integration: agent terms", () => {
       mockAuthenticatedSession(admin.user);
       const { app } = createApp();
 
-      const response = await remove(app, admin.workspace.id, foreign.id);
-      expect(response.status).toBe(404);
-      expect(await stillThere(foreign.id)).toBe(true);
+      expect((await remove(app, admin.workspace.id, foreign.id)).status).toBe(
+        404,
+      );
+      expect((await restore(app, admin.workspace.id, foreign.id)).status).toBe(
+        404,
+      );
+      expect(await deletedAtOf(foreign.id)).toBeNull();
     });
 
     it("rejects unauthenticated and outside-workspace callers", async () => {
@@ -1764,7 +1970,7 @@ describe("API integration: agent terms", () => {
         (await remove(createApp().app, admin.workspace.id, term.id)).status,
       ).toBe(403);
 
-      expect(await stillThere(term.id)).toBe(true);
+      expect(await deletedAtOf(term.id)).toBeNull();
     });
   });
 });

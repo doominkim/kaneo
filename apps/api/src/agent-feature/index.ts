@@ -6,12 +6,24 @@ import {
   createRoute,
   errorResponse,
   jsonResponse,
+  nullableResponseTimestamp,
   responseTimestamp,
   z,
 } from "../openapi";
 import { workspaceAccess } from "../utils/workspace-access-middleware";
 import listFeatureTasks from "./controllers/list-feature-tasks";
 import listFeatures from "./controllers/list-features";
+import { listFeaturesQuery } from "./schema";
+
+const lifecycleFields = {
+  reviewed: z.boolean().openapi({
+    description:
+      "False while the latest save came from an agent and no person has reviewed it since.",
+  }),
+  revisedAt: responseTimestamp,
+  deletedAt: nullableResponseTimestamp,
+  deletedBy: z.string().nullable(),
+};
 
 const featureSummarySchema = z
   .object({
@@ -21,6 +33,7 @@ const featureSummarySchema = z
       .object({
         status: z.string(),
         approvedAt: responseTimestamp.nullable(),
+        ...lifecycleFields,
         itemCount: z.number(),
         activeCount: z.number(),
         coveredCount: z.number(),
@@ -31,6 +44,7 @@ const featureSummarySchema = z
       .object({
         status: z.string(),
         approvedAt: responseTimestamp.nullable(),
+        ...lifecycleFields,
         stale: z.boolean(),
         updatedAt: responseTimestamp,
       })
@@ -67,9 +81,9 @@ const listRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Feature summaries for a project",
   description:
-    "One row per feature slug (union of requirement sets and designs): requirement status and coverage, design status and stale verdict, task totals. A fixed number of queries regardless of project size.",
+    "One row per feature slug (union of requirement sets and designs): requirement status, review mark and coverage, design status, review mark and stale verdict, task totals. Soft-deleted documents are left out unless `deleted=true`, which lists only them. A fixed number of queries regardless of project size.",
   middleware: [workspaceAccess.fromProject("projectId")] as const,
-  request: { params: projectIdParam },
+  request: { params: projectIdParam, query: listFeaturesQuery },
   responses: {
     200: jsonResponse(
       "Feature summaries, most recently updated first",
@@ -87,7 +101,7 @@ const tasksRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Tasks derived from one feature",
   description:
-    "Tasks linked to the feature's requirement keys or its design, each with its stale verdict and causes.",
+    "Tasks linked to the feature's requirement keys or its design, each with its stale verdict and causes. Links to soft-deleted documents are left out.",
   middleware: [workspaceAccess.fromProject("projectId")] as const,
   request: { params: featureParams },
   responses: {
@@ -100,7 +114,11 @@ const tasksRoute = createRoute({
 const agentFeature = apiRouter<BaseVariables & { workspaceId: string }>()
   .openapi(listRoute, async (c) =>
     c.json(
-      { features: await listFeatures(c.req.valid("param").projectId) },
+      {
+        features: await listFeatures(c.req.valid("param").projectId, {
+          deleted: c.req.valid("query").deleted,
+        }),
+      },
       200,
     ),
   )

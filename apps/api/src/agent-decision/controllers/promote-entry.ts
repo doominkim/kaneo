@@ -12,7 +12,10 @@ import { getDecision } from "./decision-record";
 
 async function findPromoted(projectId: string, entryId: string) {
   const [existing] = await db
-    .select({ id: agentDecisionTable.id })
+    .select({
+      id: agentDecisionTable.id,
+      deletedAt: agentDecisionTable.deletedAt,
+    })
     .from(agentDecisionTable)
     .where(
       and(
@@ -24,7 +27,29 @@ async function findPromoted(projectId: string, entryId: string) {
   return existing;
 }
 
-/** Idempotently copy an immutable legacy decision into an editable ADR draft. */
+/**
+ * The source entry can be promoted once, ever: a deleted ADR still holds the
+ * entry, so promoting again is a 409 pointing at restore rather than a second
+ * copy.
+ */
+function readPromoted(
+  projectId: string,
+  promoted: { id: string; deletedAt: Date | null },
+) {
+  if (promoted.deletedAt) {
+    throw new HTTPException(409, {
+      message:
+        "The ADR promoted from this entry is deleted; restore it instead",
+    });
+  }
+  return getDecision(projectId, promoted.id);
+}
+
+/**
+ * Idempotently copy an immutable legacy decision into an ADR. Like every ADR
+ * it is accepted on creation; promoting is a person's action, so it is also
+ * reviewed from the start.
+ */
 async function promoteEntry(input: {
   workspaceId: string;
   projectId: string;
@@ -32,7 +57,7 @@ async function promoteEntry(input: {
   userId: string;
 }) {
   const promoted = await findPromoted(input.projectId, input.entryId);
-  if (promoted) return getDecision(input.projectId, promoted.id);
+  if (promoted) return readPromoted(input.projectId, promoted);
 
   const [entry] = await db
     .select({
@@ -76,7 +101,7 @@ async function promoteEntry(input: {
     }
     const concurrent = await findPromoted(input.projectId, input.entryId);
     if (!concurrent) throw error;
-    return getDecision(input.projectId, concurrent.id);
+    return readPromoted(input.projectId, concurrent);
   }
 }
 

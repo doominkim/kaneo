@@ -5,7 +5,8 @@ export const DECISION_TITLE_MAX = 200;
 export const DECISION_TEXT_BUDGET = 200 * 1024;
 export const DECISION_TASK_LIMIT = 50;
 
-export const decisionStatus = z.enum(["draft", "accepted", "superseded"]);
+/** No draft (agent-autoapply): an ADR is accepted from the moment it exists. */
+export const decisionStatus = z.enum(["accepted", "superseded"]);
 
 export const projectIdParam = z.object({ projectId: z.string() });
 export const decisionParams = projectIdParam.extend({ decisionId: z.string() });
@@ -70,6 +71,10 @@ export const createDecisionBody = z
     reversible: z.boolean().nullable().optional(),
     refs: refsBody.nullable().optional(),
     taskIds: taskIds.default([]),
+    supersedesDecisionId: z.string().min(1).optional().openapi({
+      description:
+        "An accepted ADR of the same project that this one replaces. It becomes superseded in the same transaction; a target that is superseded, deleted or already replaced is a 409.",
+    }),
     ...agentIdentity,
   })
   .superRefine((value, ctx) => {
@@ -90,74 +95,18 @@ export const createDecisionBody = z
     }
   });
 
-export const updateDecisionBody = z
-  .object({
-    expectedUpdatedAt: z.iso.datetime(),
-    title: z.string().trim().min(1).max(DECISION_TITLE_MAX).optional(),
-    context: text.optional(),
-    decision: text.optional(),
-    alternatives: text.nullable().optional(),
-    consequences: text.nullable().optional(),
-    reversible: z.boolean().nullable().optional(),
-    refs: refsBody.nullable().optional(),
-    taskIds: taskIds.optional(),
-    ...agentIdentity,
-  })
-  .superRefine((value, ctx) => {
-    validateAgentIdentity(value, ctx);
-    const mutableKeys = [
-      "title",
-      "context",
-      "decision",
-      "alternatives",
-      "consequences",
-      "reversible",
-      "refs",
-      "taskIds",
-    ] as const;
-    if (!mutableKeys.some((key) => value[key] !== undefined)) {
-      ctx.addIssue({
-        code: "custom",
-        path: [],
-        message: "At least one editable field is required",
-      });
-    }
-    if (value.context !== undefined && !value.context.trim()) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["context"],
-        message: "context must not be blank",
-      });
-    }
-    if (value.decision !== undefined && !value.decision.trim()) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["decision"],
-        message: "decision must not be blank",
-      });
-    }
-    if (!withinTextBudget(value)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["context"],
-        message: "ADR text must be at most 200KB in total",
-      });
-    }
-  });
-
-export const acceptDecisionBody = z.object({
-  expectedUpdatedAt: z.iso.datetime(),
-  supersedesDecisionId: z.string().min(1).optional(),
-});
-
 export const listDecisionsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
   before: z.string().optional().openapi({
     description: "Opaque cursor: the nextBefore value from the previous page.",
   }),
   status: z
-    .enum(["current", "all", "draft", "accepted", "superseded"])
-    .default("current"),
+    .enum(["current", "all", "accepted", "superseded", "deleted"])
+    .default("current")
+    .openapi({
+      description:
+        "`current` (default) is accepted ADRs, `all` adds superseded ones, `deleted` lists soft-deleted ADRs of any status. Every value but `deleted` hides deleted ADRs.",
+    }),
   taskId: z.string().optional(),
   q: z.string().trim().min(1).max(200).optional(),
 });

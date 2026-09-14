@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { loadActor } from "../../agent-entry/actor-response";
 import db from "../../database";
 import { taskTable } from "../../database/schema";
@@ -25,8 +25,9 @@ async function getSet(projectId: string, feature: string) {
     .orderBy(asc(agentRequirementItemTable.seq));
   const itemIds = items.map((item) => item.id);
   const actor = await loadActor(set.actorId);
+  const reviewed = set.reviewedAt !== null;
   if (itemIds.length === 0) {
-    return { ...set, actor, items: [] };
+    return { ...set, reviewed, actor, items: [] };
   }
 
   const [coverage, designLinks, taskLinks] = await Promise.all([
@@ -47,7 +48,12 @@ async function getSet(projectId: string, feature: string) {
         agentDesignTable,
         eq(agentDesignTable.id, agentDesignRequirementTable.designId),
       )
-      .where(inArray(agentDesignRequirementTable.itemId, itemIds)),
+      .where(
+        and(
+          inArray(agentDesignRequirementTable.itemId, itemIds),
+          isNull(agentDesignTable.deletedAt),
+        ),
+      ),
     db
       .select({
         itemId: agentTaskRequirementTable.itemId,
@@ -76,6 +82,7 @@ async function getSet(projectId: string, feature: string) {
 
   return {
     ...set,
+    reviewed,
     actor,
     items: items.map((item) => ({
       ...item,

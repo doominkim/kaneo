@@ -1,5 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const apiKeyMock = vi.hoisted(() => ({
+  verifyApiKey: vi.fn(async () => null as unknown),
+}));
+vi.mock("../../apps/api/src/utils/verify-api-key", () => apiKeyMock);
+
 import db, { schema } from "../../apps/api/src/database";
 import {
   agentActorTable,
@@ -16,6 +23,8 @@ import {
   createWorkspaceMember,
 } from "./helpers/fixtures";
 
+type App = ReturnType<typeof createApp>["app"];
+type DecisionRef = { id: string; status: string } | null;
 type Decision = {
   id: string;
   workspaceId: string;
@@ -27,7 +36,7 @@ type Decision = {
   alternatives: string | null;
   consequences: string | null;
   sourceNote: string | null;
-  status: "draft" | "accepted" | "superseded";
+  status: "accepted" | "superseded";
   sourceEntryId: string | null;
   supersedesDecisionId: string | null;
   tasks: Array<{ id: string; number: number | null; title: string }>;
@@ -37,9 +46,25 @@ type Decision = {
   updatedBy: string | null;
   updatedAuthor: { userId: string; name: string } | null;
   acceptedBy: string | null;
+  acceptedAt: string | null;
   acceptor: { userId: string; name: string } | null;
+  reviewed: boolean;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  deletedAt: string | null;
+  deletedBy: string | null;
+  supersedes: DecisionRef;
+  supersededBy: DecisionRef;
   updatedAt: string;
 };
+type DecisionList = {
+  decisions: Decision[];
+  nextBefore: string | null;
+  unreviewedTotal: number;
+};
+
+const agent = { provider: "anthropic", model: "claude-opus-5" };
+const viaKey = { "x-api-key": "kaneo_test_key" };
 
 async function seedTask(projectId: string, columnId: string, number: number) {
   const [task] = await db
@@ -59,8 +84,44 @@ async function seedTask(projectId: string, columnId: string, number: number) {
   return task;
 }
 
+async function addMember(workspaceId: string, role: string) {
+  const id = `user-${randomUUID()}`;
+  const [user] = await db
+    .insert(schema.userTable)
+    .values({ id, email: `${id}@example.com`, emailVerified: true, name: role })
+    .returning();
+  await db.insert(schema.workspaceUserTable).values({
+    workspaceId,
+    userId: user.id,
+    role,
+    joinedAt: new Date(),
+  });
+  return user;
+}
+
+/** A real apikey row: workspace access checks the key's owner, not just the mocked verifier. */
+async function seedApiKey(userId: string) {
+  const now = new Date();
+  await db
+    .insert(schema.apikeyTable)
+    .values({
+      id: "key-1",
+      referenceId: userId,
+      userId,
+      key: "hashed",
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing();
+  apiKeyMock.verifyApiKey.mockResolvedValue({
+    valid: true,
+    key: { id: "key-1", userId, enabled: true, permissions: null },
+  });
+}
+
 async function createDecision(
-  app: ReturnType<typeof createApp>["app"],
+  app: App,
   projectId: string,
   overrides: Record<string, unknown> = {},
 ) {
@@ -86,12 +147,61 @@ async function jsonDecision(response: Response) {
   return (await response.json()) as Decision;
 }
 
+async function listDecisions(app: App, projectId: string, query = "") {
+  const response = await app.request(
+    `/api/agent-decision/${projectId}${query ? `?${query}` : ""}`,
+  );
+  expect(response.status, await response.clone().text()).toBe(200);
+  return (await response.json()) as DecisionList;
+}
+
+function lifecycle(
+  app: App,
+  projectId: string,
+  decisionId: string,
+  action: "review" | "delete" | "restore",
+  headers: Record<string, string> = {},
+) {
+  const base = `/api/agent-decision/${projectId}/${decisionId}`;
+  if (action === "delete") {
+    return app.request(base, { method: "DELETE", headers });
+  }
+  return app.request(`${base}/${action}`, { method: "POST", headers });
+}
+
+async function rowOf(decisionId: string) {
+  const [row] = await db
+    .select()
+    .from(agentDecisionTable)
+    .where(eq(agentDecisionTable.id, decisionId));
+  return row;
+}
+
+async function entriesFor(projectId: string) {
+  return db
+    .select()
+    .from(agentEntryTable)
+    .where(eq(agentEntryTable.projectId, projectId));
+}
+
+type AdrTrace = {
+  decisionId: string;
+  status: string;
+  supersedesDecisionId?: string;
+  supersededByDecisionId?: string;
+};
+
+function adrOf(entry: { decision: unknown }) {
+  return (entry.decision as { adr?: AdrTrace } | null)?.adr ?? null;
+}
+
 describe("API integration: ADR", () => {
   beforeEach(async () => {
     await resetTestDatabase();
+    apiKeyMock.verifyApiKey.mockResolvedValue(null);
   });
 
-  it("프로젝트 번호를 원자적으로 배정하고 같은 프로젝트의 작업만 연결한다", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-3] 프로젝트 번호를 원자적으로 배정해 draft 없이 accepted 로 만들고 같은 프로젝트의 작업만 연결한다", async () => {
     const member = await createWorkspaceMember({ userName: "ADR Author" });
     const firstProject = await createProjectFixture({
       workspaceId: member.workspace.id,
@@ -126,6 +236,12 @@ describe("API integration: ADR", () => {
     expect(decisions.map((decision) => decision.number).sort()).toEqual([
       1, 2, 3, 4, 5, 6,
     ]);
+    expect(decisions.every((decision) => decision.status === "accepted")).toBe(
+      true,
+    );
+    expect(decisions.every((decision) => decision.acceptedAt !== null)).toBe(
+      true,
+    );
     expect(decisions[0]?.tasks).toEqual([
       { id: linkedTask.id, number: 7, title: linkedTask.title },
     ]);
@@ -145,11 +261,17 @@ describe("API integration: ADR", () => {
     expect(invalid.status).toBe(400);
 
     const persisted = await db
-      .select({ number: agentDecisionTable.number })
+      .select({
+        number: agentDecisionTable.number,
+        status: agentDecisionTable.status,
+      })
       .from(agentDecisionTable)
       .where(eq(agentDecisionTable.projectId, firstProject.project.id))
       .orderBy(asc(agentDecisionTable.number));
     expect(persisted.map((row) => row.number)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(new Set(persisted.map((row) => row.status))).toEqual(
+      new Set(["accepted"]),
+    );
   });
 
   it("첫 에이전트 작성이 동시에 와도 actor를 재사용하고 provider가 다르면 구분한다", async () => {
@@ -196,11 +318,105 @@ describe("API integration: ADR", () => {
     ]);
   });
 
-  it("초안 편집은 낙관적 잠금을 적용하고 승인 뒤 본문을 바꾸지 못한다", async () => {
-    const member = await createWorkspaceMember({
-      userName: "ADR Maintainer",
-      role: "admin",
+  it("[REQ-AGENT-AUTOAPPLY-6] [REQ-AGENT-AUTOAPPLY-7] 사람이 만든 ADR 은 만든 사람이 확인한 상태이고 에이전트가 만든 ADR 은 미확인이다", async () => {
+    const member = await createWorkspaceMember({ userName: "ADR Author" });
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
     });
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    const human = await jsonDecision(
+      await createDecision(app, project.id, { title: "Human ADR" }),
+    );
+    expect(human).toMatchObject({
+      status: "accepted",
+      acceptedBy: member.user.id,
+      acceptor: { userId: member.user.id, name: "ADR Author" },
+      reviewed: true,
+      reviewedBy: member.user.id,
+    });
+    expect(human.reviewedAt).toEqual(expect.any(String));
+
+    const byAgent = await jsonDecision(
+      await createDecision(app, project.id, { title: "Agent ADR", ...agent }),
+    );
+    expect(byAgent).toMatchObject({
+      status: "accepted",
+      acceptedBy: null,
+      acceptor: null,
+      reviewed: false,
+      reviewedAt: null,
+      reviewedBy: null,
+    });
+    expect(byAgent.acceptedAt).toEqual(expect.any(String));
+
+    const replacement = await jsonDecision(
+      await createDecision(app, project.id, {
+        title: "Agent replacement",
+        supersedesDecisionId: human.id,
+        ...agent,
+      }),
+    );
+    expect(replacement.reviewed).toBe(false);
+
+    const all = await listDecisions(app, project.id, "status=all");
+    expect(all.decisions.map((d) => [d.title, d.reviewed])).toEqual([
+      ["Agent replacement", false],
+      ["Agent ADR", false],
+      ["Human ADR", true],
+    ]);
+    expect(all.unreviewedTotal).toBe(2);
+    // The count is project-wide: a filter that hides them does not shrink it.
+    expect(
+      (await listDecisions(app, project.id, "status=superseded"))
+        .unreviewedTotal,
+    ).toBe(2);
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-9] ADR 확인은 사람만 한다: 세션 요청은 확인 표시만 남기고 API 키 요청은 403", async () => {
+    const member = await createWorkspaceMember();
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+    const first = await jsonDecision(
+      await createDecision(app, project.id, { title: "First", ...agent }),
+    );
+    const second = await jsonDecision(
+      await createDecision(app, project.id, { title: "Second", ...agent }),
+    );
+    const entriesBefore = (await entriesFor(project.id)).length;
+
+    await seedApiKey(member.user.id);
+    const refused = await lifecycle(
+      app,
+      project.id,
+      second.id,
+      "review",
+      viaKey,
+    );
+    expect(refused.status).toBe(403);
+    expect((await rowOf(second.id))?.reviewedAt).toBeNull();
+
+    const reviewed = await jsonDecision(
+      await lifecycle(app, project.id, first.id, "review"),
+    );
+    expect(reviewed).toMatchObject({
+      reviewed: true,
+      reviewedBy: member.user.id,
+      updatedAt: first.updatedAt,
+    });
+    expect((await listDecisions(app, project.id)).unreviewedTotal).toBe(1);
+    expect((await entriesFor(project.id)).length).toBe(entriesBefore);
+    expect((await lifecycle(app, project.id, "missing", "review")).status).toBe(
+      404,
+    );
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-23] accepted ADR 내용 수정 요청은 409 로 거부하고 대체 ADR 을 안내한다", async () => {
+    const member = await createWorkspaceMember({ role: "admin" });
     const { project } = await createProjectFixture({
       workspaceId: member.workspace.id,
     });
@@ -208,70 +424,43 @@ describe("API integration: ADR", () => {
     const { app } = createApp();
     const created = await jsonDecision(await createDecision(app, project.id));
 
-    const editedResponse = await app.request(
+    const refused = await app.request(
       `/api/agent-decision/${project.id}/${created.id}`,
       {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           expectedUpdatedAt: created.updatedAt,
-          decision:
-            "Keep lifecycle events append-only and link them to the ADR.",
-        }),
-      },
-    );
-    const edited = await jsonDecision(editedResponse);
-    expect(edited.updatedAt).not.toBe(created.updatedAt);
-    expect(edited.updatedAuthor).toEqual({
-      userId: member.user.id,
-      name: "ADR Maintainer",
-    });
-
-    const staleEdit = await app.request(
-      `/api/agent-decision/${project.id}/${created.id}`,
-      {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          expectedUpdatedAt: created.updatedAt,
-          title: "Stale title",
-        }),
-      },
-    );
-    expect(staleEdit.status).toBe(409);
-
-    const accepted = await jsonDecision(
-      await app.request(
-        `/api/agent-decision/${project.id}/${created.id}/accept`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ expectedUpdatedAt: edited.updatedAt }),
-        },
-      ),
-    );
-    expect(accepted).toMatchObject({
-      status: "accepted",
-      acceptedBy: member.user.id,
-      acceptor: { userId: member.user.id, name: "ADR Maintainer" },
-    });
-
-    const immutable = await app.request(
-      `/api/agent-decision/${project.id}/${created.id}`,
-      {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          expectedUpdatedAt: accepted.updatedAt,
           decision: "Rewrite accepted content",
         }),
       },
     );
-    expect(immutable.status).toBe(409);
+    expect(refused.status).toBe(409);
+    await expect(refused.text()).resolves.toBe(
+      "accepted ADR is immutable; create a superseding ADR",
+    );
+    expect(await rowOf(created.id)).toMatchObject({
+      decision: created.decision,
+      updatedAt: new Date(created.updatedAt),
+    });
+
+    // The accept step no longer exists.
+    const accept = await app.request(
+      `/api/agent-decision/${project.id}/${created.id}/accept`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedUpdatedAt: created.updatedAt }),
+      },
+    );
+    expect(accept.status).toBe(404);
   });
 
-  it("기존 결정 항목을 원문 의미를 바꾸지 않고 한 번만 초안으로 승격한다", async () => {
-    const member = await createWorkspaceMember({ userName: "Promoter" });
+  it("기존 결정 항목을 원문 의미를 바꾸지 않고 한 번만 accepted ADR 로 승격한다", async () => {
+    const member = await createWorkspaceMember({
+      userName: "Promoter",
+      role: "admin",
+    });
     const { project, columns } = await createProjectFixture({
       workspaceId: member.workspace.id,
     });
@@ -298,19 +487,13 @@ describe("API integration: ADR", () => {
     if (!entry) throw new Error("Failed to seed source entry");
     mockAuthenticatedSession(member.user);
     const { app } = createApp();
+    const promote = () =>
+      app.request(`/api/agent-decision/${project.id}/from-entry/${entry.id}`, {
+        method: "POST",
+      });
 
-    const first = await jsonDecision(
-      await app.request(
-        `/api/agent-decision/${project.id}/from-entry/${entry.id}`,
-        { method: "POST" },
-      ),
-    );
-    const second = await jsonDecision(
-      await app.request(
-        `/api/agent-decision/${project.id}/from-entry/${entry.id}`,
-        { method: "POST" },
-      ),
-    );
+    const first = await jsonDecision(await promote());
+    const second = await jsonDecision(await promote());
 
     expect(second.id).toBe(first.id);
     expect(first).toMatchObject({
@@ -322,6 +505,10 @@ describe("API integration: ADR", () => {
       sourceNote: "Investigation notes with uncertain historical details.",
       sourceEntryId: entry.id,
       tasks: [{ id: task.id }],
+      status: "accepted",
+      acceptedBy: member.user.id,
+      reviewed: true,
+      reviewedBy: member.user.id,
     });
 
     const [preserved] = await db
@@ -333,9 +520,16 @@ describe("API integration: ADR", () => {
       decision: entry.decision,
       deletedAt: null,
     });
+
+    // A deleted promotion still owns the entry: promoting again points at restore.
+    expect((await lifecycle(app, project.id, first.id, "delete")).status).toBe(
+      200,
+    );
+    const again = await promote();
+    expect(again.status).toBe(409);
   });
 
-  it("승인과 대체를 한 트랜잭션에서 처리하고 추적 가능한 타임라인을 덧붙인다", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-19] supersedesDecisionId 로 만들면 같은 트랜잭션에서 이전 ADR 을 superseded 로 바꾸고 추적 가능한 타임라인을 남긴다", async () => {
     const member = await createWorkspaceMember({
       userName: "Reviewer",
       role: "admin",
@@ -345,41 +539,16 @@ describe("API integration: ADR", () => {
     });
     mockAuthenticatedSession(member.user);
     const { app } = createApp();
-    const previousDraft = await jsonDecision(
-      await createDecision(app, project.id, { title: "ADR one" }),
-    );
     const previous = await jsonDecision(
-      await app.request(
-        `/api/agent-decision/${project.id}/${previousDraft.id}/accept`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            expectedUpdatedAt: previousDraft.updatedAt,
-          }),
-        },
-      ),
-    );
-    const firstReplacement = await jsonDecision(
-      await createDecision(app, project.id, { title: "ADR two" }),
-    );
-    const secondReplacement = await jsonDecision(
-      await createDecision(app, project.id, { title: "ADR three" }),
+      await createDecision(app, project.id, { title: "ADR one" }),
     );
 
     const replacementResponses = await Promise.all(
-      [firstReplacement, secondReplacement].map((replacement) =>
-        app.request(
-          `/api/agent-decision/${project.id}/${replacement.id}/accept`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              expectedUpdatedAt: replacement.updatedAt,
-              supersedesDecisionId: previous.id,
-            }),
-          },
-        ),
+      ["ADR two", "ADR three"].map((title) =>
+        createDecision(app, project.id, {
+          title,
+          supersedesDecisionId: previous.id,
+        }),
       ),
     );
     expect(
@@ -390,14 +559,18 @@ describe("API integration: ADR", () => {
       .select()
       .from(agentDecisionTable)
       .where(eq(agentDecisionTable.projectId, project.id));
+    // The losing create rolled back entirely, number included.
+    expect(rows).toHaveLength(2);
     expect(rows.find((row) => row.id === previous.id)?.status).toBe(
       "superseded",
     );
     const acceptedReplacement = rows.find(
       (row) => row.supersedesDecisionId === previous.id,
     );
-    expect(acceptedReplacement?.status).toBe("accepted");
-    expect(rows.filter((row) => row.status === "draft")).toHaveLength(1);
+    expect(acceptedReplacement).toMatchObject({
+      status: "accepted",
+      number: 2,
+    });
 
     const timeline = await db
       .select({ decision: agentEntryTable.decision })
@@ -409,21 +582,21 @@ describe("API integration: ADR", () => {
         ),
       );
     expect(timeline).toHaveLength(3);
-    expect(timeline.map((row) => row.decision)).toEqual(
+    expect(timeline.map(adrOf)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          adr: expect.objectContaining({
-            decisionId: previous.id,
-            status: "superseded",
-            supersededByDecisionId: acceptedReplacement?.id,
-          }),
+          decisionId: previous.id,
+          status: "accepted",
         }),
         expect.objectContaining({
-          adr: expect.objectContaining({
-            decisionId: acceptedReplacement?.id,
-            status: "accepted",
-            supersedesDecisionId: previous.id,
-          }),
+          decisionId: previous.id,
+          status: "superseded",
+          supersededByDecisionId: acceptedReplacement?.id,
+        }),
+        expect.objectContaining({
+          decisionId: acceptedReplacement?.id,
+          status: "accepted",
+          supersedesDecisionId: previous.id,
         }),
       ]),
     );
@@ -433,17 +606,10 @@ describe("API integration: ADR", () => {
     const entryPayload = (await entryList.json()) as {
       entries: Array<Record<string, unknown>>;
     };
-    expect(entryPayload.entries).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          adrDecisionId: acceptedReplacement?.id,
-          adrStatus: "accepted",
-        }),
-      ]),
-    );
     const acceptedEntry = entryPayload.entries.find(
       (entry) => entry.adrDecisionId === acceptedReplacement?.id,
     );
+    expect(acceptedEntry).toMatchObject({ adrStatus: "accepted" });
     const entryDetail = await app.request(
       `/api/agent-entry/${project.id}/${String(acceptedEntry?.id)}`,
     );
@@ -454,9 +620,43 @@ describe("API integration: ADR", () => {
       adrNumber: acceptedReplacement?.number,
       adrStatus: "accepted",
     });
+
+    const previousDetail = await jsonDecision(
+      await app.request(`/api/agent-decision/${project.id}/${previous.id}`),
+    );
+    expect(previousDetail.supersededBy).toMatchObject({
+      id: acceptedReplacement?.id,
+      status: "accepted",
+    });
+
+    // Only an accepted, non-deleted ADR of this project can be superseded.
+    expect(
+      (
+        await createDecision(app, project.id, {
+          supersedesDecisionId: previous.id,
+        })
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await createDecision(app, project.id, {
+          supersedesDecisionId: "missing",
+        })
+      ).status,
+    ).toBe(404);
+    const lone = await jsonDecision(
+      await createDecision(app, project.id, { title: "Lone" }),
+    );
+    expect((await lifecycle(app, project.id, lone.id, "delete")).status).toBe(
+      200,
+    );
+    expect(
+      (await createDecision(app, project.id, { supersedesDecisionId: lone.id }))
+        .status,
+    ).toBe(409);
   });
 
-  it("목록은 상태·검색·작업·커서로 제한하고 일반 구성원은 승인하지 못한다", async () => {
+  it("목록은 상태·검색·작업·커서로 제한하고 일반 구성원은 ADR 을 삭제·복구하지 못한다", async () => {
     const member = await createWorkspaceMember({ userName: "Member" });
     const { project, columns } = await createProjectFixture({
       workspaceId: member.workspace.id,
@@ -475,24 +675,19 @@ describe("API integration: ADR", () => {
       await createDecision(app, project.id, { title: "Object storage" }),
     );
 
-    const forbidden = await app.request(
-      `/api/agent-decision/${project.id}/${first.id}/accept`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ expectedUpdatedAt: first.updatedAt }),
-      },
+    expect((await lifecycle(app, project.id, first.id, "delete")).status).toBe(
+      403,
     );
-    expect(forbidden.status).toBe(403);
+    expect((await lifecycle(app, project.id, first.id, "restore")).status).toBe(
+      403,
+    );
+    expect((await rowOf(first.id))?.deletedAt).toBeNull();
 
-    const searched = await app.request(
-      `/api/agent-decision/${project.id}?q=durable&taskId=${task.id}&status=draft`,
+    const searchedPayload = await listDecisions(
+      app,
+      project.id,
+      `q=durable&taskId=${task.id}&status=accepted`,
     );
-    expect(searched.status).toBe(200);
-    const searchedPayload = (await searched.json()) as {
-      decisions: Array<Record<string, unknown>>;
-      nextBefore: string | null;
-    };
     expect(searchedPayload.decisions).toHaveLength(1);
     expect(searchedPayload.decisions[0]).toMatchObject({
       id: first.id,
@@ -501,21 +696,18 @@ describe("API integration: ADR", () => {
     expect(searchedPayload.decisions[0]).not.toHaveProperty("context");
     expect(searchedPayload.decisions[0]).not.toHaveProperty("decision");
 
-    const firstPage = await app.request(
-      `/api/agent-decision/${project.id}?status=all&limit=1`,
+    const firstPagePayload = await listDecisions(
+      app,
+      project.id,
+      "status=all&limit=1",
     );
-    const firstPagePayload = (await firstPage.json()) as {
-      decisions: Array<{ id: string }>;
-      nextBefore: string | null;
-    };
     expect(firstPagePayload.decisions).toHaveLength(1);
     expect(firstPagePayload.nextBefore).toBe(firstPagePayload.decisions[0]?.id);
-    const secondPage = await app.request(
-      `/api/agent-decision/${project.id}?status=all&limit=1&before=${firstPagePayload.nextBefore}`,
+    const secondPagePayload = await listDecisions(
+      app,
+      project.id,
+      `status=all&limit=1&before=${firstPagePayload.nextBefore}`,
     );
-    const secondPagePayload = (await secondPage.json()) as {
-      decisions: Array<{ id: string }>;
-    };
     expect(secondPagePayload.decisions).toHaveLength(1);
     expect(secondPagePayload.decisions[0]?.id).not.toBe(
       firstPagePayload.decisions[0]?.id,
@@ -537,6 +729,7 @@ describe("API integration: ADR", () => {
         title: "Private architecture",
         context: "Private context",
         decision: "Private decision",
+        status: "accepted",
         createdBy: owner.user.id,
         updatedBy: owner.user.id,
       })
@@ -559,29 +752,20 @@ describe("API integration: ADR", () => {
     const requests = await Promise.all([
       app.request(`/api/agent-decision/${project.id}`),
       app.request(`/api/agent-decision/${project.id}/${decision.id}`),
-      createDecision(app, project.id, { title: "Unauthorized draft" }),
+      createDecision(app, project.id, { title: "Unauthorized ADR" }),
       app.request(`/api/agent-decision/${project.id}/${decision.id}`, {
         method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          expectedUpdatedAt: decision.updatedAt.toISOString(),
-          title: "Unauthorized edit",
-        }),
       }),
       app.request(`/api/agent-decision/${project.id}/from-entry/${entry.id}`, {
         method: "POST",
       }),
-      app.request(`/api/agent-decision/${project.id}/${decision.id}/accept`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          expectedUpdatedAt: decision.updatedAt.toISOString(),
-        }),
-      }),
+      lifecycle(app, project.id, decision.id, "review"),
+      lifecycle(app, project.id, decision.id, "delete"),
+      lifecycle(app, project.id, decision.id, "restore"),
     ]);
 
     expect(requests.map((response) => response.status)).toEqual([
-      403, 403, 403, 403, 403, 403,
+      403, 403, 403, 403, 403, 403, 403, 403,
     ]);
     const responseBodies = await Promise.all(
       requests.map((response) => response.text()),
@@ -590,13 +774,11 @@ describe("API integration: ADR", () => {
     expect(responseBodies.join("\n")).not.toContain("Private context");
     expect(responseBodies.join("\n")).not.toContain("Private decision");
 
-    const [preserved] = await db
-      .select()
-      .from(agentDecisionTable)
-      .where(eq(agentDecisionTable.id, decision.id));
-    expect(preserved).toMatchObject({
+    expect(await rowOf(decision.id)).toMatchObject({
       title: "Private architecture",
-      status: "draft",
+      status: "accepted",
+      reviewedAt: null,
+      deletedAt: null,
       updatedAt: decision.updatedAt,
     });
     expect(
@@ -695,36 +877,14 @@ describe("API integration: ADR", () => {
     const { app } = createApp();
 
     async function seedAcceptedChain(projectId: string) {
-      const previousDraft = await jsonDecision(
+      const previous = await jsonDecision(
         await createDecision(app, projectId, { title: "Previous ADR" }),
       );
-      const previous = await jsonDecision(
-        await app.request(
-          `/api/agent-decision/${projectId}/${previousDraft.id}/accept`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              expectedUpdatedAt: previousDraft.updatedAt,
-            }),
-          },
-        ),
-      );
-      const replacementDraft = await jsonDecision(
-        await createDecision(app, projectId, { title: "Replacement ADR" }),
-      );
       return jsonDecision(
-        await app.request(
-          `/api/agent-decision/${projectId}/${replacementDraft.id}/accept`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              expectedUpdatedAt: replacementDraft.updatedAt,
-              supersedesDecisionId: previous.id,
-            }),
-          },
-        ),
+        await createDecision(app, projectId, {
+          title: "Replacement ADR",
+          supersedesDecisionId: previous.id,
+        }),
       );
     }
 
@@ -789,5 +949,297 @@ describe("API integration: ADR", () => {
         .from(agentDecisionTable)
         .where(eq(agentDecisionTable.workspaceId, unrelated.workspace.id)),
     ).toHaveLength(2);
+  });
+
+  describe("agent-autoapply: delete and restore", () => {
+    async function adminSetup() {
+      const admin = await createWorkspaceMember({
+        userName: "Maintainer",
+        role: "admin",
+      });
+      const { project } = await createProjectFixture({
+        workspaceId: admin.workspace.id,
+      });
+      mockAuthenticatedSession(admin.user);
+      const { app } = createApp();
+      return { admin, project, app };
+    }
+
+    it("[REQ-AGENT-AUTOAPPLY-12] [REQ-AGENT-AUTOAPPLY-14] [REQ-AGENT-AUTOAPPLY-15] project:update 권한자가 삭제하면 행은 남고 읽기에서 빠지며, 복구하면 삭제 전 상태로 돌아온다", async () => {
+      const { admin, project, app } = await adminSetup();
+      const target = await jsonDecision(
+        await createDecision(app, project.id, { title: "Wrong ADR", ...agent }),
+      );
+      const kept = await jsonDecision(
+        await createDecision(app, project.id, { title: "Kept ADR" }),
+      );
+
+      const member = await addMember(admin.workspace.id, "member");
+      mockAuthenticatedSession(member);
+      expect(
+        (await lifecycle(createApp().app, project.id, target.id, "delete"))
+          .status,
+      ).toBe(403);
+      mockAuthenticatedSession(admin.user);
+
+      const deleted = await lifecycle(app, project.id, target.id, "delete");
+      expect(deleted.status, await deleted.clone().text()).toBe(200);
+      expect(await deleted.json()).toMatchObject({
+        id: target.id,
+        deletedAt: expect.any(String),
+        deletedBy: admin.user.id,
+        restoredDecisionId: null,
+      });
+      const row = await rowOf(target.id);
+      expect(row).toMatchObject({
+        title: "Wrong ADR",
+        status: "accepted",
+        deletedBy: admin.user.id,
+      });
+      expect(row?.deletedAt).not.toBeNull();
+
+      expect(
+        (await app.request(`/api/agent-decision/${project.id}/${target.id}`))
+          .status,
+      ).toBe(404);
+      const current = await listDecisions(app, project.id);
+      expect(current.decisions.map((d) => d.id)).toEqual([kept.id]);
+      expect(current.unreviewedTotal).toBe(0);
+      expect(
+        (await listDecisions(app, project.id, "status=all")).decisions.map(
+          (d) => d.id,
+        ),
+      ).toEqual([kept.id]);
+      expect(
+        (await listDecisions(app, project.id, "status=deleted")).decisions,
+      ).toEqual([
+        expect.objectContaining({
+          id: target.id,
+          deletedAt: expect.any(String),
+          deletedBy: admin.user.id,
+        }),
+      ]);
+      expect(
+        (await lifecycle(app, project.id, target.id, "review")).status,
+      ).toBe(404);
+      expect(
+        (await lifecycle(app, project.id, target.id, "delete")).status,
+      ).toBe(404);
+
+      const restored = await jsonDecision(
+        await lifecycle(app, project.id, target.id, "restore"),
+      );
+      expect(restored).toMatchObject({
+        id: target.id,
+        title: "Wrong ADR",
+        status: "accepted",
+        reviewed: false,
+        deletedAt: null,
+        deletedBy: null,
+        updatedAt: target.updatedAt,
+      });
+      expect((await listDecisions(app, project.id)).unreviewedTotal).toBe(1);
+      expect(
+        (await lifecycle(app, project.id, target.id, "restore")).status,
+      ).toBe(404);
+
+      const removal = (await entriesFor(project.id)).filter(
+        (entry) => entry.kind === "work",
+      );
+      expect(removal.map((entry) => entry.summary).sort()).toEqual([
+        "ADR-001 복구 · Wrong ADR",
+        "ADR-001 삭제 · Wrong ADR",
+      ]);
+      expect(
+        removal.every(
+          (entry) =>
+            entry.createdBy === admin.user.id && entry.actorId === null,
+        ),
+      ).toBe(true);
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-20] 다른 ADR 을 대체한 ADR 을 삭제하면 대체됐던 ADR 이 accepted 로 돌아온다", async () => {
+      const { admin, project, app } = await adminSetup();
+      const previous = await jsonDecision(
+        await createDecision(app, project.id, { title: "Original", ...agent }),
+      );
+      const replacement = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "Wrong replacement",
+          supersedesDecisionId: previous.id,
+          ...agent,
+        }),
+      );
+      expect((await rowOf(previous.id))?.status).toBe("superseded");
+
+      const deleted = await lifecycle(
+        app,
+        project.id,
+        replacement.id,
+        "delete",
+      );
+      expect(deleted.status).toBe(200);
+      expect(await deleted.json()).toMatchObject({
+        restoredDecisionId: previous.id,
+      });
+      const back = await jsonDecision(
+        await app.request(`/api/agent-decision/${project.id}/${previous.id}`),
+      );
+      expect(back).toMatchObject({ status: "accepted", supersededBy: null });
+
+      // The person's restore is on the timeline as an ADR status change.
+      const restoredTrace = (await entriesFor(project.id)).filter(
+        (entry) =>
+          entry.createdBy === admin.user.id &&
+          adrOf(entry)?.decisionId === previous.id,
+      );
+      expect(restoredTrace.map(adrOf)).toEqual([
+        expect.objectContaining({ status: "accepted" }),
+      ]);
+
+      // The deleted replacement no longer holds the slot.
+      expect(
+        (
+          await createDecision(app, project.id, {
+            title: "Second try",
+            supersedesDecisionId: previous.id,
+          })
+        ).status,
+      ).toBe(200);
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-21] 대체됐던 ADR 이 이미 삭제된 상태면 복원 없이 삭제만 한다", async () => {
+      const { project, app } = await adminSetup();
+      const previous = await jsonDecision(
+        await createDecision(app, project.id, { title: "Original" }),
+      );
+      const replacement = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "Replacement",
+          supersedesDecisionId: previous.id,
+        }),
+      );
+
+      const deletedPrevious = await lifecycle(
+        app,
+        project.id,
+        previous.id,
+        "delete",
+      );
+      expect(await deletedPrevious.json()).toMatchObject({
+        restoredDecisionId: null,
+      });
+      const deletedReplacement = await lifecycle(
+        app,
+        project.id,
+        replacement.id,
+        "delete",
+      );
+      expect(deletedReplacement.status).toBe(200);
+      expect(await deletedReplacement.json()).toMatchObject({
+        restoredDecisionId: null,
+      });
+
+      const previousRow = await rowOf(previous.id);
+      expect(previousRow?.status).toBe("superseded");
+      expect(previousRow?.deletedAt).not.toBeNull();
+      expect((await rowOf(replacement.id))?.deletedAt).not.toBeNull();
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-22] 대체 관계가 있는 ADR 복구는 대체됐던 ADR 이 accepted 이고 삭제되지 않았을 때만 다시 대체하고, 아니면 409", async () => {
+      const { admin, project, app } = await adminSetup();
+      const previous = await jsonDecision(
+        await createDecision(app, project.id, { title: "Original", ...agent }),
+      );
+      const replacement = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "Replacement",
+          supersedesDecisionId: previous.id,
+          ...agent,
+        }),
+      );
+
+      await lifecycle(app, project.id, replacement.id, "delete");
+      expect((await rowOf(previous.id))?.status).toBe("accepted");
+      const restored = await jsonDecision(
+        await lifecycle(app, project.id, replacement.id, "restore"),
+      );
+      expect(restored).toMatchObject({
+        status: "accepted",
+        deletedAt: null,
+        supersedes: { id: previous.id, status: "superseded" },
+      });
+      expect((await rowOf(previous.id))?.status).toBe("superseded");
+      const resuperseded = (await entriesFor(project.id)).filter(
+        (entry) =>
+          entry.createdBy === admin.user.id &&
+          adrOf(entry)?.decisionId === previous.id,
+      );
+      expect(resuperseded.map(adrOf)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            status: "superseded",
+            supersededByDecisionId: replacement.id,
+          }),
+        ]),
+      );
+
+      // Someone replaced it meanwhile: restoring would make two replacements.
+      await lifecycle(app, project.id, replacement.id, "delete");
+      const other = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "Other replacement",
+          supersedesDecisionId: previous.id,
+        }),
+      );
+      const conflict = await lifecycle(
+        app,
+        project.id,
+        replacement.id,
+        "restore",
+      );
+      expect(conflict.status).toBe(409);
+      expect((await rowOf(replacement.id))?.deletedAt).not.toBeNull();
+      expect(
+        (
+          await jsonDecision(
+            await app.request(
+              `/api/agent-decision/${project.id}/${previous.id}`,
+            ),
+          )
+        ).supersededBy,
+      ).toMatchObject({ id: other.id });
+
+      // A deleted predecessor cannot be superseded again either.
+      await lifecycle(app, project.id, other.id, "delete");
+      await lifecycle(app, project.id, previous.id, "delete");
+      expect(
+        (await lifecycle(app, project.id, replacement.id, "restore")).status,
+      ).toBe(409);
+      expect((await rowOf(replacement.id))?.deletedAt).not.toBeNull();
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-16] API 키로는 ADR 을 삭제·복구하지 못한다", async () => {
+      const { admin, project, app } = await adminSetup();
+      const decision = await jsonDecision(
+        await createDecision(app, project.id),
+      );
+
+      await seedApiKey(admin.user.id);
+      expect(
+        (await lifecycle(app, project.id, decision.id, "delete", viaKey))
+          .status,
+      ).toBe(403);
+      expect((await rowOf(decision.id))?.deletedAt).toBeNull();
+
+      expect(
+        (await lifecycle(app, project.id, decision.id, "delete")).status,
+      ).toBe(200);
+      expect(
+        (await lifecycle(app, project.id, decision.id, "restore", viaKey))
+          .status,
+      ).toBe(403);
+      expect((await rowOf(decision.id))?.deletedAt).not.toBeNull();
+    });
   });
 });

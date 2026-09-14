@@ -1,10 +1,12 @@
 import {
   and,
+  count,
   desc,
   eq,
   exists,
   ilike,
-  inArray,
+  isNotNull,
+  isNull,
   lt,
   or,
   type SQL,
@@ -30,7 +32,7 @@ type ListInput = {
   projectId: string;
   limit: number;
   before?: string;
-  status: "current" | "all" | "draft" | "accepted" | "superseded";
+  status: "current" | "all" | "accepted" | "superseded" | "deleted";
   taskId?: string;
   q?: string;
 };
@@ -57,10 +59,15 @@ async function listDecisions(input: ListInput) {
     conditions.push(lt(agentDecisionTable.number, cursor.number));
   }
 
-  if (input.status === "current") {
-    conditions.push(inArray(agentDecisionTable.status, ["draft", "accepted"]));
-  } else if (input.status !== "all") {
-    conditions.push(eq(agentDecisionTable.status, input.status));
+  if (input.status === "deleted") {
+    conditions.push(isNotNull(agentDecisionTable.deletedAt));
+  } else {
+    conditions.push(isNull(agentDecisionTable.deletedAt));
+    if (input.status === "current" || input.status === "accepted") {
+      conditions.push(eq(agentDecisionTable.status, "accepted"));
+    } else if (input.status === "superseded") {
+      conditions.push(eq(agentDecisionTable.status, "superseded"));
+    }
   }
   if (input.taskId) {
     conditions.push(
@@ -95,46 +102,70 @@ async function listDecisions(input: ListInput) {
     );
   }
 
-  const rows = await db
-    .select({
-      decision: {
-        id: agentDecisionTable.id,
-        number: agentDecisionTable.number,
-        title: agentDecisionTable.title,
-        status: agentDecisionTable.status,
-        reversible: agentDecisionTable.reversible,
-        sourceEntryId: agentDecisionTable.sourceEntryId,
-        supersedesDecisionId: agentDecisionTable.supersedesDecisionId,
-        refs: agentDecisionTable.refs,
-        createdBy: agentDecisionTable.createdBy,
-        updatedBy: agentDecisionTable.updatedBy,
-        acceptedBy: agentDecisionTable.acceptedBy,
-        acceptedAt: agentDecisionTable.acceptedAt,
-        createdAt: agentDecisionTable.createdAt,
-        updatedAt: agentDecisionTable.updatedAt,
-      },
-      contextPreview: sql<string>`left(${agentDecisionTable.context}, 240)`,
-      createdActor,
-      updatedActor,
-      createdAuthor: { id: createdAuthor.id, name: createdAuthor.name },
-      updatedAuthor: { id: updatedAuthor.id, name: updatedAuthor.name },
-      acceptor: { id: acceptor.id, name: acceptor.name },
-    })
-    .from(agentDecisionTable)
-    .leftJoin(
-      createdActor,
-      eq(agentDecisionTable.createdActorId, createdActor.id),
-    )
-    .leftJoin(
-      updatedActor,
-      eq(agentDecisionTable.updatedActorId, updatedActor.id),
-    )
-    .leftJoin(createdAuthor, eq(agentDecisionTable.createdBy, createdAuthor.id))
-    .leftJoin(updatedAuthor, eq(agentDecisionTable.updatedBy, updatedAuthor.id))
-    .leftJoin(acceptor, eq(agentDecisionTable.acceptedBy, acceptor.id))
-    .where(and(...conditions))
-    .orderBy(desc(agentDecisionTable.number))
-    .limit(input.limit);
+  const [rows, [unreviewed]] = await Promise.all([
+    db
+      .select({
+        decision: {
+          id: agentDecisionTable.id,
+          number: agentDecisionTable.number,
+          title: agentDecisionTable.title,
+          status: agentDecisionTable.status,
+          reversible: agentDecisionTable.reversible,
+          sourceEntryId: agentDecisionTable.sourceEntryId,
+          supersedesDecisionId: agentDecisionTable.supersedesDecisionId,
+          refs: agentDecisionTable.refs,
+          createdBy: agentDecisionTable.createdBy,
+          updatedBy: agentDecisionTable.updatedBy,
+          acceptedBy: agentDecisionTable.acceptedBy,
+          acceptedAt: agentDecisionTable.acceptedAt,
+          reviewedAt: agentDecisionTable.reviewedAt,
+          reviewedBy: agentDecisionTable.reviewedBy,
+          deletedAt: agentDecisionTable.deletedAt,
+          deletedBy: agentDecisionTable.deletedBy,
+          createdAt: agentDecisionTable.createdAt,
+          updatedAt: agentDecisionTable.updatedAt,
+        },
+        contextPreview: sql<string>`left(${agentDecisionTable.context}, 240)`,
+        createdActor,
+        updatedActor,
+        createdAuthor: { id: createdAuthor.id, name: createdAuthor.name },
+        updatedAuthor: { id: updatedAuthor.id, name: updatedAuthor.name },
+        acceptor: { id: acceptor.id, name: acceptor.name },
+      })
+      .from(agentDecisionTable)
+      .leftJoin(
+        createdActor,
+        eq(agentDecisionTable.createdActorId, createdActor.id),
+      )
+      .leftJoin(
+        updatedActor,
+        eq(agentDecisionTable.updatedActorId, updatedActor.id),
+      )
+      .leftJoin(
+        createdAuthor,
+        eq(agentDecisionTable.createdBy, createdAuthor.id),
+      )
+      .leftJoin(
+        updatedAuthor,
+        eq(agentDecisionTable.updatedBy, updatedAuthor.id),
+      )
+      .leftJoin(acceptor, eq(agentDecisionTable.acceptedBy, acceptor.id))
+      .where(and(...conditions))
+      .orderBy(desc(agentDecisionTable.number))
+      .limit(input.limit),
+    // Project-wide on purpose: the "unreviewed" badge must not shrink because
+    // the reader filtered or paged.
+    db
+      .select({ total: count() })
+      .from(agentDecisionTable)
+      .where(
+        and(
+          eq(agentDecisionTable.projectId, input.projectId),
+          isNull(agentDecisionTable.reviewedAt),
+          isNull(agentDecisionTable.deletedAt),
+        ),
+      ),
+  ]);
 
   const tasks = await loadDecisionTasks(
     input.projectId,
@@ -151,6 +182,7 @@ async function listDecisions(input: ListInput) {
   return {
     decisions,
     nextBefore: decisions.length === input.limit && last ? last.id : null,
+    unreviewedTotal: unreviewed?.total ?? 0,
   };
 }
 

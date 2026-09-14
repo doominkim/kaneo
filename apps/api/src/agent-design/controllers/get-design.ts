@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { loadActor } from "../../agent-entry/actor-response";
 import { designStale } from "../../agent-requirement/stale";
 import db from "../../database";
@@ -6,6 +6,7 @@ import { taskTable } from "../../database/schema";
 import {
   agentDesignRequirementTable,
   agentRequirementItemTable,
+  agentRequirementSetTable,
   agentTaskDesignTable,
 } from "../../database/schema-agent-layer";
 import { requireDesign } from "./shared";
@@ -27,6 +28,13 @@ async function getDesign(projectId: string, feature: string) {
         agentRequirementItemTable,
         eq(agentRequirementItemTable.id, agentDesignRequirementTable.itemId),
       )
+      .innerJoin(
+        agentRequirementSetTable,
+        and(
+          eq(agentRequirementSetTable.id, agentRequirementItemTable.setId),
+          isNull(agentRequirementSetTable.deletedAt),
+        ),
+      )
       .where(eq(agentDesignRequirementTable.designId, design.id))
       .orderBy(asc(agentRequirementItemTable.seq)),
     db
@@ -40,15 +48,16 @@ async function getDesign(projectId: string, feature: string) {
       .innerJoin(taskTable, eq(taskTable.id, agentTaskDesignTable.taskId))
       .where(eq(agentTaskDesignTable.designId, design.id)),
   ]);
-  const stale = designStale(design.approvedAt, requirements);
+  const stale = designStale(design.revisedAt, requirements);
   const changedKeys = new Set(stale.causes.map((cause) => cause.key));
   return {
     ...design,
+    reviewed: design.reviewedAt !== null,
     actor,
     stale,
     requirements: requirements.map((requirement) => ({
       ...requirement,
-      changedSinceApproval: changedKeys.has(requirement.key),
+      changedSinceRevision: changedKeys.has(requirement.key),
     })),
     tasks,
   };

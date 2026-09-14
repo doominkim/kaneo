@@ -35,9 +35,17 @@ export function creatorColumns(author: DecisionAuthor) {
   };
 }
 
-export function editorColumns(author: DecisionAuthor) {
+/**
+ * An ADR is accepted the moment it is created (agent-autoapply). A person's
+ * ADR is also reviewed by them; an agent's stays unreviewed until a person
+ * marks it, and `acceptedBy` stays null because no person accepted it.
+ */
+export function acceptanceColumns(author: DecisionAuthor, now: Date) {
   return {
-    updatedBy: author.userId,
-    updatedActorId: author.actorId,
+    status: "accepted",
+    acceptedAt: now,
+    acceptedBy: author.userId,
+    reviewedAt: author.userId ? now : null,
+    reviewedBy: author.userId,
   };
 }

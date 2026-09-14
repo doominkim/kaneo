@@ -48,7 +48,10 @@ async function assertProjectInWorkspace(
  * the caller would have to infer again, which is the failure this layer exists
  * to remove.
  *
- * Only `confirmed` terms are returned. A resolve is read as settled fact by
+ * Only `confirmed`, non-deleted terms are returned. Since agent-autoapply an
+ * agent's proposal is confirmed at once and resolves; `reviewed` on each term
+ * says whether a person has checked it, and a wrong one is soft-deleted,
+ * which removes it from here. A resolve is read as settled fact by
  * whoever asks, so answering with an unreviewed `proposed` row closes a loop
  * the layer exists to break: a model proposes a definition it inferred, the
  * next session resolves it, and the guess comes back indistinguishable from
@@ -78,6 +81,7 @@ async function resolveTerm(
   const conditions = [
     eq(agentTermTable.workspaceId, workspaceId),
     eq(agentTermTable.confidence, "confirmed"),
+    isNull(agentTermTable.deletedAt),
     or(
       sql`lower(${agentTermTable.canonical}) = lower(${normalized})`,
       // Aliases are matched the same way as the canonical name (case- and

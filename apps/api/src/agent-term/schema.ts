@@ -17,6 +17,14 @@ export const resolveQuery = z.object({
 export const listTermsQuery = z.object({
   state: z.enum(["active", "dormant", "stale", "retired"]).optional(),
   confidence: z.enum(["proposed", "confirmed", "disputed"]).optional(),
+  deleted: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value === "true")
+    .openapi({
+      description:
+        "`true` lists only soft-deleted terms, each with `deletedAt`/`deletedBy`. Default: deleted terms are hidden.",
+    }),
   domainId: z.string().optional().openapi({
     description:
       "Exact domain page id, or the literal `none` for the unfiled terms that belong to no page (`domainId` null). Omit, or send it empty, for the whole workspace. Combines with `state` and `confidence`. A page outside this workspace is a 400 rather than an empty answer.",
@@ -121,7 +129,7 @@ const confirmTermFields = z.object({
   termId: z.string(),
   confidence: z.enum(["confirmed", "disputed"]).openapi({
     description:
-      "Human review outcome. Model-proposed terms never auto-confirm — an unreviewed lexicon stops being trusted, and an untrusted lexicon is worse than none. Only `confirmed` terms resolve.",
+      "Human review outcome. `confirmed` records the calling person as reviewer of a term that already resolves; `disputed` withdraws it from resolve. Only `confirmed` terms resolve.",
   }),
   rejectReason: z
     .string()

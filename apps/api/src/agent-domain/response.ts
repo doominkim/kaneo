@@ -2,12 +2,15 @@ import { actorResponseSchema } from "../agent-entry/actor-response";
 import { responseTimestamp, z } from "../openapi";
 
 /**
- * Knowledge items filed under a page, counted per review outcome. The sidebar
- * draws a review badge from these, so they ride along with the tree rather
- * than costing a second call per page.
+ * Knowledge items filed under a page, counted by review state; soft-deleted
+ * items are not counted. The sidebar draws a review badge from these, so they
+ * ride along with the tree rather than costing a second call per page.
  */
 const knowledgeCounts = {
-  proposedCount: z.number().int(),
+  unreviewedCount: z.number().int().openapi({
+    description:
+      "Items no person has reviewed yet (`reviewedAt` null), whatever their confidence.",
+  }),
   confirmedCount: z.number().int(),
   disputedCount: z.number().int(),
 };

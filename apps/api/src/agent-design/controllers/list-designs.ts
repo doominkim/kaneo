@@ -1,10 +1,11 @@
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { designStale } from "../../agent-requirement/stale";
 import db from "../../database";
 import {
   agentDesignRequirementTable,
   agentDesignTable,
   agentRequirementItemTable,
+  agentRequirementSetTable,
 } from "../../database/schema-agent-layer";
 
 async function listDesigns(projectId: string) {
@@ -15,6 +16,8 @@ async function listDesigns(projectId: string) {
       title: agentDesignTable.title,
       status: agentDesignTable.status,
       approvedAt: agentDesignTable.approvedAt,
+      reviewedAt: agentDesignTable.reviewedAt,
+      revisedAt: agentDesignTable.revisedAt,
       sourceSlug: agentDesignTable.sourceSlug,
       updatedBy: agentDesignTable.updatedBy,
       actorId: agentDesignTable.actorId,
@@ -22,10 +25,17 @@ async function listDesigns(projectId: string) {
       updatedAt: agentDesignTable.updatedAt,
     })
     .from(agentDesignTable)
-    .where(eq(agentDesignTable.projectId, projectId))
+    .where(
+      and(
+        eq(agentDesignTable.projectId, projectId),
+        isNull(agentDesignTable.deletedAt),
+      ),
+    )
     .orderBy(desc(agentDesignTable.updatedAt));
   if (designs.length === 0) return [];
 
+  // Items of a deleted requirement set are hidden, so they neither count nor
+  // make a design stale while the set is deleted.
   const links = await db
     .select({
       designId: agentDesignRequirementTable.designId,
@@ -36,6 +46,13 @@ async function listDesigns(projectId: string) {
     .innerJoin(
       agentRequirementItemTable,
       eq(agentRequirementItemTable.id, agentDesignRequirementTable.itemId),
+    )
+    .innerJoin(
+      agentRequirementSetTable,
+      and(
+        eq(agentRequirementSetTable.id, agentRequirementItemTable.setId),
+        isNull(agentRequirementSetTable.deletedAt),
+      ),
     )
     .where(
       inArray(
@@ -53,8 +70,9 @@ async function listDesigns(projectId: string) {
     const items = byDesign.get(design.id) ?? [];
     return {
       ...design,
+      reviewed: design.reviewedAt !== null,
       requirementCount: items.length,
-      stale: designStale(design.approvedAt, items),
+      stale: designStale(design.revisedAt, items),
     };
   });
 }

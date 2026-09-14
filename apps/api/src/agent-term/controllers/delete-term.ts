@@ -1,33 +1,32 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
 import { agentTermTable } from "../../database/schema-agent-layer";
 
 /**
- * Hard delete, for any term the caller can reach.
+ * Soft delete, for any term the caller can reach (agent-autoapply): terms
+ * apply on proposal, so a wrong one is hidden and restorable rather than
+ * erased. The row keeps every field and gains `deletedAt`/`deletedBy`; list,
+ * resolve and the domain counts then skip it.
  *
  * Confidence and state do not gate this: a workspace:update holder owns the
- * lexicon and may drop an entry outright rather than retire it. Retirement
- * stays available for the case where a tombstone is wanted, but it is a choice,
- * not a precondition.
+ * lexicon. The one refusal is a term a live term points at via
+ * `supersededBy` — hiding it would leave the survivor naming a term nobody can
+ * read. That is a 409 and not a 403: the caller has the right, the row is in
+ * the wrong state.
  *
- * The one refusal is a term another term points at via `supersededBy` —
- * deleting it would leave a dangling pointer on the survivor. That is a 409 and
- * not a 403: the caller has the right, the row is in the wrong state.
- *
- * Scoped by workspace: a term id from another workspace is "not found".
+ * Scoped by workspace: a term id from another workspace is "not found", and
+ * so is one that is already deleted.
  */
-async function deleteTerm(workspaceId: string, termId: string) {
+async function deleteTerm(workspaceId: string, termId: string, userId: string) {
   const [term] = await db
-    .select({
-      id: agentTermTable.id,
-      canonical: agentTermTable.canonical,
-    })
+    .select({ id: agentTermTable.id })
     .from(agentTermTable)
     .where(
       and(
         eq(agentTermTable.id, termId),
         eq(agentTermTable.workspaceId, workspaceId),
+        isNull(agentTermTable.deletedAt),
       ),
     )
     .limit(1);
@@ -43,6 +42,7 @@ async function deleteTerm(workspaceId: string, termId: string) {
       and(
         eq(agentTermTable.workspaceId, workspaceId),
         eq(agentTermTable.supersededBy, termId),
+        isNull(agentTermTable.deletedAt),
       ),
     )
     .limit(1);
@@ -53,9 +53,24 @@ async function deleteTerm(workspaceId: string, termId: string) {
     });
   }
 
-  await db.delete(agentTermTable).where(eq(agentTermTable.id, termId));
+  // The predicate repeats `deleted_at IS NULL` so two concurrent deletes
+  // cannot both win: the second finds no row and reports 404.
+  const [deleted] = await db
+    .update(agentTermTable)
+    .set({ deletedAt: new Date(), deletedBy: userId })
+    .where(
+      and(
+        eq(agentTermTable.id, termId),
+        eq(agentTermTable.workspaceId, workspaceId),
+        isNull(agentTermTable.deletedAt),
+      ),
+    )
+    .returning({ id: agentTermTable.id, canonical: agentTermTable.canonical });
 
-  return { id: term.id, canonical: term.canonical };
+  if (!deleted) {
+    throw new HTTPException(404, { message: "Term not found" });
+  }
+  return deleted;
 }
 
 export default deleteTerm;

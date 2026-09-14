@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { designStale } from "../../agent-requirement/stale";
 import { collectTaskLinks } from "../../agent-task-link/controllers/collect-task-links";
 import db from "../../database";
@@ -11,26 +11,51 @@ import {
   agentRequirementSetTable,
 } from "../../database/schema-agent-layer";
 
+type Lifecycle = {
+  reviewed: boolean;
+  revisedAt: Date;
+  deletedAt: Date | null;
+  deletedBy: string | null;
+};
+
 export type FeatureSummary = {
   feature: string;
   title: string;
-  requirements: {
-    status: string;
-    approvedAt: Date | null;
-    itemCount: number;
-    activeCount: number;
-    coveredCount: number;
-    updatedAt: Date;
-  } | null;
-  design: {
-    status: string;
-    approvedAt: Date | null;
-    stale: boolean;
-    updatedAt: Date;
-  } | null;
+  requirements:
+    | (Lifecycle & {
+        status: string;
+        approvedAt: Date | null;
+        itemCount: number;
+        activeCount: number;
+        coveredCount: number;
+        updatedAt: Date;
+      })
+    | null;
+  design:
+    | (Lifecycle & {
+        status: string;
+        approvedAt: Date | null;
+        stale: boolean;
+        updatedAt: Date;
+      })
+    | null;
   tasks: { total: number; done: number; stale: number };
   updatedAt: Date;
 };
+
+function lifecycleOf(row: {
+  reviewedAt: Date | null;
+  revisedAt: Date;
+  deletedAt: Date | null;
+  deletedBy: string | null;
+}): Lifecycle {
+  return {
+    reviewed: row.reviewedAt !== null,
+    revisedAt: row.revisedAt,
+    deletedAt: row.deletedAt,
+    deletedBy: row.deletedBy,
+  };
+}
 
 /**
  * One row per feature for the Feature tab (REQ-FEATURE-HUB-2, 18, 19). A
@@ -40,14 +65,28 @@ export type FeatureSummary = {
  * Fixed number of queries whatever the project size (REQ-FEATURE-HUB-9):
  * sets+items, designs+their item clocks, coverage, columns, and the two
  * link queries inside collectTaskLinks.
+ *
+ * Soft-deleted documents are left out by default; `deleted` lists only them
+ * instead. Design staleness and task counts always read the live documents,
+ * because those are what a task is currently derived from.
  */
-async function listFeatures(projectId: string): Promise<FeatureSummary[]> {
+async function listFeatures(
+  projectId: string,
+  options: { deleted?: boolean } = {},
+): Promise<FeatureSummary[]> {
+  const deletedFilter = (column: Parameters<typeof isNull>[0]) =>
+    options.deleted ? isNotNull(column) : isNull(column);
   const [sets, items, designs, designItems, finalColumns, links] =
     await Promise.all([
       db
         .select()
         .from(agentRequirementSetTable)
-        .where(eq(agentRequirementSetTable.projectId, projectId)),
+        .where(
+          and(
+            eq(agentRequirementSetTable.projectId, projectId),
+            deletedFilter(agentRequirementSetTable.deletedAt),
+          ),
+        ),
       db
         .select({
           id: agentRequirementItemTable.id,
@@ -57,11 +96,25 @@ async function listFeatures(projectId: string): Promise<FeatureSummary[]> {
           updatedAt: agentRequirementItemTable.updatedAt,
         })
         .from(agentRequirementItemTable)
-        .where(eq(agentRequirementItemTable.projectId, projectId)),
+        .innerJoin(
+          agentRequirementSetTable,
+          eq(agentRequirementSetTable.id, agentRequirementItemTable.setId),
+        )
+        .where(
+          and(
+            eq(agentRequirementItemTable.projectId, projectId),
+            deletedFilter(agentRequirementSetTable.deletedAt),
+          ),
+        ),
       db
         .select()
         .from(agentDesignTable)
-        .where(eq(agentDesignTable.projectId, projectId)),
+        .where(
+          and(
+            eq(agentDesignTable.projectId, projectId),
+            deletedFilter(agentDesignTable.deletedAt),
+          ),
+        ),
       db
         .select({
           designId: agentDesignRequirementTable.designId,
@@ -72,6 +125,13 @@ async function listFeatures(projectId: string): Promise<FeatureSummary[]> {
         .innerJoin(
           agentRequirementItemTable,
           eq(agentRequirementItemTable.id, agentDesignRequirementTable.itemId),
+        )
+        .innerJoin(
+          agentRequirementSetTable,
+          and(
+            eq(agentRequirementSetTable.id, agentRequirementItemTable.setId),
+            isNull(agentRequirementSetTable.deletedAt),
+          ),
         )
         .where(eq(agentRequirementItemTable.projectId, projectId)),
       db
@@ -139,6 +199,7 @@ async function listFeatures(projectId: string): Promise<FeatureSummary[]> {
       requirements: {
         status: set.status,
         approvedAt: set.approvedAt,
+        ...lifecycleOf(set),
         itemCount: setItems.length,
         activeCount: active.length,
         coveredCount: active.filter((item) => coveredIds.has(item.id)).length,
@@ -154,7 +215,8 @@ async function listFeatures(projectId: string): Promise<FeatureSummary[]> {
     const summary = {
       status: design.status,
       approvedAt: design.approvedAt,
-      stale: designStale(design.approvedAt, designItemsBy.get(design.id) ?? [])
+      ...lifecycleOf(design),
+      stale: designStale(design.revisedAt, designItemsBy.get(design.id) ?? [])
         .stale,
       updatedAt: design.updatedAt,
     };

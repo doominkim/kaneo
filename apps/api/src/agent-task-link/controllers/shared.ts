@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
 import { taskTable } from "../../database/schema";
@@ -31,6 +31,7 @@ export async function resolveDesignsByFeature(
       and(
         eq(agentDesignTable.projectId, projectId),
         inArray(agentDesignTable.feature, unique),
+        isNull(agentDesignTable.deletedAt),
       ),
     );
   const found = new Set(rows.map((row) => row.feature));

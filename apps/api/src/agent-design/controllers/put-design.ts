@@ -1,23 +1,52 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
-import appendEntry from "../../agent-entry/controllers/append-entry";
 import {
   type Author,
+  appliedColumns,
   authorColumns,
   type EntryAuthor,
+  liveItemIds,
   resolveItemsByKey,
 } from "../../agent-requirement/controllers/shared";
+import { insertRevision } from "../../agent-requirement/controllers/spec-revision";
 import db from "../../database";
 import {
   agentDesignRequirementTable,
   agentDesignTable,
+  agentRequirementItemTable,
 } from "../../database/schema-agent-layer";
-import { findDesign } from "./shared";
+
+type KeyedItem = { id: string; key: string; seq: number };
+
+function sameItems(a: KeyedItem[], b: KeyedItem[]) {
+  const left = a.map((item) => item.id).sort();
+  const right = b.map((item) => item.id).sort();
+  return (
+    left.length === right.length &&
+    left.every((id, index) => id === right[index])
+  );
+}
+
+function keysInItemOrder(items: KeyedItem[]) {
+  return [...items]
+    .sort((a, b) => a.seq - b.seq || a.key.localeCompare(b.key))
+    .map((item) => item.key);
+}
 
 /**
  * Create-or-replace the design at (project, feature). Requirement links are
- * replaced only when `requirementKeys` is sent (REQ-SPEC-TABS-5). Writing to an
- * approved design returns it to draft — same rule as requirement sets.
+ * replaced only when `requirementKeys` is sent (REQ-SPEC-TABS-5).
+ *
+ * Every save applies immediately and follows the same review rule as
+ * requirement sets (agent-autoapply). The design's content is its title, body
+ * and the set of requirement items it covers: when any of them changes,
+ * `revisedAt` moves — the clock linked tasks are compared against — and one
+ * revision with the covered keys is appended in the same transaction. A
+ * soft-deleted design is refused until it is restored.
+ *
+ * Covered items of a soft-deleted requirement set are invisible here as
+ * everywhere else: they neither count as content nor get replaced, so the
+ * links are intact when that set is restored.
  */
 async function putDesign(input: {
   workspaceId: string;
@@ -29,21 +58,69 @@ async function putDesign(input: {
   sourceSlug?: string | null;
   author: Author;
   entryAuthor: EntryAuthor;
+  /** Set by a revert: the revision this save restores. */
+  revertedFromId?: string | null;
 }) {
   const items = input.requirementKeys
     ? await resolveItemsByKey(input.projectId, input.requirementKeys)
     : null;
-  const existing = await findDesign(input.projectId, input.feature);
-  const wasApproved = existing?.status === "approved";
 
-  const design = await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(agentDesignTable)
+      .where(
+        and(
+          eq(agentDesignTable.projectId, input.projectId),
+          eq(agentDesignTable.feature, input.feature),
+        ),
+      )
+      .limit(1);
+    if (existing?.deletedAt) {
+      throw new HTTPException(409, {
+        message: `Design ${input.feature} is deleted; restore it before saving`,
+      });
+    }
+    const currentItems: KeyedItem[] = existing
+      ? await tx
+          .select({
+            id: agentRequirementItemTable.id,
+            key: agentRequirementItemTable.key,
+            seq: agentRequirementItemTable.seq,
+          })
+          .from(agentDesignRequirementTable)
+          .innerJoin(
+            agentRequirementItemTable,
+            eq(
+              agentRequirementItemTable.id,
+              agentDesignRequirementTable.itemId,
+            ),
+          )
+          .where(
+            and(
+              eq(agentDesignRequirementTable.designId, existing.id),
+              inArray(
+                agentDesignRequirementTable.itemId,
+                liveItemIds(input.projectId),
+              ),
+            ),
+          )
+      : [];
+
+    const now = new Date();
+    const contentChanged =
+      !existing ||
+      existing.title !== input.title ||
+      existing.body !== input.body ||
+      (items !== null && !sameItems(items, currentItems));
     const values = {
       title: input.title,
       body: input.body,
       sourceSlug: input.sourceSlug ?? existing?.sourceSlug ?? null,
-      status: "draft",
+      ...appliedColumns(input.author, now),
       ...authorColumns(input.author),
-      updatedAt: new Date(),
+      ...(contentChanged ? { revisedAt: now } : {}),
+      updatedAt: now,
     };
     let row: typeof agentDesignTable.$inferSelect | undefined;
     if (existing) {
@@ -65,34 +142,41 @@ async function putDesign(input: {
     }
     if (!row)
       throw new HTTPException(500, { message: "Failed to save design" });
+    const designId = row.id;
 
     if (items) {
       await tx
         .delete(agentDesignRequirementTable)
-        .where(eq(agentDesignRequirementTable.designId, row.id));
+        .where(
+          and(
+            eq(agentDesignRequirementTable.designId, designId),
+            inArray(
+              agentDesignRequirementTable.itemId,
+              liveItemIds(input.projectId),
+            ),
+          ),
+        );
       if (items.length) {
         await tx
           .insert(agentDesignRequirementTable)
-          .values(items.map((item) => ({ designId: row.id, itemId: item.id })));
+          .values(items.map((item) => ({ designId, itemId: item.id })));
       }
+    }
+
+    if (contentChanged) {
+      await insertRevision(tx, {
+        projectId: input.projectId,
+        target: { designId },
+        title: input.title,
+        body: input.body,
+        requirementKeys: keysInItemOrder(items ?? currentItems),
+        author: input.author,
+        revertedFromId: input.revertedFromId,
+        createdAt: now,
+      });
     }
     return row;
   });
-
-  if (wasApproved) {
-    const isAgent = "actorId" in input.author;
-    await appendEntry({
-      workspaceId: input.workspaceId,
-      userId: input.entryAuthor.userId,
-      projectId: input.projectId,
-      provider: isAgent ? input.entryAuthor.provider : undefined,
-      model: isAgent ? input.entryAuthor.model : undefined,
-      sessionId: input.entryAuthor.sessionId ?? null,
-      kind: "work",
-      summary: `[design:${input.feature}] 승인된 설계 문서를 다시 편집해 draft 로 되돌림`,
-    });
-  }
-  return design;
 }
 
 export default putDesign;

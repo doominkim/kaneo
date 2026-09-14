@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { type TaskLinkClock, taskStale } from "../../agent-requirement/stale";
 import db from "../../database";
 import {
@@ -10,9 +10,20 @@ import {
 } from "../../database/schema-agent-layer";
 import { requireTaskInProject } from "./shared";
 
+function withLinkFlags<
+  T extends { acknowledgedActorId: string | null; reviewedAt: Date | null },
+>({ acknowledgedActorId, reviewedAt, ...link }: T) {
+  return {
+    ...link,
+    acknowledgedByAgent: acknowledgedActorId !== null,
+    reviewed: reviewedAt !== null,
+  };
+}
+
+/** Links to a soft-deleted requirement set or design are hidden, as in `collectTaskLinks`. */
 async function getTaskLinks(projectId: string, taskId: string) {
   await requireTaskInProject(projectId, taskId);
-  const [requirements, designs] = await Promise.all([
+  const [requirementRows, designRows] = await Promise.all([
     db
       .select({
         itemId: agentRequirementItemTable.id,
@@ -23,6 +34,8 @@ async function getTaskLinks(projectId: string, taskId: string) {
         updatedAt: agentRequirementItemTable.updatedAt,
         createdAt: agentTaskRequirementTable.createdAt,
         acknowledgedAt: agentTaskRequirementTable.acknowledgedAt,
+        acknowledgedActorId: agentTaskRequirementTable.acknowledgedActorId,
+        reviewedAt: agentTaskRequirementTable.reviewedAt,
       })
       .from(agentTaskRequirementTable)
       .innerJoin(
@@ -31,7 +44,10 @@ async function getTaskLinks(projectId: string, taskId: string) {
       )
       .innerJoin(
         agentRequirementSetTable,
-        eq(agentRequirementSetTable.id, agentRequirementItemTable.setId),
+        and(
+          eq(agentRequirementSetTable.id, agentRequirementItemTable.setId),
+          isNull(agentRequirementSetTable.deletedAt),
+        ),
       )
       .where(eq(agentTaskRequirementTable.taskId, taskId)),
     db
@@ -41,34 +57,45 @@ async function getTaskLinks(projectId: string, taskId: string) {
         title: agentDesignTable.title,
         status: agentDesignTable.status,
         approvedAt: agentDesignTable.approvedAt,
+        revisedAt: agentDesignTable.revisedAt,
         createdAt: agentTaskDesignTable.createdAt,
         acknowledgedAt: agentTaskDesignTable.acknowledgedAt,
+        acknowledgedActorId: agentTaskDesignTable.acknowledgedActorId,
+        reviewedAt: agentTaskDesignTable.reviewedAt,
       })
       .from(agentTaskDesignTable)
       .innerJoin(
         agentDesignTable,
-        eq(agentDesignTable.id, agentTaskDesignTable.designId),
+        and(
+          eq(agentDesignTable.id, agentTaskDesignTable.designId),
+          isNull(agentDesignTable.deletedAt),
+        ),
       )
       .where(eq(agentTaskDesignTable.taskId, taskId)),
   ]);
 
   const clocks: TaskLinkClock[] = [
-    ...requirements.map((row) => ({
+    ...requirementRows.map((row) => ({
       kind: "requirement" as const,
       key: row.key,
       upstreamChangedAt: row.updatedAt,
       createdAt: row.createdAt,
       acknowledgedAt: row.acknowledgedAt,
     })),
-    ...designs.map((row) => ({
+    ...designRows.map((row) => ({
       kind: "design" as const,
       key: row.feature,
-      upstreamChangedAt: row.approvedAt,
+      upstreamChangedAt: row.revisedAt,
       createdAt: row.createdAt,
       acknowledgedAt: row.acknowledgedAt,
     })),
   ];
-  return { taskId, requirements, designs, stale: taskStale(clocks) };
+  return {
+    taskId,
+    requirements: requirementRows.map(withLinkFlags),
+    designs: designRows.map(withLinkFlags),
+    stale: taskStale(clocks),
+  };
 }
 
 export default getTaskLinks;

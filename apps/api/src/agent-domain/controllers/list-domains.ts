@@ -1,4 +1,4 @@
-import { asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import db from "../../database";
 import {
   agentDomainTable,
@@ -6,13 +6,13 @@ import {
 } from "../../database/schema-agent-layer";
 
 type KnowledgeCounts = {
-  proposedCount: number;
+  unreviewedCount: number;
   confirmedCount: number;
   disputedCount: number;
 };
 
 const noCounts = (): KnowledgeCounts => ({
-  proposedCount: 0,
+  unreviewedCount: 0,
   confirmedCount: 0,
   disputedCount: 0,
 });
@@ -60,8 +60,8 @@ async function listDomains(workspaceId: string) {
     db
       .select({
         domainId: agentTermTable.domainId,
-        proposedCount:
-          sql<number>`count(*) filter (where ${agentTermTable.confidence} = 'proposed')`.mapWith(
+        unreviewedCount:
+          sql<number>`count(*) filter (where ${agentTermTable.reviewedAt} is null)`.mapWith(
             Number,
           ),
         confirmedCount:
@@ -74,7 +74,12 @@ async function listDomains(workspaceId: string) {
           ),
       })
       .from(agentTermTable)
-      .where(eq(agentTermTable.workspaceId, workspaceId))
+      .where(
+        and(
+          eq(agentTermTable.workspaceId, workspaceId),
+          isNull(agentTermTable.deletedAt),
+        ),
+      )
       .groupBy(agentTermTable.domainId),
   ]);
 
@@ -82,7 +87,7 @@ async function listDomains(workspaceId: string) {
   let unfiled = noCounts();
   for (const row of counts) {
     const bucket: KnowledgeCounts = {
-      proposedCount: row.proposedCount,
+      unreviewedCount: row.unreviewedCount,
       confirmedCount: row.confirmedCount,
       disputedCount: row.disputedCount,
     };

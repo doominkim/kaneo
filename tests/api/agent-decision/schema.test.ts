@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  acceptDecisionBody,
   createDecisionBody,
   listDecisionsQuery,
-  updateDecisionBody,
 } from "../../../apps/api/src/agent-decision/schema";
 
 const base = {
@@ -14,7 +12,7 @@ const base = {
 };
 
 describe("ADR 요청 스키마", () => {
-  it("사람 초안과 에이전트 초안을 구분하고 모델 식별자 쌍을 강제한다", () => {
+  it("사람 작성과 에이전트 작성을 구분하고 모델 식별자 쌍을 강제한다", () => {
     expect(createDecisionBody.safeParse(base).success).toBe(true);
     expect(
       createDecisionBody.safeParse({
@@ -49,28 +47,27 @@ describe("ADR 요청 스키마", () => {
     ).toBe(false);
   });
 
-  it("초안 수정에 동시성 토큰과 실제 변경 필드를 요구한다", () => {
-    const expectedUpdatedAt = "2026-09-11T00:00:00.000Z";
-    expect(updateDecisionBody.safeParse({ expectedUpdatedAt }).success).toBe(
-      false,
-    );
+  it("[REQ-AGENT-AUTOAPPLY-19] 생성 요청이 대체할 ADR id 를 선택적으로 받는다", () => {
     expect(
-      updateDecisionBody.safeParse({ expectedUpdatedAt, title: "새 제목" })
+      createDecisionBody.safeParse({ ...base, supersedesDecisionId: "old-adr" })
         .success,
     ).toBe(true);
+    expect(
+      createDecisionBody.safeParse({ ...base, supersedesDecisionId: "" })
+        .success,
+    ).toBe(false);
   });
 
-  it("채택에 동시성 토큰을 요구하고 목록은 현재 상태를 기본값으로 쓴다", () => {
-    expect(acceptDecisionBody.safeParse({}).success).toBe(false);
-    expect(
-      acceptDecisionBody.safeParse({
-        expectedUpdatedAt: "2026-09-11T00:00:00.000Z",
-        supersedesDecisionId: "old-adr",
-      }).success,
-    ).toBe(true);
+  it("[REQ-AGENT-AUTOAPPLY-3] 목록 기본값은 current 이고 draft 필터는 없으며 deleted 필터가 있다", () => {
     expect(listDecisionsQuery.parse({})).toMatchObject({
       limit: 20,
       status: "current",
     });
+    expect(listDecisionsQuery.safeParse({ status: "draft" }).success).toBe(
+      false,
+    );
+    expect(listDecisionsQuery.parse({ status: "deleted" }).status).toBe(
+      "deleted",
+    );
   });
 });

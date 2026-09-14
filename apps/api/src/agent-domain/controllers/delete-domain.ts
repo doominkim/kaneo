@@ -1,4 +1,4 @@
-import { count, eq } from "drizzle-orm";
+import { and, count, eq, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
 import {
@@ -27,7 +27,12 @@ async function deleteDomain(workspaceId: string, domainId: string) {
     db
       .select({ n: count() })
       .from(agentTermTable)
-      .where(eq(agentTermTable.domainId, domainId)),
+      .where(
+        and(
+          eq(agentTermTable.domainId, domainId),
+          isNull(agentTermTable.deletedAt),
+        ),
+      ),
     db
       .select({ n: count() })
       .from(agentDocumentTable)

@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { assertDomainsInWorkspace } from "../../agent-domain/controllers/domain-lookup";
 import { actorSelection, liftActor } from "../../agent-entry/actor-response";
@@ -17,6 +17,8 @@ type ListInput = {
   confidence?: string;
   /** An exact domain page id, or NO_DOMAIN_FILTER for the unfiled rows. */
   domainId?: string;
+  /** Only soft-deleted terms instead of only live ones. */
+  deleted?: boolean;
   limit: number;
 };
 
@@ -33,7 +35,12 @@ type ListInput = {
  * `agent_actor` — so dropping it would still be valid SQL.
  */
 async function listTerms(input: ListInput) {
-  const conditions = [eq(agentTermTable.workspaceId, input.workspaceId)];
+  const conditions = [
+    eq(agentTermTable.workspaceId, input.workspaceId),
+    input.deleted
+      ? isNotNull(agentTermTable.deletedAt)
+      : isNull(agentTermTable.deletedAt),
+  ];
   if (input.state) conditions.push(eq(agentTermTable.state, input.state));
   if (input.confidence) {
     conditions.push(eq(agentTermTable.confidence, input.confidence));

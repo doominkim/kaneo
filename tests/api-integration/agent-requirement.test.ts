@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +11,9 @@ import db, { schema } from "../../apps/api/src/database";
 import {
   agentEntryTable,
   agentRequirementItemTable,
+  agentRequirementSetTable,
+  agentTaskDesignTable,
+  agentTaskRequirementTable,
 } from "../../apps/api/src/database/schema-agent-layer";
 import { createApp } from "../../apps/api/src/index";
 import { mockAuthenticatedSession } from "./helpers/auth";
@@ -35,33 +39,69 @@ type Item = {
 type SetDetail = {
   id: string;
   feature: string;
+  title: string;
+  body: string;
   status: string;
   approvedAt: string | null;
+  approvedBy: string | null;
+  reviewed: boolean;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  revisedAt: string;
   nextSeq: number;
   updatedBy: string | null;
   actorId: string | null;
   items: Item[];
 };
+type Stale = {
+  stale: boolean;
+  causes: Array<{ kind: string; key: string }>;
+};
 type Design = {
   id: string;
+  body: string;
   status: string;
   approvedAt: string | null;
-  stale: { stale: boolean; causes: Array<{ kind: string; key: string }> };
-  requirements: Array<{ key: string; changedSinceApproval: boolean }>;
+  approvedBy: string | null;
+  reviewed: boolean;
+  reviewedBy: string | null;
+  revisedAt: string;
+  stale: Stale;
+  requirements: Array<{ key: string; changedSinceRevision: boolean }>;
   tasks: Array<{ id: string }>;
 };
 type TaskLinks = {
-  requirements: Array<{ key: string; acknowledgedAt: string | null }>;
-  designs: Array<{ feature: string }>;
-  stale: { stale: boolean; causes: Array<{ kind: string; key: string }> };
+  requirements: Array<{
+    key: string;
+    acknowledgedAt: string | null;
+    acknowledgedByAgent: boolean;
+    reviewed: boolean;
+  }>;
+  designs: Array<{
+    feature: string;
+    acknowledgedByAgent: boolean;
+    reviewed: boolean;
+  }>;
+  stale: Stale;
+};
+type Revision = {
+  id: string;
+  title: string;
+  createdAt: string;
+  revertedFromId: string | null;
+  createdBy: string | null;
+  author: { userId: string; name: string } | null;
+  actor: { model: string } | null;
 };
 
 const identity = { provider: "anthropic", model: "claude-opus-5" };
+const viaKey = { "x-api-key": "kaneo_test_key" };
 const json = (body: unknown, method = "PUT") => ({
   method,
   headers: { "content-type": "application/json" },
   body: JSON.stringify(body),
 });
+const wait = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function seedTask(projectId: string, columnId: string, number: number) {
   const [task] = await db
@@ -80,8 +120,8 @@ async function seedTask(projectId: string, columnId: string, number: number) {
   return task;
 }
 
-async function setup() {
-  const member = await createWorkspaceMember();
+async function setup(role = "member") {
+  const member = await createWorkspaceMember({ role });
   const { project, columns } = await createProjectFixture({
     workspaceId: member.workspace.id,
   });
@@ -90,11 +130,40 @@ async function setup() {
   return { member, project, columns, app };
 }
 
+async function addMember(workspaceId: string, role: string) {
+  const id = `user-${randomUUID()}`;
+  const [user] = await db
+    .insert(schema.userTable)
+    .values({ id, email: `${id}@example.com`, emailVerified: true, name: role })
+    .returning();
+  await db.insert(schema.workspaceUserTable).values({
+    workspaceId,
+    userId: user.id,
+    role,
+    joinedAt: new Date(),
+  });
+  return user;
+}
+
 function putSet(app: App, projectId: string, feature: string, body: unknown) {
   return app.request(
     `/api/agent-requirement/${projectId}/${feature}`,
     json(body),
   );
+}
+function putDesign(
+  app: App,
+  projectId: string,
+  feature: string,
+  body: unknown,
+) {
+  return app.request(`/api/agent-design/${projectId}/${feature}`, json(body));
+}
+function post(app: App, path: string, headers: Record<string, string> = {}) {
+  return app.request(path, { method: "POST", headers });
+}
+function del(app: App, path: string, headers: Record<string, string> = {}) {
+  return app.request(path, { method: "DELETE", headers });
 }
 async function getSet(app: App, projectId: string, feature: string) {
   const res = await app.request(
@@ -113,14 +182,40 @@ async function getLinks(app: App, projectId: string, taskId: string) {
   expect(res.status).toBe(200);
   return (await res.json()) as TaskLinks;
 }
+async function badges(app: App, projectId: string) {
+  const res = await app.request(`/api/agent-task-link/${projectId}`);
+  expect(res.status).toBe(200);
+  return (
+    (await res.json()) as {
+      tasks: Array<{
+        taskId: string;
+        requirementKeys: string[];
+        designFeatures: string[];
+        stale: boolean;
+      }>;
+    }
+  ).tasks;
+}
+async function revisions(
+  app: App,
+  kind: "agent-requirement" | "agent-design",
+  projectId: string,
+  feature: string,
+) {
+  const res = await app.request(
+    `/api/${kind}/${projectId}/${feature}/revisions`,
+  );
+  expect(res.status, await res.clone().text()).toBe(200);
+  return ((await res.json()) as { revisions: Revision[] }).revisions;
+}
 /** Move an item's clock to "now", strictly after whatever was created before the call. */
 async function bumpItem(key: string) {
-  await new Promise((r) => setTimeout(r, 5));
+  await wait();
   await db
     .update(agentRequirementItemTable)
     .set({ updatedAt: new Date() })
     .where(eq(agentRequirementItemTable.key, key));
-  await new Promise((r) => setTimeout(r, 5));
+  await wait();
 }
 /** The MCP read tools reach the API over HTTP; route that into the same app. */
 function routeFetchInto(app: App) {
@@ -132,7 +227,11 @@ function routeFetchInto(app: App) {
     }),
   );
 }
-/** A real apikey row: workspace access checks the key's owner, not just the mocked verifier. */
+/**
+ * A real apikey row: workspace access checks the key's owner, not just the
+ * mocked verifier. Once seeded, a bearer token also verifies as this key, so
+ * MCP calls must come before it.
+ */
 async function seedApiKey(userId: string) {
   const now = new Date();
   await db
@@ -178,7 +277,7 @@ describe("API integration: requirement sets, designs, task links", () => {
     });
     expect(created.status).toBe(200);
     const set = (await created.json()) as SetDetail;
-    expect(set.status).toBe("draft");
+    expect(set.status).toBe("approved");
     expect(set.updatedBy).toBe(member.user.id);
     expect(set.actorId).toBeNull();
     expect(set.items.map((i) => i.key)).toEqual([
@@ -384,75 +483,28 @@ describe("API integration: requirement sets, designs, task links", () => {
     expect(dup.status).toBe(400);
   });
 
-  it("[REQ-SPEC-TABS-4] approval is human-only, records a decision entry, and an API key is refused", async () => {
-    const { app, project, member } = await setup();
-    await putSet(app, project.id, "spec-tabs", {
-      title: "T",
-      items: [{ text: "x" }],
-    });
-
-    const approved = await app.request(
-      `/api/agent-requirement/${project.id}/spec-tabs/approve`,
-      {
-        method: "POST",
-      },
-    );
-    expect(approved.status).toBe(200);
-    const row = (await approved.json()) as {
-      status: string;
-      approvedAt: string | null;
-      approvedBy: string;
-    };
-    expect(row.status).toBe("approved");
-    expect(row.approvedAt).toEqual(expect.any(String));
-    expect(row.approvedBy).toBe(member.user.id);
-    const decisions = (await entriesFor(project.id)).filter(
-      (e) => e.kind === "decision",
-    );
-    expect(decisions).toHaveLength(1);
-    expect(decisions[0]?.summary).toContain("승인");
-
-    // Same user, but via API key: refused at the route, not silently allowed.
-    await seedApiKey(member.user.id);
-    const viaKey = await app.request(
-      `/api/agent-requirement/${project.id}/spec-tabs/approve`,
-      {
-        method: "POST",
-        headers: { "x-api-key": "kaneo_test_key" },
-      },
-    );
-    expect(viaKey.status).toBe(403);
-  });
-
-  it("[REQ-SPEC-TABS-9] [REQ-SPEC-TABS-14] editing an item moves updatedAt, keeps the previous text on the timeline, and drops approval to draft", async () => {
+  it("[REQ-SPEC-TABS-9] editing an item moves updatedAt and keeps the previous text on the timeline", async () => {
     const { app, project } = await setup();
     await putSet(app, project.id, "spec-tabs", {
       title: "T",
       items: [{ text: "before" }],
     });
-    await app.request(
-      `/api/agent-requirement/${project.id}/spec-tabs/approve`,
-      { method: "POST" },
-    );
     const before = await getSet(app, project.id, "spec-tabs");
+    await wait();
 
     const edited = await putSet(app, project.id, "spec-tabs", {
       title: "T",
       items: [{ key: "REQ-SPEC-TABS-1", text: "after" }],
     });
     const after = (await edited.json()) as SetDetail;
-    expect(after.status).toBe("draft");
-    expect(after.approvedAt).toBe(before.approvedAt); // clock kept for downstream stale checks
+    expect(after.status).toBe("approved");
     expect(
       new Date(String(after.items[0]?.updatedAt)).getTime(),
-    ).toBeGreaterThanOrEqual(
-      new Date(String(before.items[0]?.updatedAt)).getTime(),
-    );
+    ).toBeGreaterThan(new Date(String(before.items[0]?.updatedAt)).getTime());
 
     const entries = await entriesFor(project.id);
     const edit = entries.find((e) => e.summary.includes("REQ-SPEC-TABS-1"));
     expect(edit?.body).toContain("before");
-    expect(entries.some((e) => e.summary.includes("draft"))).toBe(true);
 
     // Unchanged text does not move the clock or write an entry.
     const untouched = await putSet(app, project.id, "spec-tabs", {
@@ -461,43 +513,41 @@ describe("API integration: requirement sets, designs, task links", () => {
     });
     const same = (await untouched.json()) as SetDetail;
     expect(same.items[0]?.updatedAt).toBe(after.items[0]?.updatedAt);
-    expect((await entriesFor(project.id)).length).toBe(entries.length); // already draft: nothing to record
+    expect((await entriesFor(project.id)).length).toBe(entries.length);
   });
 
-  it("[REQ-SPEC-TABS-5] [REQ-SPEC-TABS-6] [REQ-SPEC-TABS-8] a design maps to items, approval is human-only, and stale names the moved key", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-28] [REQ-SPEC-TABS-5] a design maps to items and goes stale when a covered requirement changes after its last revision", async () => {
     const { app, project } = await setup();
     await putSet(app, project.id, "spec-tabs", {
       title: "T",
       items: [{ text: "a" }, { text: "b" }],
     });
 
-    const unknown = await app.request(
-      `/api/agent-design/${project.id}/spec-tabs`,
-      json({ title: "D", body: "# d", requirementKeys: ["REQ-SPEC-TABS-9"] }),
-    );
+    const unknown = await putDesign(app, project.id, "spec-tabs", {
+      title: "D",
+      body: "# d",
+      requirementKeys: ["REQ-SPEC-TABS-9"],
+    });
     expect(unknown.status).toBe(400);
 
-    const put = await app.request(
-      `/api/agent-design/${project.id}/spec-tabs`,
-      json({
-        title: "D",
-        body: "# d",
-        requirementKeys: ["REQ-SPEC-TABS-1", "REQ-SPEC-TABS-2"],
-      }),
-    );
+    const put = await putDesign(app, project.id, "spec-tabs", {
+      title: "D",
+      body: "# d",
+      requirementKeys: ["REQ-SPEC-TABS-1", "REQ-SPEC-TABS-2"],
+    });
     expect(put.status).toBe(200);
     let design = (await put.json()) as Design;
-    expect(design.requirements.map((r) => r.key)).toEqual([
-      "REQ-SPEC-TABS-1",
-      "REQ-SPEC-TABS-2",
+    expect(design.requirements).toEqual([
+      expect.objectContaining({
+        key: "REQ-SPEC-TABS-1",
+        changedSinceRevision: false,
+      }),
+      expect.objectContaining({
+        key: "REQ-SPEC-TABS-2",
+        changedSinceRevision: false,
+      }),
     ]);
     expect(design.stale).toEqual({ stale: false, causes: [] });
-
-    const approve = await app.request(
-      `/api/agent-design/${project.id}/spec-tabs/approve`,
-      { method: "POST" },
-    );
-    expect(approve.status).toBe(200);
 
     await bumpItem("REQ-SPEC-TABS-2");
     design = await getDesign(app, project.id, "spec-tabs");
@@ -506,9 +556,11 @@ describe("API integration: requirement sets, designs, task links", () => {
       expect.objectContaining({ kind: "requirement", key: "REQ-SPEC-TABS-2" }),
     ]);
     expect(
-      design.requirements.find((r) => r.key === "REQ-SPEC-TABS-2")
-        ?.changedSinceApproval,
-    ).toBe(true);
+      design.requirements.map((r) => [r.key, r.changedSinceRevision]),
+    ).toEqual([
+      ["REQ-SPEC-TABS-1", false],
+      ["REQ-SPEC-TABS-2", true],
+    ]);
 
     const list = await app.request(`/api/agent-design/${project.id}`);
     const { designs } = (await list.json()) as {
@@ -521,20 +573,40 @@ describe("API integration: requirement sets, designs, task links", () => {
     expect(set.items[0]?.designs.map((d) => d.feature)).toEqual(["spec-tabs"]);
   });
 
-  it("[REQ-SPEC-TABS-7] [REQ-SPEC-TABS-8] [REQ-SPEC-TABS-10] [REQ-FEATURE-HUB-14] [REQ-FEATURE-HUB-15] task links go stale when upstream moves and clear on acknowledge; first design approval does not", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-30] [REQ-AGENT-AUTOAPPLY-31] [REQ-SPEC-TABS-7] [REQ-SPEC-TABS-10] creating a design leaves linked tasks alone, a content revision flags them, and acknowledging clears stale", async () => {
     const { app, project, columns } = await setup();
     const task = await seedTask(project.id, columns.todo.id, 1);
+    const linkUrl = `/api/agent-task-link/${project.id}/${task.id}`;
     await putSet(app, project.id, "spec-tabs", {
       title: "T",
-      items: [{ text: "a" }],
+      items: [{ text: "a" }, { text: "b" }],
     });
-    await app.request(
-      `/api/agent-design/${project.id}/spec-tabs`,
-      json({ title: "D", body: "d", requirementKeys: ["REQ-SPEC-TABS-1"] }),
-    );
+
+    // The task is linked to a requirement before any design exists; creating
+    // the design is not a change to it.
+    expect(
+      (
+        await app.request(
+          linkUrl,
+          json({ requirementKeys: ["REQ-SPEC-TABS-1"] }),
+        )
+      ).status,
+    ).toBe(200);
+    await wait();
+    expect(
+      (
+        await putDesign(app, project.id, "spec-tabs", {
+          title: "D",
+          body: "d",
+          requirementKeys: ["REQ-SPEC-TABS-1"],
+        })
+      ).status,
+    ).toBe(200);
+    expect((await getLinks(app, project.id, task.id)).stale.stale).toBe(false);
+    await wait();
 
     const linked = await app.request(
-      `/api/agent-task-link/${project.id}/${task.id}`,
+      linkUrl,
       json({
         requirementKeys: ["REQ-SPEC-TABS-1"],
         designFeatures: ["spec-tabs"],
@@ -544,23 +616,14 @@ describe("API integration: requirement sets, designs, task links", () => {
     let links = (await linked.json()) as TaskLinks;
     expect(links.requirements.map((r) => r.key)).toEqual(["REQ-SPEC-TABS-1"]);
     expect(links.designs.map((d) => d.feature)).toEqual(["spec-tabs"]);
-    expect(links.stale.stale).toBe(false);
+    expect(links.stale).toEqual({ stale: false, causes: [] });
 
     await bumpItem("REQ-SPEC-TABS-1");
     links = await getLinks(app, project.id, task.id);
     expect(links.stale.causes).toEqual([
       expect.objectContaining({ kind: "requirement", key: "REQ-SPEC-TABS-1" }),
     ]);
-
-    const badges = await app.request(`/api/agent-task-link/${project.id}`);
-    const { tasks } = (await badges.json()) as {
-      tasks: Array<{
-        taskId: string;
-        stale: boolean;
-        requirementKeys: string[];
-      }>;
-    };
-    expect(tasks).toEqual([
+    expect(await badges(app, project.id)).toEqual([
       {
         taskId: task.id,
         requirementKeys: ["REQ-SPEC-TABS-1"],
@@ -569,32 +632,48 @@ describe("API integration: requirement sets, designs, task links", () => {
       },
     ]);
 
-    // Acknowledge is human-only and clears stale without touching upstream.
-    const ack = await app.request(
-      `/api/agent-task-link/${project.id}/${task.id}/acknowledge`,
-      { method: "POST" },
-    );
-    expect(ack.status).toBe(200);
+    // A person's acknowledgement clears stale and counts as reviewed.
+    const acknowledge = () =>
+      post(app, `/api/agent-task-link/${project.id}/${task.id}/acknowledge`);
+    expect((await acknowledge()).status).toBe(200);
     links = await getLinks(app, project.id, task.id);
     expect(links.stale.stale).toBe(false);
-    expect(links.requirements[0]?.acknowledgedAt).toEqual(expect.any(String));
-
-    // The first approval of a design is not a change to tasks derived from it:
-    // their link clocks move with it (REQ-FEATURE-HUB-14).
-    await new Promise((r) => setTimeout(r, 5));
-    await app.request(`/api/agent-design/${project.id}/spec-tabs/approve`, {
-      method: "POST",
+    expect(links.requirements[0]).toMatchObject({
+      acknowledgedAt: expect.any(String),
+      acknowledgedByAgent: false,
+      reviewed: true,
     });
-    links = await getLinks(app, project.id, task.id);
-    expect(links.stale.stale).toBe(false);
 
-    // A re-approval later than the ack makes it stale through the design link (REQ-FEATURE-HUB-15).
-    await new Promise((r) => setTimeout(r, 5));
-    await app.request(`/api/agent-design/${project.id}/spec-tabs/approve`, {
-      method: "POST",
+    // An identical design save is not a revision.
+    await wait();
+    await putDesign(app, project.id, "spec-tabs", {
+      title: "D",
+      body: "d",
+      requirementKeys: ["REQ-SPEC-TABS-1"],
     });
-    links = await getLinks(app, project.id, task.id);
-    expect(links.stale.causes).toEqual([
+    expect((await getLinks(app, project.id, task.id)).stale.stale).toBe(false);
+
+    // A body change is.
+    await wait();
+    await putDesign(app, project.id, "spec-tabs", {
+      title: "D",
+      body: "d2",
+      requirementKeys: ["REQ-SPEC-TABS-1"],
+    });
+    expect((await getLinks(app, project.id, task.id)).stale.causes).toEqual([
+      expect.objectContaining({ kind: "design", key: "spec-tabs" }),
+    ]);
+
+    // So is a change to the covered requirement keys alone.
+    expect((await acknowledge()).status).toBe(200);
+    expect((await getLinks(app, project.id, task.id)).stale.stale).toBe(false);
+    await wait();
+    await putDesign(app, project.id, "spec-tabs", {
+      title: "D",
+      body: "d2",
+      requirementKeys: ["REQ-SPEC-TABS-1", "REQ-SPEC-TABS-2"],
+    });
+    expect((await getLinks(app, project.id, task.id)).stale.causes).toEqual([
       expect.objectContaining({ kind: "design", key: "spec-tabs" }),
     ]);
 
@@ -670,17 +749,13 @@ describe("API integration: requirement sets, designs, task links", () => {
       title: "T",
       items: [{ text: "a", layer: "api" }],
     });
-    await app.request(
-      `/api/agent-requirement/${project.id}/spec-tabs/approve`,
-      { method: "POST" },
-    );
 
     vi.restoreAllMocks(); // no session: only the API key authenticates below
     await seedApiKey(member.user.id);
     const res = await app.request(
       `/api/requirement-set/${project.id}/spec-tabs`,
       {
-        headers: { "x-api-key": "kaneo_test_key" },
+        headers: viaKey,
       },
     );
     expect(res.status).toBe(200);
@@ -690,6 +765,7 @@ describe("API integration: requirement sets, designs, task links", () => {
       items: Array<Record<string, unknown>>;
     };
     expect(body.status).toBe("approved");
+    expect(body.approvedAt).toEqual(expect.any(String));
     expect(body.items).toEqual([
       {
         key: "REQ-SPEC-TABS-1",
@@ -707,7 +783,7 @@ describe("API integration: requirement sets, designs, task links", () => {
     expect(missing.status).toBe(404);
   });
 
-  it("[REQ-SPEC-TABS-14] MCP tools write as the agent (actorId, draft) and cannot approve", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-1] [REQ-AGENT-AUTOAPPLY-2] [REQ-AGENT-AUTOAPPLY-6] MCP writes apply at once as the agent and stay unreviewed, and an agent save clears a person's review", async () => {
     const { app, project, columns } = await setup();
     const task = await seedTask(project.id, columns.todo.id, 1);
 
@@ -723,14 +799,23 @@ describe("API integration: requirement sets, designs, task links", () => {
       "REQ-SPEC-TABS-1",
     );
     const set = await getSet(app, project.id, "spec-tabs");
-    expect(set.actorId).toEqual(expect.any(String));
-    expect(set.updatedBy).toBeNull();
+    expect(set).toMatchObject({
+      status: "approved",
+      approvedBy: null,
+      actorId: expect.any(String),
+      updatedBy: null,
+      reviewed: false,
+      reviewedAt: null,
+      reviewedBy: null,
+    });
+    expect(set.approvedAt).toEqual(expect.any(String));
 
-    // Approve, then overwrite via MCP: back to draft, with an entry saying so.
-    await app.request(
-      `/api/agent-requirement/${project.id}/spec-tabs/approve`,
-      { method: "POST" },
-    );
+    // A person reviews it; the agent's next save clears the mark again.
+    expect(
+      (await post(app, `/api/agent-requirement/${project.id}/spec-tabs/review`))
+        .status,
+    ).toBe(200);
+    expect((await getSet(app, project.id, "spec-tabs")).reviewed).toBe(true);
     await mcpToolCall(app, "agent_requirements_put", {
       projectId: project.id,
       feature: "spec-tabs",
@@ -738,12 +823,14 @@ describe("API integration: requirement sets, designs, task links", () => {
       items: [{ key: "REQ-SPEC-TABS-1", text: "agent changed this" }],
       ...identity,
     });
-    const reverted = await getSet(app, project.id, "spec-tabs");
-    expect(reverted.status).toBe("draft");
+    const rewritten = await getSet(app, project.id, "spec-tabs");
+    expect(rewritten).toMatchObject({
+      status: "approved",
+      reviewed: false,
+      reviewedBy: null,
+    });
     const entries = await entriesFor(project.id);
-    expect(entries.some((e) => e.summary.includes("draft") && e.actorId)).toBe(
-      true,
-    );
+    expect(entries.some((e) => e.summary.includes("draft"))).toBe(false);
 
     const design = await mcpToolCall(app, "agent_design_put", {
       projectId: project.id,
@@ -754,6 +841,12 @@ describe("API integration: requirement sets, designs, task links", () => {
       ...identity,
     });
     expect(design.isError, design.content[0]?.text).toBeUndefined();
+    expect(await getDesign(app, project.id, "spec-tabs")).toMatchObject({
+      status: "approved",
+      approvedBy: null,
+      reviewed: false,
+      reviewedBy: null,
+    });
 
     const link = await mcpToolCall(app, "agent_task_link", {
       projectId: project.id,
@@ -798,5 +891,593 @@ describe("API integration: requirement sets, designs, task links", () => {
         feature: "spec-tabs",
       }),
     ).rejects.toThrow(/not found/);
+  });
+
+  describe("agent-autoapply", () => {
+    it("[REQ-AGENT-AUTOAPPLY-1] [REQ-AGENT-AUTOAPPLY-2] [REQ-AGENT-AUTOAPPLY-7] a person's save applies at once and is that person's review; the approve routes are gone", async () => {
+      const { app, project, member } = await setup();
+      const created = await putSet(app, project.id, "spec-tabs", {
+        title: "T",
+        body: "# scope",
+        items: [{ text: "a" }],
+      });
+      const set = (await created.json()) as SetDetail;
+      expect(set).toMatchObject({
+        status: "approved",
+        approvedBy: member.user.id,
+        reviewed: true,
+        reviewedBy: member.user.id,
+        updatedBy: member.user.id,
+      });
+      expect(set.approvedAt).toEqual(expect.any(String));
+      expect(set.reviewedAt).toEqual(expect.any(String));
+
+      await wait();
+      const again = (await (
+        await putSet(app, project.id, "spec-tabs", {
+          title: "T2",
+          body: "# scope",
+          items: [],
+        })
+      ).json()) as SetDetail;
+      expect(new Date(String(again.approvedAt)).getTime()).toBeGreaterThan(
+        new Date(String(set.approvedAt)).getTime(),
+      );
+
+      const design = (await (
+        await putDesign(app, project.id, "spec-tabs", {
+          title: "D",
+          body: "d",
+          requirementKeys: ["REQ-SPEC-TABS-1"],
+        })
+      ).json()) as Design;
+      expect(design).toMatchObject({
+        status: "approved",
+        approvedBy: member.user.id,
+        reviewed: true,
+        reviewedBy: member.user.id,
+      });
+      expect(design.approvedAt).toEqual(expect.any(String));
+
+      for (const kind of ["agent-requirement", "agent-design"]) {
+        const gone = await post(
+          app,
+          `/api/${kind}/${project.id}/spec-tabs/approve`,
+        );
+        expect(gone.status, kind).toBe(404);
+      }
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-9] reviewing a set or design is a human action: a session marks it without a timeline entry, an API key is refused", async () => {
+      const { app, project, member } = await setup();
+      await mcpToolCall(app, "agent_requirements_put", {
+        projectId: project.id,
+        feature: "spec-tabs",
+        title: "T",
+        items: [{ text: "a" }],
+        ...identity,
+      });
+      await mcpToolCall(app, "agent_design_put", {
+        projectId: project.id,
+        feature: "spec-tabs",
+        title: "D",
+        body: "d",
+        ...identity,
+      });
+      expect((await getSet(app, project.id, "spec-tabs")).reviewed).toBe(false);
+      const entriesBefore = (await entriesFor(project.id)).length;
+      const reviewPaths = [
+        `/api/agent-requirement/${project.id}/spec-tabs/review`,
+        `/api/agent-design/${project.id}/spec-tabs/review`,
+      ];
+
+      await seedApiKey(member.user.id);
+      for (const path of reviewPaths) {
+        expect((await post(app, path, viaKey)).status, path).toBe(403);
+      }
+      expect((await getSet(app, project.id, "spec-tabs")).reviewed).toBe(false);
+      expect((await getDesign(app, project.id, "spec-tabs")).reviewed).toBe(
+        false,
+      );
+
+      for (const path of reviewPaths) {
+        const reviewed = await post(app, path);
+        expect(reviewed.status, path).toBe(200);
+        expect(await reviewed.json()).toMatchObject({
+          feature: "spec-tabs",
+          reviewedAt: expect.any(String),
+          reviewedBy: member.user.id,
+        });
+      }
+      expect(await getSet(app, project.id, "spec-tabs")).toMatchObject({
+        reviewed: true,
+        reviewedBy: member.user.id,
+      });
+      expect(await getDesign(app, project.id, "spec-tabs")).toMatchObject({
+        reviewed: true,
+        reviewedBy: member.user.id,
+      });
+      expect((await entriesFor(project.id)).length).toBe(entriesBefore);
+      expect(
+        (await post(app, `/api/agent-requirement/${project.id}/nope/review`))
+          .status,
+      ).toBe(404);
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-12] [REQ-AGENT-AUTOAPPLY-14] [REQ-AGENT-AUTOAPPLY-15] [REQ-AGENT-AUTOAPPLY-17] deleting a set and a design keeps every row and link, hides them from reads, and restore brings them back", async () => {
+      const { app, project, columns, member: admin } = await setup("admin");
+      const task = await seedTask(project.id, columns.todo.id, 1);
+      const setPath = `/api/agent-requirement/${project.id}/alpha`;
+      const designPath = `/api/agent-design/${project.id}/alpha`;
+      const linkPath = `/api/agent-task-link/${project.id}/${task.id}`;
+      await putSet(app, project.id, "alpha", {
+        title: "Alpha",
+        items: [{ text: "a1" }],
+      });
+      await putDesign(app, project.id, "alpha", {
+        title: "Alpha design",
+        body: "d",
+        requirementKeys: ["REQ-ALPHA-1"],
+      });
+      await wait();
+      await app.request(
+        linkPath,
+        json({ requirementKeys: ["REQ-ALPHA-1"], designFeatures: ["alpha"] }),
+      );
+      const before = await getSet(app, project.id, "alpha");
+      const features = async (query = "") =>
+        (
+          (await (
+            await app.request(`/api/agent-feature/${project.id}${query}`)
+          ).json()) as {
+            features: Array<{
+              feature: string;
+              requirements: Record<string, unknown> | null;
+              design: Record<string, unknown> | null;
+            }>;
+          }
+        ).features;
+
+      // project:update is required.
+      const member = await addMember(project.workspaceId, "member");
+      mockAuthenticatedSession(member);
+      expect((await del(createApp().app, setPath)).status).toBe(403);
+      mockAuthenticatedSession(admin.user);
+
+      const deleted = await del(app, setPath);
+      expect(deleted.status, await deleted.clone().text()).toBe(200);
+      expect(await deleted.json()).toMatchObject({
+        id: before.id,
+        feature: "alpha",
+        deletedAt: expect.any(String),
+        deletedBy: admin.user.id,
+      });
+
+      // The row and the task link rows stay.
+      const [row] = await db
+        .select()
+        .from(agentRequirementSetTable)
+        .where(eq(agentRequirementSetTable.id, before.id));
+      expect(row).toMatchObject({ title: "Alpha", deletedBy: admin.user.id });
+      expect(row?.deletedAt).not.toBeNull();
+      expect(
+        await db
+          .select()
+          .from(agentTaskRequirementTable)
+          .where(eq(agentTaskRequirementTable.taskId, task.id)),
+      ).toHaveLength(1);
+
+      // Every read skips it: get, list, spec-check, design coverage, task links, features.
+      expect((await app.request(setPath)).status).toBe(404);
+      expect(
+        (
+          (await (
+            await app.request(`/api/agent-requirement/${project.id}`)
+          ).json()) as { sets: unknown[] }
+        ).sets,
+      ).toEqual([]);
+      expect(
+        (await app.request(`/api/requirement-set/${project.id}/alpha`)).status,
+      ).toBe(404);
+      expect((await getDesign(app, project.id, "alpha")).requirements).toEqual(
+        [],
+      );
+      let links = await getLinks(app, project.id, task.id);
+      expect(links.requirements).toEqual([]);
+      expect(links.designs.map((d) => d.feature)).toEqual(["alpha"]);
+      expect(await badges(app, project.id)).toEqual([
+        expect.objectContaining({ requirementKeys: [] }),
+      ]);
+      expect(await features()).toEqual([
+        expect.objectContaining({ feature: "alpha", requirements: null }),
+      ]);
+      // Writes cannot reach it either, and deleting twice finds nothing.
+      expect(
+        (await putSet(app, project.id, "alpha", { title: "Alpha", items: [] }))
+          .status,
+      ).toBe(409);
+      expect(
+        (
+          await app.request(
+            linkPath,
+            json({ requirementKeys: ["REQ-ALPHA-1"] }),
+          )
+        ).status,
+      ).toBe(400);
+      // Replacing the visible links leaves the hidden ones in place.
+      expect(
+        (
+          await app.request(
+            linkPath,
+            json({ requirementKeys: [], designFeatures: ["alpha"] }),
+          )
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await putDesign(app, project.id, "alpha", {
+            title: "Alpha design",
+            body: "d",
+            requirementKeys: [],
+          })
+        ).status,
+      ).toBe(200);
+      expect((await del(app, setPath)).status).toBe(404);
+
+      expect((await del(app, designPath)).status).toBe(200);
+      expect((await app.request(designPath)).status).toBe(404);
+      links = await getLinks(app, project.id, task.id);
+      expect([links.requirements, links.designs]).toEqual([[], []]);
+      expect(await badges(app, project.id)).toEqual([]);
+      expect(await features()).toEqual([]);
+      expect(
+        await db
+          .select()
+          .from(agentTaskDesignTable)
+          .where(eq(agentTaskDesignTable.taskId, task.id)),
+      ).toHaveLength(1);
+      expect(await features("?deleted=true")).toEqual([
+        expect.objectContaining({
+          feature: "alpha",
+          requirements: expect.objectContaining({
+            deletedAt: expect.any(String),
+            deletedBy: admin.user.id,
+          }),
+          design: expect.objectContaining({
+            deletedAt: expect.any(String),
+            deletedBy: admin.user.id,
+          }),
+        }),
+      ]);
+
+      const restoredSet = await post(app, `${setPath}/restore`);
+      expect(restoredSet.status, await restoredSet.clone().text()).toBe(200);
+      expect(await restoredSet.json()).toMatchObject({
+        id: before.id,
+        title: before.title,
+        reviewed: before.reviewed,
+        revisedAt: before.revisedAt,
+      });
+      expect((await post(app, `${designPath}/restore`)).status).toBe(200);
+      expect((await post(app, `${setPath}/restore`)).status).toBe(404);
+
+      links = await getLinks(app, project.id, task.id);
+      expect(links.requirements.map((r) => r.key)).toEqual(["REQ-ALPHA-1"]);
+      expect(links.designs.map((d) => d.feature)).toEqual(["alpha"]);
+      expect(await badges(app, project.id)).toEqual([
+        {
+          taskId: task.id,
+          requirementKeys: ["REQ-ALPHA-1"],
+          designFeatures: ["alpha"],
+          stale: false,
+        },
+      ]);
+      expect(
+        (await getDesign(app, project.id, "alpha")).requirements.map(
+          (r) => r.key,
+        ),
+      ).toEqual(["REQ-ALPHA-1"]);
+      expect(await features()).toEqual([
+        expect.objectContaining({
+          feature: "alpha",
+          requirements: expect.objectContaining({ deletedAt: null }),
+          design: expect.objectContaining({ deletedAt: null }),
+        }),
+      ]);
+
+      // Each delete and restore left one entry, authored by the person.
+      const lifecycle = (await entriesFor(project.id)).filter((e) =>
+        /문서 (삭제|복구)$/.test(e.summary),
+      );
+      expect(lifecycle.map((e) => e.summary).sort()).toEqual([
+        "[design:alpha] 설계 문서 복구",
+        "[design:alpha] 설계 문서 삭제",
+        "[requirements:alpha] 요구사항 문서 복구",
+        "[requirements:alpha] 요구사항 문서 삭제",
+      ]);
+      expect(
+        lifecycle.every(
+          (e) => e.createdBy === admin.user.id && e.actorId === null,
+        ),
+      ).toBe(true);
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-16] an API key cannot delete, restore or revert a set or design, even for a project:update holder", async () => {
+      const { app, project, member: admin } = await setup("admin");
+      await putSet(app, project.id, "spec-tabs", {
+        title: "T",
+        body: "# one",
+        items: [],
+      });
+      await putDesign(app, project.id, "spec-tabs", {
+        title: "D",
+        body: "d",
+      });
+      const [revision] = await revisions(
+        app,
+        "agent-requirement",
+        project.id,
+        "spec-tabs",
+      );
+      const setPath = `/api/agent-requirement/${project.id}/spec-tabs`;
+
+      await seedApiKey(admin.user.id);
+      for (const kind of ["agent-requirement", "agent-design"]) {
+        const refused = await del(
+          app,
+          `/api/${kind}/${project.id}/spec-tabs`,
+          viaKey,
+        );
+        expect(refused.status, kind).toBe(403);
+      }
+      expect(
+        (await post(app, `${setPath}/revisions/${revision?.id}/revert`, viaKey))
+          .status,
+      ).toBe(403);
+      expect((await getSet(app, project.id, "spec-tabs")).title).toBe("T");
+
+      expect((await del(app, setPath)).status).toBe(200);
+      expect((await post(app, `${setPath}/restore`, viaKey)).status).toBe(403);
+      const [row] = await db
+        .select()
+        .from(agentRequirementSetTable)
+        .where(eq(agentRequirementSetTable.projectId, project.id));
+      expect(row?.deletedAt).not.toBeNull();
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-24] only a save that changes content leaves a revision, with its author and time", async () => {
+      const { app, project, member } = await setup();
+      const first = (await (
+        await putSet(app, project.id, "spec-tabs", {
+          title: "T",
+          body: "# one",
+          items: [{ text: "a" }],
+        })
+      ).json()) as SetDetail;
+      let list = await revisions(
+        app,
+        "agent-requirement",
+        project.id,
+        "spec-tabs",
+      );
+      expect(list).toEqual([
+        {
+          id: expect.any(String),
+          title: "T",
+          createdAt: first.revisedAt,
+          revertedFromId: null,
+          createdBy: member.user.id,
+          author: { userId: member.user.id, name: member.user.name },
+          actor: null,
+        },
+      ]);
+
+      // Same title and body with only an item edited: no revision, no clock move.
+      await wait();
+      const itemsOnly = (await (
+        await putSet(app, project.id, "spec-tabs", {
+          title: "T",
+          body: "# one",
+          items: [{ key: "REQ-SPEC-TABS-1", text: "a2" }],
+        })
+      ).json()) as SetDetail;
+      expect(itemsOnly.revisedAt).toBe(first.revisedAt);
+      expect(
+        await revisions(app, "agent-requirement", project.id, "spec-tabs"),
+      ).toHaveLength(1);
+
+      // A title change is one; an agent's body change is another, newest first.
+      await wait();
+      await putSet(app, project.id, "spec-tabs", {
+        title: "T2",
+        body: "# one",
+        items: [],
+      });
+      await wait();
+      await mcpToolCall(app, "agent_requirements_put", {
+        projectId: project.id,
+        feature: "spec-tabs",
+        title: "T2",
+        body: "# two",
+        ...identity,
+      });
+      list = await revisions(app, "agent-requirement", project.id, "spec-tabs");
+      expect(list.map((r) => r.title)).toEqual(["T2", "T2", "T"]);
+      expect(list[0]).toMatchObject({
+        createdBy: null,
+        author: null,
+        actor: { model: "claude-opus-5" },
+      });
+      const detail = await app.request(
+        `/api/agent-requirement/${project.id}/spec-tabs/revisions/${list[2]?.id}`,
+      );
+      expect(detail.status).toBe(200);
+      expect(await detail.json()).toMatchObject({
+        id: list[2]?.id,
+        title: "T",
+        body: "# one",
+        requirementKeys: null,
+      });
+
+      // A design's content includes the requirement keys it covers.
+      await putSet(app, project.id, "spec-tabs", {
+        title: "T2",
+        body: "# two",
+        items: [{ text: "b" }],
+      });
+      const design = {
+        title: "D",
+        body: "d",
+        requirementKeys: ["REQ-SPEC-TABS-1"],
+      };
+      await putDesign(app, project.id, "spec-tabs", design);
+      await putDesign(app, project.id, "spec-tabs", design);
+      expect(
+        await revisions(app, "agent-design", project.id, "spec-tabs"),
+      ).toHaveLength(1);
+      await wait();
+      await putDesign(app, project.id, "spec-tabs", {
+        ...design,
+        requirementKeys: ["REQ-SPEC-TABS-2", "REQ-SPEC-TABS-1"],
+      });
+      const designRevisions = await revisions(
+        app,
+        "agent-design",
+        project.id,
+        "spec-tabs",
+      );
+      expect(designRevisions).toHaveLength(2);
+      const newest = await app.request(
+        `/api/agent-design/${project.id}/spec-tabs/revisions/${designRevisions[0]?.id}`,
+      );
+      expect(await newest.json()).toMatchObject({
+        body: "d",
+        requirementKeys: ["REQ-SPEC-TABS-1", "REQ-SPEC-TABS-2"],
+      });
+      // A set's revision is not reachable through the design.
+      expect(
+        (
+          await app.request(
+            `/api/agent-design/${project.id}/spec-tabs/revisions/${list[0]?.id}`,
+          )
+        ).status,
+      ).toBe(404);
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-26] [REQ-AGENT-AUTOAPPLY-27] [REQ-AGENT-AUTOAPPLY-29] a person's revert is a normal save: it records its source revision and makes the design stale again", async () => {
+      const { app, project, member } = await setup();
+      const first = (await (
+        await putSet(app, project.id, "spec-tabs", {
+          title: "T",
+          body: "## A\n\n1. 시스템은 x 한다. `api`\n",
+        })
+      ).json()) as SetDetail;
+      const [original] = await revisions(
+        app,
+        "agent-requirement",
+        project.id,
+        "spec-tabs",
+      );
+      await putDesign(app, project.id, "spec-tabs", {
+        title: "D",
+        body: "d",
+        requirementKeys: ["REQ-SPEC-TABS-1"],
+      });
+      await wait();
+
+      // An agent rewrites the criterion: the design is stale on that key.
+      await mcpToolCall(app, "agent_requirements_put", {
+        projectId: project.id,
+        feature: "spec-tabs",
+        title: "T",
+        body: first.body.replace("x 한다", "y 한다"),
+        ...identity,
+      });
+      expect(
+        (await getDesign(app, project.id, "spec-tabs")).stale.causes,
+      ).toEqual([
+        expect.objectContaining({
+          kind: "requirement",
+          key: "REQ-SPEC-TABS-1",
+        }),
+      ]);
+
+      // Revising the design clears it.
+      await wait();
+      await putDesign(app, project.id, "spec-tabs", {
+        title: "D",
+        body: "d, updated for y",
+        requirementKeys: ["REQ-SPEC-TABS-1"],
+      });
+      expect((await getDesign(app, project.id, "spec-tabs")).stale).toEqual({
+        stale: false,
+        causes: [],
+      });
+      await wait();
+
+      const setPath = `/api/agent-requirement/${project.id}/spec-tabs`;
+      const reverted = await post(
+        app,
+        `${setPath}/revisions/${original?.id}/revert`,
+      );
+      expect(reverted.status, await reverted.clone().text()).toBe(200);
+      const set = (await reverted.json()) as SetDetail;
+      expect(set.body).toBe(first.body);
+      expect(set.items[0]?.text).toBe("시스템은 x 한다.");
+      expect(set).toMatchObject({
+        updatedBy: member.user.id,
+        reviewed: true,
+        reviewedBy: member.user.id,
+      });
+      let list = await revisions(
+        app,
+        "agent-requirement",
+        project.id,
+        "spec-tabs",
+      );
+      expect(list).toHaveLength(3);
+      expect(list[0]).toMatchObject({
+        revertedFromId: original?.id,
+        createdBy: member.user.id,
+      });
+      expect(
+        (await getDesign(app, project.id, "spec-tabs")).stale.causes,
+      ).toEqual([
+        expect.objectContaining({
+          kind: "requirement",
+          key: "REQ-SPEC-TABS-1",
+        }),
+      ]);
+
+      // Reverting to what is already there is an identical save.
+      expect(
+        (await post(app, `${setPath}/revisions/${list[0]?.id}/revert`)).status,
+      ).toBe(200);
+      list = await revisions(app, "agent-requirement", project.id, "spec-tabs");
+      expect(list).toHaveLength(3);
+      expect((await post(app, `${setPath}/revisions/nope/revert`)).status).toBe(
+        404,
+      );
+
+      // A design reverts the same way.
+      const designRevisions = await revisions(
+        app,
+        "agent-design",
+        project.id,
+        "spec-tabs",
+      );
+      const firstDesign = designRevisions.at(-1);
+      const designReverted = await post(
+        app,
+        `/api/agent-design/${project.id}/spec-tabs/revisions/${firstDesign?.id}/revert`,
+      );
+      expect(designReverted.status, await designReverted.clone().text()).toBe(
+        200,
+      );
+      expect(((await designReverted.json()) as Design).body).toBe("d");
+      expect(
+        (await revisions(app, "agent-design", project.id, "spec-tabs"))[0],
+      ).toMatchObject({ revertedFromId: firstDesign?.id });
+    });
   });
 });

@@ -1,8 +1,9 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
 import { agentDesignTable } from "../../database/schema-agent-layer";
 
+/** A soft-deleted design is not found. */
 export async function findDesign(projectId: string, feature: string) {
   const [design] = await db
     .select()
@@ -11,6 +12,7 @@ export async function findDesign(projectId: string, feature: string) {
       and(
         eq(agentDesignTable.projectId, projectId),
         eq(agentDesignTable.feature, feature),
+        isNull(agentDesignTable.deletedAt),
       ),
     )
     .limit(1);

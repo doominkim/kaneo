@@ -18,6 +18,8 @@ export const featureParams = z.object({
     }),
 });
 
+export const revisionParams = featureParams.extend({ revisionId: z.string() });
+
 export const requirementItemInput = z.object({
   key: z
     .string()

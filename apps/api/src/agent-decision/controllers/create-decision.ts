@@ -1,17 +1,27 @@
-import { sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import type { EntryRefs } from "../../agent-entry/controllers/entry-fields";
 import db from "../../database";
 import {
+  type AgentDecision,
   agentDecisionCounterTable,
   agentDecisionTable,
   agentDecisionTaskTable,
+  agentEntryTable,
 } from "../../database/schema-agent-layer";
 import { DECISION_TEXT_BUDGET, DECISION_TITLE_MAX } from "../schema";
 import { assertTasksInProject } from "./assert-tasks-in-project";
-import { isDecisionTaskForeignKeyError } from "./database-error";
-import { creatorColumns, type DecisionAuthor } from "./decision-author";
+import {
+  isConstraintError,
+  isDecisionTaskForeignKeyError,
+} from "./database-error";
+import {
+  acceptanceColumns,
+  creatorColumns,
+  type DecisionAuthor,
+} from "./decision-author";
 import { getDecision } from "./decision-record";
+import { statusEntry } from "./decision-timeline";
 
 export type CreateDecisionInput = {
   workspaceId: string;
@@ -26,6 +36,7 @@ export type CreateDecisionInput = {
   refs?: EntryRefs | null;
   taskIds: string[];
   sourceEntryId?: string | null;
+  supersedesDecisionId?: string | null;
   author: DecisionAuthor;
 };
 
@@ -34,7 +45,16 @@ function nullableText(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
-/** Allocate the number, draft row and task links in one transaction. */
+/**
+ * Allocate the number, the accepted ADR, its task links and its timeline
+ * entries in one transaction; there is no draft (agent-autoapply).
+ *
+ * With `supersedesDecisionId` the previous ADR becomes superseded in the same
+ * transaction, so an agent's replacement applies as immediately as its
+ * original did. The conditional update is the real guard: a target that is
+ * not accepted, is deleted, or was just superseded by a concurrent create
+ * matches no row and the whole create is a 409 with nothing written.
+ */
 export async function createDecision(input: CreateDecisionInput) {
   const textBytes = Buffer.byteLength(
     [
@@ -59,6 +79,26 @@ export async function createDecision(input: CreateDecisionInput) {
   try {
     decisionId = await db.transaction(async (tx) => {
       await assertTasksInProject(input.projectId, input.taskIds, tx);
+
+      let previous: AgentDecision | undefined;
+      if (input.supersedesDecisionId) {
+        [previous] = await tx
+          .select()
+          .from(agentDecisionTable)
+          .where(
+            and(
+              eq(agentDecisionTable.id, input.supersedesDecisionId),
+              eq(agentDecisionTable.projectId, input.projectId),
+            ),
+          )
+          .limit(1);
+        if (!previous) {
+          throw new HTTPException(404, {
+            message: "The ADR to supersede was not found",
+          });
+        }
+      }
+
       const [counter] = await tx
         .insert(agentDecisionCounterTable)
         .values({ projectId: input.projectId, nextNumber: 2 })
@@ -73,6 +113,27 @@ export async function createDecision(input: CreateDecisionInput) {
         throw new HTTPException(500, {
           message: "Failed to allocate an ADR number",
         });
+      }
+
+      if (previous) {
+        const [superseded] = await tx
+          .update(agentDecisionTable)
+          .set({ status: "superseded", updatedAt: now })
+          .where(
+            and(
+              eq(agentDecisionTable.id, previous.id),
+              eq(agentDecisionTable.projectId, input.projectId),
+              eq(agentDecisionTable.status, "accepted"),
+              isNull(agentDecisionTable.deletedAt),
+            ),
+          )
+          .returning({ id: agentDecisionTable.id });
+        if (!superseded) {
+          throw new HTTPException(409, {
+            message:
+              "Only an accepted, non-deleted ADR can be superseded, and this one no longer is",
+          });
+        }
       }
 
       const [created] = await tx
@@ -90,12 +151,13 @@ export async function createDecision(input: CreateDecisionInput) {
           reversible: input.reversible ?? null,
           refs: input.refs ?? null,
           sourceEntryId: input.sourceEntryId ?? null,
-          status: "draft",
+          supersedesDecisionId: previous?.id ?? null,
+          ...acceptanceColumns(input.author, now),
           ...creatorColumns(input.author),
           createdAt: now,
           updatedAt: now,
         })
-        .returning({ id: agentDecisionTable.id });
+        .returning();
       if (!created) {
         throw new HTTPException(500, { message: "Failed to create ADR" });
       }
@@ -107,12 +169,40 @@ export async function createDecision(input: CreateDecisionInput) {
           })),
         );
       }
+
+      const timeline = previous
+        ? [
+            statusEntry(
+              previous,
+              { status: "superseded", supersededByDecisionId: created.id },
+              input.author,
+              now,
+            ),
+          ]
+        : [];
+      timeline.push(
+        statusEntry(
+          created,
+          {
+            status: "accepted",
+            ...(previous ? { supersedesDecisionId: previous.id } : {}),
+          },
+          input.author,
+          now,
+        ),
+      );
+      await tx.insert(agentEntryTable).values(timeline);
       return created.id;
     });
   } catch (error) {
     if (isDecisionTaskForeignKeyError(error)) {
       throw new HTTPException(400, {
         message: "Every taskId must belong to the ADR project",
+      });
+    }
+    if (isConstraintError(error, "23505", "agent_decision_supersedes_unique")) {
+      throw new HTTPException(409, {
+        message: "The previous ADR already has a replacement",
       });
     }
     throw error;
