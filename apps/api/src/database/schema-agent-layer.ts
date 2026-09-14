@@ -18,6 +18,7 @@ import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -293,6 +294,21 @@ export const agentDecisionTable = pgTable(
       onUpdate: "cascade",
     }),
     acceptedAt: timestamp("accepted_at", { mode: "date" }),
+    /*
+     * Review marker (0013, agent-autoapply). Agent writes take effect at once;
+     * `reviewedAt` NULL is the "unreviewed" flag a person clears afterwards.
+     */
+    reviewedAt: timestamp("reviewed_at", { mode: "date" }),
+    reviewedBy: text("reviewed_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /** Soft delete (0013), same shape as `agent_entry`. */
+    deletedAt: timestamp("deleted_at", { mode: "date" }),
+    deletedBy: text("deleted_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
   },
@@ -304,9 +320,12 @@ export const agentDecisionTable = pgTable(
     uniqueIndex("agent_decision_source_entry_unique")
       .on(table.sourceEntryId)
       .where(sql`${table.sourceEntryId} IS NOT NULL`),
+    // A soft-deleted replacement must not block superseding the same ADR again.
     uniqueIndex("agent_decision_supersedes_unique")
       .on(table.supersedesDecisionId)
-      .where(sql`${table.supersedesDecisionId} IS NOT NULL`),
+      .where(
+        sql`${table.supersedesDecisionId} IS NOT NULL AND ${table.deletedAt} IS NULL`,
+      ),
     index("agent_decision_project_status_number_idx").on(
       table.projectId,
       table.status,
@@ -612,6 +631,17 @@ export const agentTermTable = pgTable(
      * otherwise the same term is re-proposed every session.
      */
     rejectReason: text("reject_reason"),
+
+    /*
+     * Soft delete (0013, agent-autoapply). Terms used to be hard-deleted; now a
+     * wrong auto-applied term is hidden and restorable, like `agent_entry`.
+     * `reviewerId`/`reviewedAt` above remain the review marker.
+     */
+    deletedAt: timestamp("deleted_at", { mode: "date" }),
+    deletedBy: text("deleted_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
 
     /*
      * Retrieval-decay fields. Populated from day one even though the decay
@@ -920,6 +950,26 @@ export const agentRequirementSetTable = pgTable(
       onDelete: "set null",
       onUpdate: "cascade",
     }),
+    /*
+     * Review marker (0013, agent-autoapply). Writes apply immediately and stay
+     * `approved`; `reviewedAt` NULL is the "unreviewed" flag a person clears.
+     */
+    reviewedAt: timestamp("reviewed_at", { mode: "date" }),
+    reviewedBy: text("reviewed_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /** Soft delete (0013), same shape as `agent_entry`. */
+    deletedAt: timestamp("deleted_at", { mode: "date" }),
+    deletedBy: text("deleted_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /**
+     * When title/body last changed, i.e. when the latest `agent_spec_revision`
+     * was taken. The DB default only keeps older insert paths valid.
+     */
+    revisedAt: timestamp("revised_at", { mode: "date" }).defaultNow().notNull(),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
   },
@@ -1018,6 +1068,20 @@ export const agentDesignTable = pgTable(
       onDelete: "set null",
       onUpdate: "cascade",
     }),
+    /** Review marker (0013), same semantics as `agent_requirement_set`. */
+    reviewedAt: timestamp("reviewed_at", { mode: "date" }),
+    reviewedBy: text("reviewed_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /** Soft delete (0013), same shape as `agent_entry`. */
+    deletedAt: timestamp("deleted_at", { mode: "date" }),
+    deletedBy: text("deleted_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    /** See `agent_requirement_set.revisedAt`. */
+    revisedAt: timestamp("revised_at", { mode: "date" }).defaultNow().notNull(),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { mode: "date" }).defaultNow().notNull(),
   },
@@ -1076,6 +1140,15 @@ export const agentTaskRequirementTable = pgTable(
       }),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
     acknowledgedAt: timestamp("acknowledged_at", { mode: "date" }),
+    /**
+     * The agent that acknowledged (0013, agent-autoapply); NULL for a person.
+     * `reviewedAt` NULL marks an acknowledgement no person has reviewed yet.
+     */
+    acknowledgedActorId: text("acknowledged_actor_id").references(
+      () => agentActorTable.id,
+      { onDelete: "set null", onUpdate: "cascade" },
+    ),
+    reviewedAt: timestamp("reviewed_at", { mode: "date" }),
   },
   (table) => [
     primaryKey({ columns: [table.taskId, table.itemId] }),
@@ -1101,6 +1174,12 @@ export const agentTaskDesignTable = pgTable(
       }),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
     acknowledgedAt: timestamp("acknowledged_at", { mode: "date" }),
+    /** See `agent_task_requirement.acknowledgedActorId` (0013). */
+    acknowledgedActorId: text("acknowledged_actor_id").references(
+      () => agentActorTable.id,
+      { onDelete: "set null", onUpdate: "cascade" },
+    ),
+    reviewedAt: timestamp("reviewed_at", { mode: "date" }),
   },
   (table) => [
     primaryKey({ columns: [table.taskId, table.designId] }),
@@ -1145,5 +1224,74 @@ export const agentRequirementCoverageTable = pgTable(
       table.testPath,
     ),
     index("agent_requirement_coverage_item_idx").on(table.itemId),
+  ],
+);
+
+/**
+ * A stored copy of a requirement set's or design's title/body (0013,
+ * agent-autoapply). Agent writes apply immediately, so a revision is what a
+ * person restores a document from after a wrong write. Rows are only
+ * appended; a restore writes a new revision and records its source in
+ * `revertedFromId`.
+ *
+ * Exactly one of `setId`/`designId` is set, enforced by a CHECK because the
+ * two targets share every other column. `requirementKeys` is filled on design
+ * revisions only: it is the design's requirement-link list at that moment,
+ * as keys because keys are what the design API accepts.
+ *
+ * Authorship follows the document rule: `createdBy` (human) or `actorId`
+ * (agent), both SET NULL so a revision outlives either author.
+ */
+export const agentSpecRevisionTable = pgTable(
+  "agent_spec_revision",
+  {
+    id: text("id")
+      .$defaultFn(() => createId())
+      .primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projectTable.id, {
+        onDelete: "cascade",
+        onUpdate: "cascade",
+      }),
+    setId: text("set_id").references(() => agentRequirementSetTable.id, {
+      onDelete: "cascade",
+      onUpdate: "cascade",
+    }),
+    designId: text("design_id").references(() => agentDesignTable.id, {
+      onDelete: "cascade",
+      onUpdate: "cascade",
+    }),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    /** string[] of requirement item keys; design revisions only */
+    requirementKeys: jsonb("requirement_keys").$type<string[]>(),
+    createdBy: text("created_by").references(() => userTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    actorId: text("actor_id").references(() => agentActorTable.id, {
+      onDelete: "set null",
+      onUpdate: "cascade",
+    }),
+    revertedFromId: text("reverted_from_id").references(
+      (): AnyPgColumn => agentSpecRevisionTable.id,
+      { onDelete: "set null", onUpdate: "cascade" },
+    ),
+    createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
+  },
+  (table) => [
+    check(
+      "agent_spec_revision_one_target",
+      sql`(${table.setId} IS NULL) <> (${table.designId} IS NULL)`,
+    ),
+    index("agent_spec_revision_set_created_at_idx").on(
+      table.setId,
+      table.createdAt.desc(),
+    ),
+    index("agent_spec_revision_design_created_at_idx").on(
+      table.designId,
+      table.createdAt.desc(),
+    ),
   ],
 );

@@ -92,6 +92,13 @@
       "when": 1789291336536,
       "tag": "0012_feature_hub",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789350189920,
+      "tag": "0013_agent_autoapply",
+      "breakpoints": true
     }
   ]
 }
