@@ -329,6 +329,82 @@ describe("API integration: agent terms", () => {
     });
   });
 
+  it("[REQ-AGENT-AUTOAPPLY-36] agent_term_resolve marks every returned term with reviewed and never returns a deleted one", async () => {
+    const admin = await createWorkspaceMember({ role: "admin" });
+    const ws = admin.workspace.id;
+    const { entry } = await seedSourceEntry(ws);
+    mockAuthenticatedSession(admin.user);
+    const { app } = createApp();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        return app.request(`${url.pathname}${url.search}`, init);
+      }),
+    );
+
+    const byAgent = toolJson<Term>(
+      await mcpToolCall(app, "agent_term_propose", {
+        workspaceId: ws,
+        canonical: "Lease",
+        aliases: ["hold"],
+        provider: "anthropic",
+        model: "claude-opus-5",
+        sourceEntryId: entry.id,
+      }),
+    );
+    const byPerson = (await (
+      await propose(app, {
+        workspaceId: ws,
+        canonical: "Claim",
+        aliases: ["hold"],
+      })
+    ).json()) as Term;
+    const resolveTool = async (term: string) => {
+      const result = await mcpToolCall(app, "agent_term_resolve", {
+        workspaceId: ws,
+        term,
+      });
+      expect(result.isError, result.content[0]?.text).toBeUndefined();
+      return toolJson<Resolution>(result);
+    };
+
+    expect((await resolveTool("Lease")).term).toMatchObject({
+      id: byAgent.id,
+      reviewed: false,
+    });
+    expect((await resolveTool("Claim")).term).toMatchObject({
+      id: byPerson.id,
+      reviewed: true,
+    });
+    const ambiguous = await resolveTool("hold");
+    expect(ambiguous.ambiguous).toHaveLength(2);
+    expect(ambiguous.ambiguous).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: byAgent.id, reviewed: false }),
+        expect.objectContaining({ id: byPerson.id, reviewed: true }),
+      ]),
+    );
+
+    expect(
+      (
+        await app.request(`/api/agent-term/${ws}/${byAgent.id}`, {
+          method: "DELETE",
+        })
+      ).status,
+    ).toBe(200);
+    expect(await resolveTool("Lease")).toEqual({
+      match: "none",
+      term: null,
+      ambiguous: [],
+    });
+    expect(await resolveTool("hold")).toMatchObject({
+      match: "alias",
+      term: { id: byPerson.id, reviewed: true },
+      ambiguous: [],
+    });
+  });
+
   it("defaults the optional list fields to empty arrays", async () => {
     const member = await createWorkspaceMember();
 

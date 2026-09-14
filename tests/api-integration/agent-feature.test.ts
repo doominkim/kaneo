@@ -286,6 +286,60 @@ describe("API integration: feature summaries", () => {
     ]);
   });
 
+  it("[REQ-AGENT-AUTOAPPLY-37] agent_brief counts accepted ADRs and unreviewed ones, leaving deleted ADRs out", async () => {
+    const { app, project } = await setup("admin");
+    routeFetchInto(app);
+    const brief = async () =>
+      toolJson<{ decisions: { accepted: number; unreviewed: number } | null }>(
+        await mcpToolCall(app, "agent_brief", { projectId: project.id }),
+      ).decisions;
+    const adr = (title: string, extra: Record<string, unknown> = {}) => ({
+      projectId: project.id,
+      title,
+      context: `Why ${title}`,
+      decision: `Do ${title}`,
+      ...extra,
+    });
+    const byPerson = async (title: string) => {
+      const res = await app.request(
+        "/api/agent-decision",
+        json(adr(title), "POST"),
+      );
+      expect(res.status, await res.clone().text()).toBe(200);
+      return (await res.json()) as { id: string };
+    };
+    const byAgent = async (
+      title: string,
+      extra: Record<string, unknown> = {},
+    ) => {
+      const result = await mcpToolCall(
+        app,
+        "agent_decision_put",
+        adr(title, { ...identity, ...extra }),
+      );
+      expect(result.isError, result.content[0]?.text).toBeUndefined();
+      return toolJson<{ id: string }>(result);
+    };
+
+    expect(await brief()).toEqual({ accepted: 0, unreviewed: 0 });
+
+    await byPerson("one");
+    const two = await byPerson("two");
+    const three = await byAgent("three");
+    await byAgent("four", { supersedesDecisionId: two.id });
+    // Accepted: one, three, four (two is superseded). Unreviewed: three, four.
+    expect(await brief()).toEqual({ accepted: 3, unreviewed: 2 });
+
+    expect(
+      (
+        await app.request(`/api/agent-decision/${project.id}/${three.id}`, {
+          method: "DELETE",
+        })
+      ).status,
+    ).toBe(200);
+    expect(await brief()).toEqual({ accepted: 2, unreviewed: 1 });
+  });
+
   it("[REQ-AGENT-AUTOAPPLY-12] [REQ-AGENT-AUTOAPPLY-17] agent_brief, the feature summary and the feature task list leave a deleted document out and show it again after restore", async () => {
     const { app, project, columns } = await setup("admin");
     await app.request(

@@ -34,6 +34,11 @@ vi.mock("../../apps/api/src/mcp/tools", () => ({
   registerMcpTools: vi.fn(),
 }));
 
+// The agent write path imports controllers that read the database schema at
+// module load, which the database mock above does not provide; this suite
+// never calls an agent tool.
+vi.mock("../../apps/api/src/mcp/agent-direct", () => ({}));
+
 vi.mock("../../apps/api/src/mcp/oauth-store", () => {
   const rows = new Map<string, { payload: unknown; expiresAt: Date }>();
   const keyOf = (kind: string, key: string) => `${kind}:${key}`;

@@ -8,6 +8,11 @@ import {
   TEXT_ARTIFACT_CONTENT_TYPES,
 } from "../agent-artifact/policy";
 import {
+  DECISION_TASK_LIMIT,
+  DECISION_TEXT_BUDGET,
+  DECISION_TITLE_MAX,
+} from "../agent-decision/schema";
+import {
   MAX_DOCUMENT_BODY_BYTES,
   SLUG_PATTERN,
 } from "../agent-document/schema";
@@ -23,6 +28,7 @@ import {
   MAX_REQUIREMENT_BODY_BYTES,
 } from "../agent-requirement/schema";
 import {
+  createDecisionAsAgent,
   presignArtifactAsAgent,
   putDesignAsAgent,
   putDocumentAsAgent,
@@ -210,10 +216,9 @@ function shapeBoard(board: BoardResponse) {
  * cannot be acted on (a document needs its project and slug to be read).
  *
  * Terms are filtered to the confirmed ones, matching what agent_term_resolve
- * will answer with. A page that listed unreviewed proposals would be the same
- * leak by another route — the model would read its own guess off the page and
- * never learn that resolve refuses it. `linksTotal.terms` counts what is
- * actually shown, so it never advertises entries the caller cannot reach.
+ * will answer with: a disputed term never resolves, so the page must not
+ * advertise it either. `linksTotal.terms` counts what is actually shown, so it
+ * never advertises entries the caller cannot reach.
  */
 function shapeDomainPage(page: DomainPage, offset: number) {
   const cap = <T>(items: T[]) => items.slice(0, DOMAIN_LINK_CAP);
@@ -294,6 +299,123 @@ const agentIdentity = {
   sessionId: z.string().nullable().optional(),
 };
 
+/** Same limits as the HTTP `refsBody`; shared by the ledger and ADR writes. */
+const refsInput = z
+  .object({
+    repo: z.string().max(200).optional(),
+    branch: z.string().max(200).optional(),
+    commits: z.array(z.string().max(64)).max(100).optional(),
+    prs: z.array(z.string().max(200)).max(50).optional(),
+    files: z.array(z.string().max(300)).max(200).optional(),
+  })
+  .nullable()
+  .optional();
+
+type DecisionAuthorOut = {
+  createdAuthor: { userId: string; name: string } | null;
+  createdActor: { model: string } | null;
+};
+type DecisionSummaryOut = DecisionAuthorOut & {
+  id: string;
+  number: number;
+  title: string;
+  status: string;
+  contextPreview: string;
+  reversible: boolean | null;
+  reviewed: boolean;
+  tasks: Array<{ id: string; number: number | null }>;
+  createdAt: string;
+};
+type DecisionListOut = {
+  decisions: DecisionSummaryOut[];
+  nextBefore: string | null;
+  unreviewedTotal: number;
+};
+type DecisionDetailOut = Omit<DecisionSummaryOut, "contextPreview"> & {
+  context: string;
+  decision: string;
+  alternatives: string | null;
+  consequences: string | null;
+  refs: unknown;
+  supersedes: { number: number } | null;
+  supersededBy: { number: number } | null;
+};
+
+/** A person's name, or the model that wrote it. */
+const decisionAuthor = (d: DecisionAuthorOut) =>
+  d.createdAuthor?.name ?? d.createdActor?.model ?? null;
+
+/**
+ * The HTTP listing has neither a total nor a by-number lookup, only
+ * newest-first pages of at most 50. Both callers scan those pages and stop at
+ * this many, so a pathological project costs a bounded number of requests.
+ */
+const DECISION_PAGE_SIZE = 50;
+const DECISION_SCAN_PAGES = 20;
+
+function listDecisionPage(
+  api: Api,
+  projectId: string,
+  params: Record<string, string>,
+) {
+  const q = new URLSearchParams({
+    limit: String(DECISION_PAGE_SIZE),
+    ...params,
+  });
+  return api.json<DecisionListOut>(
+    `/api/agent-decision/${encodeURIComponent(projectId)}?${q}`,
+  );
+}
+
+/** accepted = non-deleted accepted ADRs; unreviewed is the API's project-wide total. */
+async function countDecisions(api: Api, projectId: string) {
+  let accepted = 0;
+  let before: string | null = null;
+  for (let page = 0; page < DECISION_SCAN_PAGES; page += 1) {
+    const list: DecisionListOut = await listDecisionPage(
+      api,
+      projectId,
+      before ? { before } : {},
+    );
+    accepted += list.decisions.length;
+    if (!list.nextBefore) {
+      return { accepted, unreviewed: list.unreviewedTotal };
+    }
+    before = list.nextBefore;
+    if (page === DECISION_SCAN_PAGES - 1) {
+      // Past 1,000 accepted ADRs `accepted` is a lower bound, and says so.
+      return { accepted, unreviewed: list.unreviewedTotal, truncated: true };
+    }
+  }
+  return null;
+}
+
+/** Deleted ADRs are not in `status=all`, so their numbers are not found. */
+async function findDecisionIdByNumber(
+  api: Api,
+  projectId: string,
+  number: number,
+) {
+  let before: string | null = null;
+  for (let page = 0; page < DECISION_SCAN_PAGES; page += 1) {
+    const list: DecisionListOut = await listDecisionPage(api, projectId, {
+      status: "all",
+      ...(before ? { before } : {}),
+    });
+    const hit = list.decisions.find((d) => d.number === number);
+    if (hit) return hit.id;
+    const oldest = list.decisions.at(-1);
+    // Newest first: a page that already reaches below the number rules it out.
+    if (!list.nextBefore || !oldest || oldest.number < number) {
+      throw new Error(`404 ADR ${number} not found`);
+    }
+    before = list.nextBefore;
+  }
+  throw new Error(
+    `404 ADR ${number} is not among the newest ${DECISION_PAGE_SIZE * DECISION_SCAN_PAGES} ADRs; pass decisionId`,
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 
 export function registerAgentTools(
@@ -320,7 +442,7 @@ export function registerAgentTools(
     "agent_brief",
     {
       description:
-        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries (deleted ones hidden), live claims, the 20 most recently updated document titles (slug/title/updatedAt — deliverables, not a knowledge base; judge them by author and age; documentsTotal shows what was cut), and the project's linked domain pages (`domains`, read them with agent_domain_get), and `features` (requirement/design status, task progress, stale count per feature). Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
+        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries (deleted ones hidden), live claims, the 20 most recently updated document titles (slug/title/updatedAt — deliverables, not a knowledge base; judge them by author and age; documentsTotal shows what was cut), and the project's linked domain pages (`domains`, read them with agent_domain_get), `features` (requirement/design status, task progress, stale count per feature), and `decisions` ({accepted, unreviewed} ADR counts; list them with agent_decision_list). Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
       inputSchema: z.object({
         projectId: z.string(),
         entries: z.number().int().min(1).max(20).default(5),
@@ -330,7 +452,7 @@ export function registerAgentTools(
       guard(async () => {
         // Fetched in parallel, then shaped. The cost the caller pays is the
         // shaped size, not the sum of the three responses.
-        const [board, log, leases, docs, settings, features] =
+        const [board, log, leases, docs, settings, features, decisions] =
           await Promise.all([
             api
               .json<BoardResponse>(
@@ -362,6 +484,7 @@ export function registerAgentTools(
                 `/api/agent-feature/${encodeURIComponent(args.projectId)}`,
               )
               .catch(() => ({ features: [] })),
+            countDecisions(api, args.projectId).catch(() => null),
           ]);
 
         return {
@@ -390,6 +513,9 @@ export function registerAgentTools(
             tasks: `${f.tasks.done}/${f.tasks.total}`,
             staleTasks: f.tasks.stale,
           })),
+          // Counts only (agent-autoapply); null when the listing failed, so a
+          // failure never reads as "nothing unreviewed".
+          decisions,
         };
       }),
   );
@@ -416,16 +542,7 @@ export function registerAgentTools(
           })
           .nullable()
           .optional(),
-        refs: z
-          .object({
-            repo: z.string().max(200).optional(),
-            branch: z.string().max(200).optional(),
-            commits: z.array(z.string().max(64)).max(100).optional(),
-            prs: z.array(z.string().max(200)).max(50).optional(),
-            files: z.array(z.string().max(300)).max(200).optional(),
-          })
-          .nullable()
-          .optional(),
+        refs: refsInput,
         provider: z.string(),
         model: z.string(),
         sessionId: z.string().nullable().optional(),
@@ -506,7 +623,7 @@ export function registerAgentTools(
     "agent_term_resolve",
     {
       description:
-        "Resolve a term to its canonical name, aliases, DB/code anchors, and what it must NOT be confused with. Deterministic: same input, same answer, no inference. Ask this BEFORE searching the codebase for an unfamiliar word. Only human-confirmed terms come back, never proposals, including your own; a miss means unknown, so read the code rather than guess. `projectId` narrows to that project's domain pages plus unfiled terms.",
+        "Resolve a term to its canonical name, aliases, DB/code anchors, and what it must NOT be confused with. Deterministic: same input, same answer, no inference. Ask this BEFORE searching the codebase for an unfamiliar word. Terms apply as soon as anyone writes them, agents included; each carries `reviewed` (false = no human has checked it yet, so weigh it). Deleted terms never come back; a miss means unknown, so read the code rather than guess. `projectId` narrows to that project's domain pages plus unfiled terms.",
       inputSchema: z.object({
         workspaceId: z.string(),
         term: z.string(),
@@ -527,7 +644,7 @@ export function registerAgentTools(
     "agent_term_propose",
     {
       description:
-        "Propose a term for the lexicon. Stored as `proposed`: agent_term_resolve ignores it until a human confirms it, including for you later. `sourceEntryId` is the ledger entry the definition came out of; append one with agent_log_append first. A reviewer weighs a proposal by its author.",
+        "Add a term to the lexicon as this agent. Applies immediately: agent_term_resolve returns it at once with `reviewed: false` until a human reviews it, and humans may delete it. A name that already exists, even deleted, fails with 409. `sourceEntryId` is the ledger entry the definition came out of; append one with agent_log_append first. A reviewer weighs a term by its author.",
       inputSchema: z.object({
         workspaceId: z.string(),
         provider: z.string(),
@@ -912,7 +1029,7 @@ export function registerAgentTools(
     "agent_requirements_put",
     {
       description:
-        "Upsert the requirement set for `feature` as this agent; always draft (humans approve in the UI). Send the document in `body`: `## story` headings, criteria as `n. <sentence> `unit|api|e2e` [REQ-key]`; keys are issued and written back, `~~line~~` = dropped, missing badge = 400. `items` is the legacy row mode and is ignored when the body has criteria. Text changes make dependent designs/tasks stale. Returns the keys.",
+        "Upsert the requirement set for `feature` as this agent. Applies immediately; humans review it and may delete it, and writing to a deleted set fails with 409. Send the document in `body`: `## story` headings, criteria as `n. <sentence> `unit|api|e2e` [REQ-key]`; keys are issued and written back, `~~line~~` = dropped, missing badge = 400. `items` is the legacy row mode and is ignored when the body has criteria. Text changes make dependent designs/tasks stale. Returns the keys.",
       inputSchema: z.object({
         projectId: z.string(),
         feature: z.string().regex(FEATURE_PATTERN),
@@ -962,7 +1079,7 @@ export function registerAgentTools(
     requirements: Array<{
       key: string;
       status: string;
-      changedSinceApproval: boolean;
+      changedSinceRevision: boolean;
     }>;
     tasks: Array<{ id: string; number: number | null }>;
   };
@@ -1008,7 +1125,7 @@ export function registerAgentTools(
     "agent_design_put",
     {
       description:
-        "Upsert the design for `feature` as this agent (draft; humans approve). `requirementKeys` replaces the covered items; unknown keys fail.",
+        "Upsert the design for `feature` as this agent. Applies immediately; humans review it and may delete it, and writing to a deleted design fails with 409. `requirementKeys` replaces the covered items; unknown keys fail.",
       inputSchema: z.object({
         projectId: z.string(),
         feature: z.string().regex(FEATURE_PATTERN),
@@ -1039,7 +1156,7 @@ export function registerAgentTools(
     "agent_task_link",
     {
       description:
-        "Bind a task to the requirement keys / design features it implements (each list sent is replaced). Upstream changes then flag the task stale; only a human can acknowledge.",
+        "Bind a task to the requirement keys / design features it implements (each list sent is replaced). Upstream changes then flag the task stale. `acknowledge: true` (applied after any list update) clears stale as this agent: your model is recorded on the links and the timeline, unreviewed until a human reviews it.",
       inputSchema: z.object({
         projectId: z.string(),
         taskId: z.string(),
@@ -1051,6 +1168,7 @@ export function registerAgentTools(
           .array(z.string().regex(FEATURE_PATTERN))
           .max(50)
           .optional(),
+        acknowledge: z.boolean().optional(),
         ...agentIdentity,
       }),
     },
@@ -1062,6 +1180,9 @@ export function registerAgentTools(
           requirements: links.requirements.map((r) => r.key),
           designs: links.designs.map((d) => d.feature),
           stale: links.stale,
+          ...(links.acknowledgedAt
+            ? { acknowledgedAt: links.acknowledgedAt }
+            : {}),
         };
       }),
   );
@@ -1088,5 +1209,155 @@ export function registerAgentTools(
       }),
     },
     (args) => guard(() => putRequirementCoverageAsAgent({ ...args, userId })),
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* ADRs (agent-autoapply): accepted on write, reviewed by people           */
+  /* ---------------------------------------------------------------------- */
+
+  const nonBlank = (label: string, max?: number) =>
+    (max ? z.string().max(max) : z.string()).refine((v) => v.trim() !== "", {
+      message: `${label} must not be blank`,
+    });
+
+  reg(
+    "agent_decision_list",
+    {
+      description:
+        "Project ADRs (architecture decision records), newest first: accepted by default, `status: all` adds superseded; deleted ADRs never show. Rows: id, number, title, status, reviewed (false = no human has read it yet), author (person or model), task numbers, context preview. Filter by `q` (title/context/decision text) or `taskId`; page with nextBefore. Check here before writing an ADR; read one with agent_decision_get.",
+      inputSchema: z.object({
+        projectId: z.string(),
+        status: z.enum(["accepted", "all"]).default("accepted"),
+        q: z.string().min(1).max(200).optional(),
+        taskId: z.string().optional(),
+        limit: z.number().int().min(1).max(50).default(20),
+        before: z
+          .string()
+          .optional()
+          .describe("Opaque cursor: nextBefore from the previous page"),
+      }),
+    },
+    (args) =>
+      guard(async () => {
+        const q = new URLSearchParams({
+          limit: String(args.limit),
+          status: args.status,
+        });
+        if (args.q) q.set("q", args.q);
+        if (args.taskId) q.set("taskId", args.taskId);
+        if (args.before) q.set("before", args.before);
+        const list = await api.json<DecisionListOut>(
+          `/api/agent-decision/${encodeURIComponent(args.projectId)}?${q}`,
+        );
+        return {
+          decisions: list.decisions.map((d) => ({
+            id: d.id,
+            number: d.number,
+            title: d.title,
+            status: d.status,
+            reviewed: d.reviewed,
+            author: decisionAuthor(d),
+            tasks: d.tasks.map((t) => t.number ?? t.id),
+            contextPreview: d.contextPreview,
+          })),
+          nextBefore: list.nextBefore,
+          unreviewedTotal: list.unreviewedTotal,
+        };
+      }),
+  );
+
+  reg(
+    "agent_decision_get",
+    {
+      description:
+        "One ADR by `decisionId` or `number`: context, decision, alternatives, consequences, reversible, refs, taskIds, `supersedes`/`supersededBy` (ADR numbers), author (person name or model) and reviewed. A deleted ADR is not found.",
+      inputSchema: z
+        .object({
+          projectId: z.string(),
+          decisionId: z.string().optional(),
+          number: z.number().int().min(1).optional(),
+        })
+        .refine((v) => Boolean(v.decisionId) !== (v.number !== undefined), {
+          message: "Pass exactly one of decisionId or number",
+        }),
+    },
+    (args) =>
+      guard(async () => {
+        const decisionId =
+          args.decisionId ||
+          (await findDecisionIdByNumber(api, args.projectId, args.number ?? 0));
+        const d = await api.json<DecisionDetailOut>(
+          `/api/agent-decision/${encodeURIComponent(args.projectId)}/${encodeURIComponent(decisionId)}`,
+        );
+        return {
+          id: d.id,
+          number: d.number,
+          title: d.title,
+          status: d.status,
+          reviewed: d.reviewed,
+          author: decisionAuthor(d),
+          context: d.context,
+          decision: d.decision,
+          alternatives: d.alternatives,
+          consequences: d.consequences,
+          reversible: d.reversible,
+          refs: d.refs,
+          taskIds: d.tasks.map((t) => t.id),
+          supersedes: d.supersedes?.number ?? null,
+          supersededBy: d.supersededBy?.number ?? null,
+          createdAt: d.createdAt,
+        };
+      }),
+  );
+
+  reg(
+    "agent_decision_put",
+    {
+      description:
+        "Record an ADR as this agent. Applies immediately as `accepted` (no draft), unreviewed until a human reads it; humans may delete it. ADRs are immutable: to change one, write a new ADR with `supersedesDecisionId` (the old one becomes superseded in the same step; unknown id = 404, already superseded or deleted = 409). Check agent_decision_list first to avoid duplicates.",
+      inputSchema: z
+        .object({
+          projectId: z.string(),
+          title: nonBlank("title", DECISION_TITLE_MAX),
+          context: nonBlank("context"),
+          decision: nonBlank("decision"),
+          alternatives: z.string().nullable().optional(),
+          consequences: z.string().nullable().optional(),
+          reversible: z.boolean().nullable().optional(),
+          refs: refsInput,
+          taskIds: z
+            .array(z.string().min(1))
+            .max(DECISION_TASK_LIMIT)
+            .refine((ids) => new Set(ids).size === ids.length, {
+              message: "taskIds must not contain duplicates",
+            })
+            .default([]),
+          supersedesDecisionId: z.string().min(1).optional(),
+          ...agentIdentity,
+        })
+        .refine(
+          (v) =>
+            Buffer.byteLength(
+              `${v.context}${v.decision}${v.alternatives ?? ""}${v.consequences ?? ""}`,
+              "utf8",
+            ) <= DECISION_TEXT_BUDGET,
+          { message: "ADR text must be at most 200KB in total" },
+        ),
+    },
+    (args) =>
+      guard(async () => {
+        const d = await createDecisionAsAgent({ ...args, userId });
+        // Meta only: the caller just sent the text.
+        return {
+          id: d.id,
+          number: d.number,
+          title: d.title,
+          status: d.status,
+          reviewed: d.reviewed,
+          supersedes: d.supersedes?.number ?? null,
+          taskIds: d.tasks.map((t) => t.id),
+          createdAt: d.createdAt,
+        };
+      }),
   );
 }

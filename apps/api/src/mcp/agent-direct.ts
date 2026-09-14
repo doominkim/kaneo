@@ -3,15 +3,18 @@ import { Context } from "hono";
 import { HTTPException } from "hono/http-exception";
 import presignArtifact from "../agent-artifact/controllers/presign-artifact";
 import putTextArtifact from "../agent-artifact/controllers/put-text-artifact";
+import createDecision from "../agent-decision/controllers/create-decision";
 import getDesign from "../agent-design/controllers/get-design";
 import putDesign from "../agent-design/controllers/put-design";
 import putDocument from "../agent-document/controllers/put-document";
 import createDomain from "../agent-domain/controllers/create-domain";
 import updateDomain from "../agent-domain/controllers/update-domain";
+import type { EntryRefs } from "../agent-entry/controllers/entry-fields";
 import resolveActor from "../agent-entry/controllers/resolve-actor";
 import getRequirementSet from "../agent-requirement/controllers/get-set";
 import putRequirementCoverage from "../agent-requirement/controllers/put-coverage";
 import putRequirementSet from "../agent-requirement/controllers/put-set";
+import acknowledgeTaskLinks from "../agent-task-link/controllers/acknowledge-task-links";
 import getTaskLinks from "../agent-task-link/controllers/get-task-links";
 import putTaskLinks from "../agent-task-link/controllers/put-task-links";
 import db, { schema } from "../database";
@@ -244,9 +247,9 @@ function entryAuthorOf(input: AgentPrincipal & AgentSession) {
 }
 
 /**
- * Requirement set as an agent: always lands as `draft` (REQ-SPEC-TABS-14);
- * approval has no agent path. Returns the set with its items so the caller
- * learns the keys that were issued.
+ * Requirement set as an agent: applies at once and stays unreviewed until a
+ * person reviews it (agent-autoapply); a soft-deleted set is a 409. Returns
+ * the set with its items so the caller learns the keys that were issued.
  */
 export function putRequirementSetAsAgent(
   input: AgentPrincipal &
@@ -311,23 +314,89 @@ export function putDesignAsAgent(
  * Task links are attribution-free mapping rows, but the write still goes
  * through the agent authorization so an MCP caller without task:update is
  * refused the same way a human would be.
+ *
+ * `acknowledge` runs after the list update, so links written in the same call
+ * are acknowledged too. The acknowledgement is attributed: the resolved actor
+ * lands on the links and the timeline entry carries the same provider/model,
+ * and the links stay unreviewed until a person reviews them.
  */
 export function putTaskLinksAsAgent(
-  input: AgentPrincipal & {
-    taskId: string;
-    requirementKeys?: string[];
-    designFeatures?: string[];
-  },
+  input: AgentPrincipal &
+    AgentSession & {
+      taskId: string;
+      requirementKeys?: string[];
+      designFeatures?: string[];
+      acknowledge?: boolean;
+    },
 ) {
   return asToolCall(async () => {
-    await authorizeAgentWrite(input);
+    const auth = await authorizeAgentWrite(input);
     await putTaskLinks({
       projectId: input.projectId,
       taskId: input.taskId,
       requirementKeys: input.requirementKeys,
       designFeatures: input.designFeatures,
     });
-    return getTaskLinks(input.projectId, input.taskId);
+    const acknowledged = input.acknowledge
+      ? await acknowledgeTaskLinks({
+          workspaceId: auth.workspaceId,
+          projectId: input.projectId,
+          taskId: input.taskId,
+          userId: input.userId,
+          agent: {
+            actorId: auth.actorId,
+            provider: input.provider,
+            model: input.model,
+            sessionId: input.sessionId ?? null,
+          },
+        })
+      : null;
+    return {
+      ...(await getTaskLinks(input.projectId, input.taskId)),
+      acknowledgedAt: acknowledged?.acknowledgedAt ?? null,
+    };
+  });
+}
+
+/**
+ * An ADR written by an agent: accepted at once, attributed to the resolved
+ * actor and left unreviewed (agent-autoapply). `supersedesDecisionId` is
+ * handled inside the same create transaction, so a missing target is a 404
+ * and one that is superseded, deleted or already replaced is a 409.
+ *
+ * The HTTP schema's checks do not run on this path; the tool schema repeats
+ * the ones the controller does not (duplicate task ids).
+ */
+export function createDecisionAsAgent(
+  input: AgentPrincipal &
+    AgentSession & {
+      title: string;
+      context: string;
+      decision: string;
+      alternatives?: string | null;
+      consequences?: string | null;
+      reversible?: boolean | null;
+      refs?: EntryRefs | null;
+      taskIds: string[];
+      supersedesDecisionId?: string | null;
+    },
+) {
+  return asToolCall(async () => {
+    const auth = await authorizeAgentWrite(input);
+    return createDecision({
+      workspaceId: auth.workspaceId,
+      projectId: input.projectId,
+      title: input.title,
+      context: input.context,
+      decision: input.decision,
+      alternatives: input.alternatives,
+      consequences: input.consequences,
+      reversible: input.reversible,
+      refs: input.refs,
+      taskIds: input.taskIds,
+      supersedesDecisionId: input.supersedesDecisionId,
+      author: { userId: null, actorId: auth.actorId },
+    });
   });
 }
 

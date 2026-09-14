@@ -24,7 +24,11 @@ import { createModernMcpHandler } from "../../apps/api/src/mcp/modern";
 const MAX_BYTES_PER_TOOL = 2560;
 // 2026-09-13 (KAN-19): re-baselined from 12,288B when the six spec-tab tools
 // (requirements/design/task-link/coverage) were added; see DESIGN.md §5.2.
-const MAX_BYTES_TOTAL = 18432;
+// 2026-09-14 (agent-autoapply): raised from 18,432B to 21,504B, the smallest
+// whole KiB that fits, for the new ADR tools (agent_decision_list/get/put)
+// plus agent_task_link `acknowledge` and agent_brief `decisions`. Measured
+// total at that point: 20,809B for 25 tools.
+const MAX_BYTES_TOTAL = 21504;
 
 const protocolVersion = "2026-07-28";
 
@@ -91,7 +95,7 @@ function definitionBytes(tool: ToolDefinition) {
 }
 
 describe("agent_* tool definition budget (tools/list)", () => {
-  it("keeps every agent tool under 2560 bytes and the set under 18432 bytes", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-38] keeps every agent tool under 2560 bytes and the set under 21504 bytes", async () => {
     const tools = await listTools();
     const agentTools = tools.filter((tool) => tool.name.startsWith("agent_"));
     expect(agentTools.map((t) => t.name).sort()).toEqual([
@@ -99,6 +103,9 @@ describe("agent_* tool definition budget (tools/list)", () => {
       "agent_artifact_presign",
       "agent_artifact_put_text",
       "agent_brief",
+      "agent_decision_get",
+      "agent_decision_list",
+      "agent_decision_put",
       "agent_design_get",
       "agent_design_put",
       "agent_doc_get",
@@ -145,5 +152,33 @@ describe("agent_* tool definition budget (tools/list)", () => {
     expect(total, "agent_* total exceeds budget").toBeLessThanOrEqual(
       MAX_BYTES_TOTAL,
     );
+  });
+
+  it("describes agent writes as applied at once and reviewed by people, not as drafts awaiting approval", async () => {
+    const described = new Map(
+      (await listTools())
+        .filter((tool) => tool.name.startsWith("agent_"))
+        .map((tool) => [tool.name, tool.description ?? ""]),
+    );
+    for (const [name, description] of described) {
+      expect(description, name).not.toMatch(
+        /always draft|\(draft|humans approve|human-confirmed|Stored as `proposed`|only a human can acknowledge/i,
+      );
+    }
+    for (const name of [
+      "agent_requirements_put",
+      "agent_design_put",
+      "agent_term_propose",
+      "agent_decision_put",
+    ]) {
+      expect(described.get(name), name).toMatch(/Applies immediately/);
+    }
+    for (const name of [
+      "agent_requirements_put",
+      "agent_design_put",
+      "agent_term_propose",
+    ]) {
+      expect(described.get(name), name).toMatch(/409/);
+    }
   });
 });

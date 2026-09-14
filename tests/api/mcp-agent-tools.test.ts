@@ -11,6 +11,7 @@ const direct = vi.hoisted(() => ({
   putDesignAsAgent: vi.fn(),
   putTaskLinksAsAgent: vi.fn(),
   putRequirementCoverageAsAgent: vi.fn(),
+  createDecisionAsAgent: vi.fn(),
 }));
 vi.mock("../../apps/api/src/mcp/agent-direct", () => direct);
 
@@ -1262,5 +1263,553 @@ describe("agent_brief features", () => {
     );
     const result = await call("agent_brief", { projectId: "p1" });
     expect(result.features).toEqual([]);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* agent-autoapply: ADR tools, agent acknowledgement, review marks            */
+/* -------------------------------------------------------------------------- */
+
+function decisionRow(number: number, overrides: Record<string, unknown> = {}) {
+  return {
+    id: `adr-${number}`,
+    number,
+    title: `ADR ${number}`,
+    status: "accepted",
+    contextPreview: `context ${number}`,
+    reversible: true,
+    sourceEntryId: null,
+    supersedesDecisionId: null,
+    refs: null,
+    tasks: [],
+    createdBy: null,
+    createdAuthor: null,
+    createdActor: {
+      id: "actor-1",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      onBehalfOf: "user-1",
+    },
+    reviewed: false,
+    reviewedAt: null,
+    deletedAt: null,
+    createdAt: "2026-09-14T00:00:00.000Z",
+    updatedAt: "2026-09-14T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+/** Descending numbers `from` down to `to`, as the listing orders them. */
+function decisionPage(
+  from: number,
+  to: number,
+  nextBefore: string | null,
+  unreviewedTotal = 0,
+) {
+  return {
+    decisions: Array.from({ length: from - to + 1 }, (_, i) =>
+      decisionRow(from - i),
+    ),
+    nextBefore,
+    unreviewedTotal,
+  };
+}
+
+function decisionDetail(overrides: Record<string, unknown> = {}) {
+  const { contextPreview: _preview, ...summary } = decisionRow(3);
+  return {
+    ...summary,
+    workspaceId: "ws-1",
+    projectId: "p1",
+    context: "Boards are read far more often than written.",
+    decision: "Cache boards per project.",
+    alternatives: "Query every time.",
+    consequences: "Invalidation on every task event.",
+    sourceNote: null,
+    refs: { files: ["apps/api/src/board.ts"] },
+    tasks: [{ id: "t1", number: 7, title: "Board cache" }],
+    supersedes: { id: "adr-1", number: 1, title: "Old", status: "superseded" },
+    supersededBy: null,
+    ...overrides,
+  };
+}
+
+describe("agent_decision_list", () => {
+  it("[REQ-AGENT-AUTOAPPLY-32] lists accepted ADRs by default, 20 at a time, with number, title, reviewed and author", async () => {
+    apiFetch.mockImplementation(async () =>
+      Response.json({
+        decisions: [
+          decisionRow(2, { tasks: [{ id: "t1", number: 7, title: "x" }] }),
+          decisionRow(1, {
+            createdBy: "user-1",
+            createdAuthor: { userId: "user-1", name: "Dominic" },
+            createdActor: null,
+            reviewed: true,
+            tasks: [{ id: "t2", number: null, title: "y" }],
+          }),
+        ],
+        nextBefore: null,
+        unreviewedTotal: 1,
+      }),
+    );
+
+    const result = await call("agent_decision_list", { projectId: "p 1" });
+
+    expect(lastRequest()).toMatchObject({
+      url: "http://api.test/api/agent-decision/p%201?limit=20&status=accepted",
+      method: "GET",
+      auth: "Bearer test-token",
+    });
+    expect(result).toEqual({
+      decisions: [
+        {
+          id: "adr-2",
+          number: 2,
+          title: "ADR 2",
+          status: "accepted",
+          reviewed: false,
+          author: "claude-opus-5",
+          tasks: [7],
+          contextPreview: "context 2",
+        },
+        {
+          id: "adr-1",
+          number: 1,
+          title: "ADR 1",
+          status: "accepted",
+          reviewed: true,
+          author: "Dominic",
+          tasks: ["t2"],
+          contextPreview: "context 1",
+        },
+      ],
+      nextBefore: null,
+      unreviewedTotal: 1,
+    });
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-32] passes q, taskId, status, limit and the before cursor, and returns nextBefore", async () => {
+    apiFetch.mockImplementation(async () =>
+      Response.json(decisionPage(5, 4, "adr-4", 2)),
+    );
+
+    const result = await call("agent_decision_list", {
+      projectId: "p1",
+      q: "board cache",
+      taskId: "t1",
+      status: "all",
+      limit: 2,
+      before: "adr-6",
+    });
+
+    expect(lastRequest().url).toBe(
+      "http://api.test/api/agent-decision/p1?limit=2&status=all&q=board+cache&taskId=t1&before=adr-6",
+    );
+    expect(result.decisions.map((d: { number: number }) => d.number)).toEqual([
+      5, 4,
+    ]);
+    expect(result.nextBefore).toBe("adr-4");
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-32] keeps limit within 1..50 and never lists deleted ADRs, before any request", async () => {
+    for (const bad of [
+      { projectId: "p1", limit: 0 },
+      { projectId: "p1", limit: 51 },
+      { projectId: "p1", limit: 2.5 },
+      { projectId: "p1", status: "deleted" },
+      { projectId: "p1", q: "" },
+    ]) {
+      const result = await callRaw("agent_decision_list", bad);
+      expect(result.isError, JSON.stringify(bad)).toBe(true);
+    }
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("agent_decision_get", () => {
+  it("[REQ-AGENT-AUTOAPPLY-33] reads one ADR by decisionId with its text, task ids, supersede numbers, author and review mark", async () => {
+    apiFetch.mockImplementation(async () => Response.json(decisionDetail()));
+
+    const result = await call("agent_decision_get", {
+      projectId: "p1",
+      decisionId: "adr-3",
+    });
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(lastRequest()).toMatchObject({
+      url: "http://api.test/api/agent-decision/p1/adr-3",
+      method: "GET",
+    });
+    expect(result).toEqual({
+      id: "adr-3",
+      number: 3,
+      title: "ADR 3",
+      status: "accepted",
+      reviewed: false,
+      author: "claude-opus-5",
+      context: "Boards are read far more often than written.",
+      decision: "Cache boards per project.",
+      alternatives: "Query every time.",
+      consequences: "Invalidation on every task event.",
+      reversible: true,
+      refs: { files: ["apps/api/src/board.ts"] },
+      taskIds: ["t1"],
+      supersedes: 1,
+      supersededBy: null,
+      createdAt: "2026-09-14T00:00:00.000Z",
+    });
+
+    apiFetch.mockImplementation(async () =>
+      Response.json(
+        decisionDetail({
+          status: "superseded",
+          createdAuthor: { userId: "user-1", name: "Dominic" },
+          createdActor: null,
+          reviewed: true,
+          supersedes: null,
+          supersededBy: {
+            id: "adr-4",
+            number: 4,
+            title: "New",
+            status: "accepted",
+          },
+        }),
+      ),
+    );
+    const byPerson = await call("agent_decision_get", {
+      projectId: "p1",
+      decisionId: "adr-3",
+    });
+    expect(byPerson).toMatchObject({
+      status: "superseded",
+      author: "Dominic",
+      reviewed: true,
+      supersedes: null,
+      supersededBy: 4,
+    });
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-33] finds an ADR by number by paging the listing newest first, superseded ones included", async () => {
+    apiFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/adr-42")) {
+        return Response.json(decisionDetail({ id: "adr-42", number: 42 }));
+      }
+      return Response.json(
+        url.searchParams.get("before") === "adr-71"
+          ? decisionPage(70, 21, "adr-21")
+          : decisionPage(120, 71, "adr-71"),
+      );
+    });
+
+    const result = await call("agent_decision_get", {
+      projectId: "p1",
+      number: 42,
+    });
+
+    expect(apiFetch.mock.calls.map((c) => String(c[0]))).toEqual([
+      "http://api.test/api/agent-decision/p1?limit=50&status=all",
+      "http://api.test/api/agent-decision/p1?limit=50&status=all&before=adr-71",
+      "http://api.test/api/agent-decision/p1/adr-42",
+    ]);
+    expect(result).toMatchObject({ id: "adr-42", number: 42 });
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-33] a number that is not listed, like a deleted ADR's, and a deleted id are 404s", async () => {
+    apiFetch.mockImplementation(async () =>
+      Response.json({
+        decisions: [decisionRow(10), decisionRow(9), decisionRow(7)],
+        nextBefore: null,
+        unreviewedTotal: 0,
+      }),
+    );
+    const gap = await callRaw("agent_decision_get", {
+      projectId: "p1",
+      number: 8,
+    });
+    expect(JSON.parse(gap.content[0].text)).toEqual({
+      error: "404 ADR 8 not found",
+    });
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+
+    // A page that already reaches below the number rules out the older pages.
+    apiFetch.mockReset();
+    apiFetch.mockImplementation(async () =>
+      Response.json(decisionPage(60, 11, "adr-11")),
+    );
+    const above = await callRaw("agent_decision_get", {
+      projectId: "p1",
+      number: 99,
+    });
+    expect(above.isError).toBe(true);
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+
+    apiFetch.mockImplementation(
+      async () => new Response("ADR not found", { status: 404 }),
+    );
+    const deleted = await callRaw("agent_decision_get", {
+      projectId: "p1",
+      decisionId: "adr-8",
+    });
+    expect(JSON.parse(deleted.content[0].text)).toEqual({
+      error: "404 ADR not found",
+    });
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-33] requires exactly one of decisionId or number", async () => {
+    for (const bad of [
+      { projectId: "p1" },
+      { projectId: "p1", decisionId: "adr-1", number: 1 },
+      { projectId: "p1", number: 0 },
+    ]) {
+      const result = await callRaw("agent_decision_get", bad);
+      expect(result.isError, JSON.stringify(bad)).toBe(true);
+    }
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("agent_decision_put", () => {
+  const base = {
+    projectId: "p1",
+    title: "Cache boards",
+    context: "Boards are read far more often than written.",
+    decision: "Cache boards per project.",
+    ...identity,
+  };
+
+  it("[REQ-AGENT-AUTOAPPLY-34] writes an accepted ADR through the agent path as the calling model, supersede included, and echoes meta only", async () => {
+    direct.createDecisionAsAgent.mockResolvedValue(
+      decisionDetail({
+        id: "adr-5",
+        number: 5,
+        title: "Cache boards",
+        supersedes: {
+          id: "adr-4",
+          number: 4,
+          title: "Old",
+          status: "superseded",
+        },
+      }),
+    );
+
+    const result = await call("agent_decision_put", {
+      ...base,
+      refs: { files: ["apps/api/src/board.ts"] },
+      taskIds: ["t1"],
+      supersedesDecisionId: "adr-4",
+      sessionId: "s1",
+    });
+
+    expect(direct.createDecisionAsAgent).toHaveBeenCalledWith({
+      userId: "user-1",
+      projectId: "p1",
+      title: "Cache boards",
+      context: "Boards are read far more often than written.",
+      decision: "Cache boards per project.",
+      refs: { files: ["apps/api/src/board.ts"] },
+      taskIds: ["t1"],
+      supersedesDecisionId: "adr-4",
+      provider: "anthropic",
+      model: "claude-opus-5",
+      sessionId: "s1",
+    });
+    expect(result).toEqual({
+      id: "adr-5",
+      number: 5,
+      title: "Cache boards",
+      status: "accepted",
+      reviewed: false,
+      supersedes: 4,
+      taskIds: ["t1"],
+      createdAt: "2026-09-14T00:00:00.000Z",
+    });
+    expect(apiFetch).not.toHaveBeenCalled();
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-34] requires provider/model and refuses blank text, duplicate or too many tasks and over-budget text before the write path", async () => {
+    const { provider: _provider, model: _model, ...anonymous } = base;
+    for (const bad of [
+      anonymous,
+      { ...base, provider: undefined },
+      { ...base, title: "   " },
+      { ...base, title: "x".repeat(201) },
+      { ...base, context: "" },
+      { ...base, decision: " " },
+      { ...base, taskIds: ["t1", "t1"] },
+      { ...base, taskIds: Array.from({ length: 51 }, (_, i) => `t${i}`) },
+      { ...base, context: "x".repeat(200 * 1024), decision: "d" },
+    ]) {
+      const result = await callRaw("agent_decision_put", bad);
+      expect(result.isError, JSON.stringify(bad).slice(0, 80)).toBe(true);
+    }
+    expect(direct.createDecisionAsAgent).not.toHaveBeenCalled();
+
+    direct.createDecisionAsAgent.mockResolvedValue(decisionDetail());
+    const atLimit = await callRaw("agent_decision_put", {
+      ...base,
+      context: "x".repeat(200 * 1024 - 1),
+      decision: "d",
+    });
+    expect(atLimit.isError).toBeUndefined();
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-34] surfaces a missing supersede target as 404 and a superseded or deleted one as 409", async () => {
+    direct.createDecisionAsAgent
+      .mockRejectedValueOnce(
+        new Error("404 The ADR to supersede was not found"),
+      )
+      .mockRejectedValueOnce(
+        new Error(
+          "409 Only an accepted, non-deleted ADR can be superseded, and this one no longer is",
+        ),
+      );
+    const args = { ...base, supersedesDecisionId: "adr-4" };
+
+    const missing = await callRaw("agent_decision_put", args);
+    expect(missing.isError).toBe(true);
+    expect(JSON.parse(missing.content[0].text)).toEqual({
+      error: "404 The ADR to supersede was not found",
+    });
+
+    const conflict = await callRaw("agent_decision_put", args);
+    expect(conflict.isError).toBe(true);
+    expect(JSON.parse(conflict.content[0].text).error).toMatch(/^409 /);
+  });
+});
+
+describe("agent_task_link acknowledge", () => {
+  const links = {
+    taskId: "t1",
+    requirements: [{ key: "REQ-SPEC-TABS-1" }],
+    designs: [],
+    stale: { stale: false, causes: [] },
+  };
+
+  it("[REQ-AGENT-AUTOAPPLY-35] passes acknowledge and the session to the agent path and returns when it was acknowledged", async () => {
+    direct.putTaskLinksAsAgent.mockResolvedValue({
+      ...links,
+      acknowledgedAt: "2026-09-14T01:00:00.000Z",
+    });
+
+    const result = await call("agent_task_link", {
+      projectId: "p1",
+      taskId: "t1",
+      acknowledge: true,
+      ...identity,
+      sessionId: "s1",
+    });
+
+    expect(direct.putTaskLinksAsAgent).toHaveBeenCalledWith({
+      userId: "user-1",
+      projectId: "p1",
+      taskId: "t1",
+      acknowledge: true,
+      provider: "anthropic",
+      model: "claude-opus-5",
+      sessionId: "s1",
+    });
+    expect(result).toEqual({
+      taskId: "t1",
+      requirements: ["REQ-SPEC-TABS-1"],
+      designs: [],
+      stale: { stale: false, causes: [] },
+      acknowledgedAt: "2026-09-14T01:00:00.000Z",
+    });
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-35] leaves acknowledgedAt out when the call did not acknowledge", async () => {
+    direct.putTaskLinksAsAgent.mockResolvedValue({
+      ...links,
+      acknowledgedAt: null,
+    });
+    const result = await call("agent_task_link", {
+      projectId: "p1",
+      taskId: "t1",
+      requirementKeys: ["REQ-SPEC-TABS-1"],
+      ...identity,
+    });
+    expect(result).not.toHaveProperty("acknowledgedAt");
+  });
+});
+
+describe("agent_term_resolve review marks", () => {
+  it("[REQ-AGENT-AUTOAPPLY-36] relays reviewed on the match and on every ambiguous candidate", async () => {
+    apiFetch.mockImplementation(async () =>
+      Response.json({
+        match: "alias",
+        term: { id: "term-1", canonical: "Lease", reviewed: false },
+        ambiguous: [
+          { id: "term-1", canonical: "Lease", reviewed: false },
+          { id: "term-2", canonical: "Claim", reviewed: true },
+        ],
+      }),
+    );
+
+    const result = await call("agent_term_resolve", {
+      workspaceId: "ws-1",
+      term: "hold",
+    });
+
+    expect(result.term).toMatchObject({ id: "term-1", reviewed: false });
+    expect(
+      result.ambiguous.map((t: { id: string; reviewed: boolean }) => [
+        t.id,
+        t.reviewed,
+      ]),
+    ).toEqual([
+      ["term-1", false],
+      ["term-2", true],
+    ]);
+  });
+});
+
+describe("agent_brief decisions", () => {
+  it("[REQ-AGENT-AUTOAPPLY-37] counts accepted ADRs across pages and takes unreviewed from unreviewedTotal", async () => {
+    apiFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (!url.pathname.startsWith("/api/agent-decision/")) {
+        return Response.json({});
+      }
+      return Response.json(
+        url.searchParams.get("before") === "adr-51"
+          ? decisionPage(50, 48, null, 7)
+          : decisionPage(100, 51, "adr-51", 7),
+      );
+    });
+
+    const brief = await call("agent_brief", { projectId: "p1" });
+
+    expect(brief.decisions).toEqual({ accepted: 53, unreviewed: 7 });
+    // The API's default status: accepted and not deleted.
+    expect(
+      apiFetch.mock.calls
+        .map((c) => String(c[0]))
+        .filter((url) => url.includes("/api/agent-decision/")),
+    ).toEqual([
+      "http://api.test/api/agent-decision/p1?limit=50",
+      "http://api.test/api/agent-decision/p1?limit=50&before=adr-51",
+    ]);
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-37] reports zeros for a project without ADRs and null when the listing fails", async () => {
+    apiFetch.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes("/api/agent-decision/")
+        ? Response.json({ decisions: [], nextBefore: null, unreviewedTotal: 0 })
+        : Response.json({}),
+    );
+    expect((await call("agent_brief", { projectId: "p1" })).decisions).toEqual({
+      accepted: 0,
+      unreviewed: 0,
+    });
+
+    apiFetch.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes("/api/agent-decision/")
+        ? new Response("boom", { status: 500 })
+        : Response.json({}),
+    );
+    expect(
+      (await call("agent_brief", { projectId: "p1" })).decisions,
+    ).toBeNull();
   });
 });

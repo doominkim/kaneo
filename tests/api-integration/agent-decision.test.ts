@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiKeyMock = vi.hoisted(() => ({
   verifyApiKey: vi.fn(async () => null as unknown),
@@ -22,6 +22,7 @@ import {
   createProjectFixture,
   createWorkspaceMember,
 } from "./helpers/fixtures";
+import { mcpToolCall, toolJson } from "./helpers/mcp";
 
 type App = ReturnType<typeof createApp>["app"];
 type DecisionRef = { id: string; status: string } | null;
@@ -194,6 +195,433 @@ type AdrTrace = {
 function adrOf(entry: { decision: unknown }) {
   return (entry.decision as { adr?: AdrTrace } | null)?.adr ?? null;
 }
+
+type ToolDecisionRow = {
+  id: string;
+  number: number;
+  title: string;
+  status: string;
+  reviewed: boolean;
+  author: string | null;
+  tasks: Array<number | string>;
+};
+type ToolDecisionList = {
+  decisions: ToolDecisionRow[];
+  nextBefore: string | null;
+  unreviewedTotal: number;
+};
+type ToolDecisionPut = {
+  id: string;
+  number: number;
+  status: string;
+  reviewed: boolean;
+  supersedes: number | null;
+  taskIds: string[];
+};
+
+/** The MCP read tools reach the API over HTTP; route that into the same app. */
+function routeFetchInto(app: App) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      return app.request(`${url.pathname}${url.search}`, init);
+    }),
+  );
+}
+
+function adrInput(projectId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    projectId,
+    title: "Cache project boards in memory",
+    context: "Boards are read far more often than written.",
+    decision: "Keep a per-project board cache invalidated by events.",
+    ...agent,
+    ...overrides,
+  };
+}
+
+async function putViaMcp(app: App, args: Record<string, unknown>) {
+  const result = await mcpToolCall(app, "agent_decision_put", args);
+  expect(result.isError, result.content[0]?.text).toBeUndefined();
+  return toolJson<ToolDecisionPut>(result);
+}
+
+async function mcpError(app: App, name: string, args: Record<string, unknown>) {
+  const result = await mcpToolCall(app, name, args);
+  expect(result.isError, result.content[0]?.text).toBe(true);
+  return toolJson<{ error: string }>(result).error;
+}
+
+describe("MCP integration: ADR tools", () => {
+  beforeEach(async () => {
+    await resetTestDatabase();
+    apiKeyMock.verifyApiKey.mockResolvedValue(null);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-34] agent_decision_put creates an accepted, unreviewed ADR attributed to the calling model and supersedes in the same step", async () => {
+    const member = await createWorkspaceMember({ role: "admin" });
+    const { project, columns } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    const task = await seedTask(project.id, columns.todo.id, 3);
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    const first = await putViaMcp(
+      app,
+      adrInput(project.id, {
+        taskIds: [task.id],
+        refs: { files: ["apps/api/src/board.ts"] },
+        sessionId: "session-1",
+      }),
+    );
+    expect(first).toMatchObject({
+      number: 1,
+      status: "accepted",
+      reviewed: false,
+      supersedes: null,
+      taskIds: [task.id],
+    });
+
+    const row = await rowOf(first.id);
+    expect(row).toMatchObject({
+      status: "accepted",
+      createdBy: null,
+      acceptedBy: null,
+      reviewedAt: null,
+      reviewedBy: null,
+      refs: { files: ["apps/api/src/board.ts"] },
+    });
+    expect(row?.acceptedAt).not.toBeNull();
+    const [actor] = await db
+      .select()
+      .from(agentActorTable)
+      .where(eq(agentActorTable.id, row?.createdActorId ?? ""));
+    expect(actor).toMatchObject({
+      workspaceId: member.workspace.id,
+      onBehalfOf: member.user.id,
+      ...agent,
+    });
+    expect(
+      (await entriesFor(project.id)).filter(
+        (entry) => adrOf(entry)?.decisionId === first.id,
+      ),
+    ).toEqual([
+      expect.objectContaining({ actorId: actor?.id, createdBy: null }),
+    ]);
+
+    const second = await putViaMcp(
+      app,
+      adrInput(project.id, {
+        title: "Move the board cache to Redis",
+        supersedesDecisionId: first.id,
+      }),
+    );
+    expect(second).toMatchObject({
+      number: 2,
+      status: "accepted",
+      reviewed: false,
+      supersedes: 1,
+    });
+    expect((await rowOf(first.id))?.status).toBe("superseded");
+    expect((await entriesFor(project.id)).map(adrOf)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          decisionId: first.id,
+          status: "superseded",
+          supersededByDecisionId: second.id,
+        }),
+        expect.objectContaining({
+          decisionId: second.id,
+          status: "accepted",
+          supersedesDecisionId: first.id,
+        }),
+      ]),
+    );
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-34] agent_decision_put reports a missing supersede target as 404, a superseded or deleted one as 409, and refuses a viewer, writing nothing", async () => {
+    const member = await createWorkspaceMember({ role: "admin" });
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+    const count = async () =>
+      (
+        await db
+          .select({ id: agentDecisionTable.id })
+          .from(agentDecisionTable)
+          .where(eq(agentDecisionTable.projectId, project.id))
+      ).length;
+
+    expect(
+      await mcpError(
+        app,
+        "agent_decision_put",
+        adrInput(project.id, { supersedesDecisionId: "adr-missing" }),
+      ),
+    ).toBe("404 The ADR to supersede was not found");
+
+    const old = await putViaMcp(app, adrInput(project.id));
+    await putViaMcp(
+      app,
+      adrInput(project.id, {
+        title: "Replacement",
+        supersedesDecisionId: old.id,
+      }),
+    );
+    expect(
+      await mcpError(
+        app,
+        "agent_decision_put",
+        adrInput(project.id, {
+          title: "Second replacement",
+          supersedesDecisionId: old.id,
+        }),
+      ),
+    ).toMatch(/^409 /);
+
+    const doomed = await putViaMcp(
+      app,
+      adrInput(project.id, { title: "Deleted later" }),
+    );
+    expect((await lifecycle(app, project.id, doomed.id, "delete")).status).toBe(
+      200,
+    );
+    expect(
+      await mcpError(
+        app,
+        "agent_decision_put",
+        adrInput(project.id, {
+          title: "Replaces a deleted ADR",
+          supersedesDecisionId: doomed.id,
+        }),
+      ),
+    ).toMatch(/^409 /);
+    expect(await count()).toBe(3);
+
+    const viewer = await addMember(member.workspace.id, "viewer");
+    mockAuthenticatedSession(viewer);
+    const { app: viewerApp } = createApp();
+    expect(
+      await mcpError(
+        viewerApp,
+        "agent_decision_put",
+        adrInput(project.id, { title: "Viewer ADR" }),
+      ),
+    ).toBe("403 Insufficient permissions");
+    expect(await count()).toBe(3);
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-32] agent_decision_list returns accepted, non-deleted ADRs with number, title and review mark, filters by q and taskId, and pages with nextBefore", async () => {
+    const member = await createWorkspaceMember({
+      role: "admin",
+      userName: "Dominic",
+    });
+    const { project, columns } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    const task = await seedTask(project.id, columns.todo.id, 9);
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    // 1 person (task-linked), 2 agent superseded by 3, 4 agent deleted, 5 agent (task-linked).
+    const byPerson = await jsonDecision(
+      await createDecision(app, project.id, {
+        title: "Person ADR about queues",
+        taskIds: [task.id],
+      }),
+    );
+    const replaced = await putViaMcp(
+      app,
+      adrInput(project.id, { title: "Agent ADR one" }),
+    );
+    const replacement = await putViaMcp(
+      app,
+      adrInput(project.id, {
+        title: "Agent ADR two",
+        supersedesDecisionId: replaced.id,
+      }),
+    );
+    const deleted = await putViaMcp(
+      app,
+      adrInput(project.id, { title: "Agent ADR deleted" }),
+    );
+    expect(
+      (await lifecycle(app, project.id, deleted.id, "delete")).status,
+    ).toBe(200);
+    const latest = await putViaMcp(
+      app,
+      adrInput(project.id, {
+        title: "Agent ADR about queues",
+        taskIds: [task.id],
+      }),
+    );
+
+    routeFetchInto(app);
+    const list = async (args: Record<string, unknown> = {}) => {
+      const result = await mcpToolCall(app, "agent_decision_list", {
+        projectId: project.id,
+        ...args,
+      });
+      expect(result.isError, result.content[0]?.text).toBeUndefined();
+      return toolJson<ToolDecisionList>(result);
+    };
+    const numbers = (page: ToolDecisionList) =>
+      page.decisions.map((d) => d.number);
+
+    const current = await list();
+    expect(current.decisions).toEqual([
+      expect.objectContaining({
+        id: latest.id,
+        number: 5,
+        title: "Agent ADR about queues",
+        status: "accepted",
+        reviewed: false,
+        author: agent.model,
+        tasks: [9],
+      }),
+      expect.objectContaining({
+        id: replacement.id,
+        number: 3,
+        reviewed: false,
+        author: agent.model,
+      }),
+      expect.objectContaining({
+        id: byPerson.id,
+        number: 1,
+        reviewed: true,
+        author: "Dominic",
+        tasks: [9],
+      }),
+    ]);
+    // Unreviewed counts the superseded agent ADR too, never the deleted one.
+    expect(current).toMatchObject({ nextBefore: null, unreviewedTotal: 3 });
+
+    const all = await list({ status: "all" });
+    expect(all.decisions.map((d) => [d.number, d.status])).toEqual([
+      [5, "accepted"],
+      [3, "accepted"],
+      [2, "superseded"],
+      [1, "accepted"],
+    ]);
+    expect(numbers(await list({ q: "queues" }))).toEqual([5, 1]);
+    expect(numbers(await list({ taskId: task.id }))).toEqual([5, 1]);
+    expect(numbers(await list({ taskId: task.id, q: "Person" }))).toEqual([1]);
+
+    const page1 = await list({ limit: 2 });
+    expect(numbers(page1)).toEqual([5, 3]);
+    expect(page1.nextBefore).toBe(replacement.id);
+    const page2 = await list({ limit: 2, before: page1.nextBefore });
+    expect(numbers(page2)).toEqual([1]);
+    expect(page2.nextBefore).toBeNull();
+
+    // Refused by the tool's input schema, so the SDK answers in plain text.
+    for (const limit of [0, 51]) {
+      const refused = await mcpToolCall(app, "agent_decision_list", {
+        projectId: project.id,
+        limit,
+      });
+      expect(refused.isError, String(limit)).toBe(true);
+    }
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-33] agent_decision_get reads one ADR by id or number with its text, tasks, supersede numbers, author and review mark; a deleted ADR is not found", async () => {
+    const member = await createWorkspaceMember({
+      role: "admin",
+      userName: "Dominic",
+    });
+    const { project, columns } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    const task = await seedTask(project.id, columns.todo.id, 4);
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    const byPerson = await jsonDecision(
+      await createDecision(app, project.id, {
+        title: "Person ADR",
+        taskIds: [task.id],
+        refs: { files: ["a.ts"] },
+      }),
+    );
+    const byAgent = await putViaMcp(
+      app,
+      adrInput(project.id, {
+        title: "Agent replacement",
+        supersedesDecisionId: byPerson.id,
+        alternatives: "Keep the person ADR.",
+        consequences: "Boards load faster.",
+        reversible: false,
+        taskIds: [task.id],
+      }),
+    );
+    const deleted = await putViaMcp(
+      app,
+      adrInput(project.id, { title: "Deleted ADR" }),
+    );
+    expect(
+      (await lifecycle(app, project.id, deleted.id, "delete")).status,
+    ).toBe(200);
+
+    routeFetchInto(app);
+    const get = (args: Record<string, unknown>) =>
+      mcpToolCall(app, "agent_decision_get", {
+        projectId: project.id,
+        ...args,
+      });
+
+    expect(toolJson(await get({ decisionId: byAgent.id }))).toEqual({
+      id: byAgent.id,
+      number: 2,
+      title: "Agent replacement",
+      status: "accepted",
+      reviewed: false,
+      author: agent.model,
+      context: "Boards are read far more often than written.",
+      decision: "Keep a per-project board cache invalidated by events.",
+      alternatives: "Keep the person ADR.",
+      consequences: "Boards load faster.",
+      reversible: false,
+      refs: null,
+      taskIds: [task.id],
+      supersedes: 1,
+      supersededBy: null,
+      createdAt: expect.any(String),
+    });
+
+    expect(toolJson(await get({ number: 1 }))).toMatchObject({
+      id: byPerson.id,
+      status: "superseded",
+      reviewed: true,
+      author: "Dominic",
+      context: "Edits would erase the reason a choice was made.",
+      alternatives: "Overwrite the previous entry.",
+      refs: { files: ["a.ts"] },
+      taskIds: [task.id],
+      supersedes: null,
+      supersededBy: 2,
+    });
+
+    for (const args of [
+      { decisionId: deleted.id },
+      { number: 3 },
+      { number: 99 },
+    ]) {
+      expect(
+        await mcpError(app, "agent_decision_get", {
+          projectId: project.id,
+          ...args,
+        }),
+      ).toMatch(/^404 /);
+    }
+  });
+});
 
 describe("API integration: ADR", () => {
   beforeEach(async () => {

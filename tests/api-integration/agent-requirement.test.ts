@@ -9,6 +9,7 @@ vi.mock("../../apps/api/src/utils/verify-api-key", () => apiKeyMock);
 
 import db, { schema } from "../../apps/api/src/database";
 import {
+  agentActorTable,
   agentEntryTable,
   agentRequirementItemTable,
   agentRequirementSetTable,
@@ -891,6 +892,80 @@ describe("API integration: requirement sets, designs, task links", () => {
         feature: "spec-tabs",
       }),
     ).rejects.toThrow(/not found/);
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-35] agent_task_link acknowledge clears stale as the agent: its actor is on the links and the timeline entry, and the links stay unreviewed", async () => {
+    const { app, project, columns, member } = await setup();
+    const task = await seedTask(project.id, columns.todo.id, 1);
+    await putSet(app, project.id, "spec-tabs", {
+      title: "T",
+      items: [{ text: "a" }],
+    });
+    expect(
+      (
+        await app.request(
+          `/api/agent-task-link/${project.id}/${task.id}`,
+          json({ requirementKeys: ["REQ-SPEC-TABS-1"] }),
+        )
+      ).status,
+    ).toBe(200);
+    await bumpItem("REQ-SPEC-TABS-1");
+    expect((await getLinks(app, project.id, task.id)).stale.stale).toBe(true);
+
+    const result = await mcpToolCall(app, "agent_task_link", {
+      projectId: project.id,
+      taskId: task.id,
+      acknowledge: true,
+      ...identity,
+      sessionId: "session-ack",
+    });
+    expect(result.isError, result.content[0]?.text).toBeUndefined();
+    expect(toolJson(result)).toMatchObject({
+      requirements: ["REQ-SPEC-TABS-1"],
+      stale: { stale: false, causes: [] },
+      acknowledgedAt: expect.any(String),
+    });
+
+    const links = await getLinks(app, project.id, task.id);
+    expect(links.stale.stale).toBe(false);
+    expect(links.requirements[0]).toMatchObject({
+      acknowledgedByAgent: true,
+      reviewed: false,
+    });
+
+    const [link] = await db
+      .select()
+      .from(agentTaskRequirementTable)
+      .where(eq(agentTaskRequirementTable.taskId, task.id));
+    const [actor] = await db
+      .select()
+      .from(agentActorTable)
+      .where(eq(agentActorTable.id, link?.acknowledgedActorId ?? ""));
+    expect(actor).toMatchObject({
+      workspaceId: project.workspaceId,
+      onBehalfOf: member.user.id,
+      ...identity,
+    });
+    const acknowledgement = (await entriesFor(project.id)).filter(
+      (entry) => entry.taskId === task.id,
+    );
+    expect(acknowledgement).toEqual([
+      expect.objectContaining({
+        kind: "decision",
+        actorId: actor?.id,
+        createdBy: null,
+        sessionId: "session-ack",
+      }),
+    ]);
+
+    // A person's review signs the agent's acknowledgement off.
+    expect(
+      (await post(app, `/api/agent-task-link/${project.id}/${task.id}/review`))
+        .status,
+    ).toBe(200);
+    expect(
+      (await getLinks(app, project.id, task.id)).requirements[0],
+    ).toMatchObject({ acknowledgedByAgent: true, reviewed: true });
   });
 
   describe("agent-autoapply", () => {
