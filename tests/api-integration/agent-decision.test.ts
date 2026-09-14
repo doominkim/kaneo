@@ -1058,7 +1058,7 @@ describe("API integration: ADR", () => {
       ).toBe(true);
     });
 
-    it("[REQ-AGENT-AUTOAPPLY-20] 다른 ADR 을 대체한 ADR 을 삭제하면 대체됐던 ADR 이 accepted 로 돌아온다", async () => {
+    it("[REQ-AGENT-AUTOAPPLY-20] 다른 ADR 을 대체한 accepted ADR 을 삭제하면 대체됐던 ADR 이 accepted 로 돌아온다", async () => {
       const { admin, project, app } = await adminSetup();
       const previous = await jsonDecision(
         await createDecision(app, project.id, { title: "Original", ...agent }),
@@ -1071,6 +1071,7 @@ describe("API integration: ADR", () => {
         }),
       );
       expect((await rowOf(previous.id))?.status).toBe("superseded");
+      expect((await rowOf(replacement.id))?.status).toBe("accepted");
 
       const deleted = await lifecycle(
         app,
@@ -1146,7 +1147,7 @@ describe("API integration: ADR", () => {
       expect((await rowOf(replacement.id))?.deletedAt).not.toBeNull();
     });
 
-    it("[REQ-AGENT-AUTOAPPLY-22] 대체 관계가 있는 ADR 복구는 대체됐던 ADR 이 accepted 이고 삭제되지 않았을 때만 다시 대체하고, 아니면 409", async () => {
+    it("[REQ-AGENT-AUTOAPPLY-22] 삭제 전 accepted 였고 다른 ADR 을 대체했던 ADR 을 복구하면 대체됐던 ADR 이 accepted 이고 삭제되지 않았을 때만 다시 대체하고, 아니면 409", async () => {
       const { admin, project, app } = await adminSetup();
       const previous = await jsonDecision(
         await createDecision(app, project.id, { title: "Original", ...agent }),
@@ -1159,6 +1160,7 @@ describe("API integration: ADR", () => {
         }),
       );
 
+      expect((await rowOf(replacement.id))?.status).toBe("accepted");
       await lifecycle(app, project.id, replacement.id, "delete");
       expect((await rowOf(previous.id))?.status).toBe("accepted");
       const restored = await jsonDecision(
@@ -1217,6 +1219,113 @@ describe("API integration: ADR", () => {
         (await lifecycle(app, project.id, replacement.id, "restore")).status,
       ).toBe(409);
       expect((await rowOf(replacement.id))?.deletedAt).not.toBeNull();
+    });
+
+    /** P ← D ← E: D superseded P and was itself superseded by E. */
+    async function seedChain(app: App, projectId: string) {
+      const previous = await jsonDecision(
+        await createDecision(app, projectId, { title: "P original" }),
+      );
+      const middle = await jsonDecision(
+        await createDecision(app, projectId, {
+          title: "D middle",
+          supersedesDecisionId: previous.id,
+        }),
+      );
+      const latest = await jsonDecision(
+        await createDecision(app, projectId, {
+          title: "E latest",
+          supersedesDecisionId: middle.id,
+        }),
+      );
+      return { previous, middle, latest };
+    }
+
+    function addedSince(
+      before: Array<{ id: string }>,
+      after: Awaited<ReturnType<typeof entriesFor>>,
+    ) {
+      return after
+        .filter((entry) => !before.some((prior) => prior.id === entry.id))
+        .map((entry) => [entry.kind, entry.summary]);
+    }
+
+    it("[REQ-AGENT-AUTOAPPLY-44] 이미 superseded 인 ADR 을 삭제하면 대체됐던 ADR 도 대체한 ADR 도 상태가 바뀌지 않는다", async () => {
+      const { admin, project, app } = await adminSetup();
+      const { previous, middle, latest } = await seedChain(app, project.id);
+      const previousBefore = await rowOf(previous.id);
+      const latestBefore = await rowOf(latest.id);
+      expect(previousBefore?.status).toBe("superseded");
+      expect((await rowOf(middle.id))?.status).toBe("superseded");
+      expect(latestBefore?.status).toBe("accepted");
+      const entriesBefore = await entriesFor(project.id);
+
+      const deleted = await lifecycle(app, project.id, middle.id, "delete");
+      expect(deleted.status, await deleted.clone().text()).toBe(200);
+      expect(await deleted.json()).toMatchObject({
+        id: middle.id,
+        deletedBy: admin.user.id,
+        restoredDecisionId: null,
+      });
+
+      expect(await rowOf(previous.id)).toMatchObject({
+        status: "superseded",
+        deletedAt: null,
+        updatedAt: previousBefore?.updatedAt,
+      });
+      expect(await rowOf(latest.id)).toMatchObject({
+        status: "accepted",
+        deletedAt: null,
+        updatedAt: latestBefore?.updatedAt,
+      });
+      const middleRow = await rowOf(middle.id);
+      expect(middleRow?.status).toBe("superseded");
+      expect(middleRow?.deletedAt).not.toBeNull();
+
+      // Only the delete itself is on the timeline.
+      expect(addedSince(entriesBefore, await entriesFor(project.id))).toEqual([
+        ["work", "ADR-002 삭제 · D middle"],
+      ]);
+      expect(
+        (await listDecisions(app, project.id)).decisions.map((d) => d.id),
+      ).toEqual([latest.id]);
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-44] 이미 superseded 인 ADR 을 복구하면 삭제만 풀고 다른 ADR 의 상태는 바꾸지 않는다", async () => {
+      const { project, app } = await adminSetup();
+      const { previous, middle, latest } = await seedChain(app, project.id);
+      expect(
+        (await lifecycle(app, project.id, middle.id, "delete")).status,
+      ).toBe(200);
+      const previousBefore = await rowOf(previous.id);
+      const latestBefore = await rowOf(latest.id);
+      const entriesBefore = await entriesFor(project.id);
+
+      const restored = await jsonDecision(
+        await lifecycle(app, project.id, middle.id, "restore"),
+      );
+      expect(restored).toMatchObject({
+        id: middle.id,
+        status: "superseded",
+        deletedAt: null,
+        deletedBy: null,
+        supersedes: { id: previous.id, status: "superseded" },
+        supersededBy: { id: latest.id, status: "accepted" },
+      });
+
+      expect(await rowOf(previous.id)).toMatchObject({
+        status: "superseded",
+        deletedAt: null,
+        updatedAt: previousBefore?.updatedAt,
+      });
+      expect(await rowOf(latest.id)).toMatchObject({
+        status: "accepted",
+        deletedAt: null,
+        updatedAt: latestBefore?.updatedAt,
+      });
+      expect(addedSince(entriesBefore, await entriesFor(project.id))).toEqual([
+        ["work", "ADR-002 복구 · D middle"],
+      ]);
     });
 
     it("[REQ-AGENT-AUTOAPPLY-16] API 키로는 ADR 을 삭제·복구하지 못한다", async () => {

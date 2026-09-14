@@ -13,7 +13,8 @@ import { removalEntry, statusEntry } from "./decision-timeline";
 /*
  * The human side of an auto-applied ADR (agent-autoapply): review, soft
  * delete and restore. The routes refuse API keys before calling these. All
- * timeline entries are authored by the calling person.
+ * timeline entries are authored by the calling person, one per ADR that
+ * actually changed.
  */
 
 function inProject(projectId: string, decisionId: string) {
@@ -43,9 +44,11 @@ export async function reviewDecision(input: {
 }
 
 /**
- * Soft-deletes D. When D had superseded P, P goes back to `accepted` — a
- * wrong replacement is undone by deleting it. If P is no longer `superseded`
- * or is itself deleted, nothing is restored and only D is deleted.
+ * Soft-deletes D. When D is the accepted ADR that superseded P, P goes back
+ * to `accepted` — a wrong replacement is undone by deleting it — unless P is
+ * no longer `superseded` or is itself deleted. A D that is already superseded
+ * is history rather than the live replacement of anything, so deleting it
+ * changes no other ADR.
  */
 export async function deleteDecision(input: {
   workspaceId: string;
@@ -68,7 +71,7 @@ export async function deleteDecision(input: {
     if (!deleted) throw new HTTPException(404, { message: "ADR not found" });
 
     let restored: AgentDecision | undefined;
-    if (deleted.supersedesDecisionId) {
+    if (deleted.status === "accepted" && deleted.supersedesDecisionId) {
       [restored] = await tx
         .update(agentDecisionTable)
         .set({ status: "accepted", updatedAt: now })
@@ -101,10 +104,13 @@ export async function deleteDecision(input: {
 }
 
 /**
- * Restores D to how it was before the delete. When D supersedes P, P must
- * still be `accepted` and not deleted to be superseded again; otherwise the
- * restore is a 409 and nothing changes, because two live replacements of one
- * ADR, or a replacement of a deleted one, is not a state D was in.
+ * Restores D to how it was before the delete. A deleted ADR cannot be
+ * superseded, so D's status is still the one it had when it was deleted.
+ *
+ * When D is accepted and supersedes P, P must still be `accepted` and not
+ * deleted to be superseded again; otherwise the restore is a 409 and nothing
+ * changes, because two live replacements of one ADR, or a replacement of a
+ * deleted one, is not a state D was in. A superseded D is only un-deleted.
  */
 export async function restoreDecision(input: {
   workspaceId: string;
@@ -128,7 +134,7 @@ export async function restoreDecision(input: {
       if (!target) throw new HTTPException(404, { message: "ADR not found" });
 
       let resuperseded: AgentDecision | undefined;
-      if (target.supersedesDecisionId) {
+      if (target.status === "accepted" && target.supersedesDecisionId) {
         [resuperseded] = await tx
           .update(agentDecisionTable)
           .set({ status: "superseded", updatedAt: now })

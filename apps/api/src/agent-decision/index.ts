@@ -165,7 +165,7 @@ const deleteRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Delete an ADR",
   description:
-    "Human-only soft delete for project:update holders. The row is kept and stamped `deletedAt`/`deletedBy`, and disappears from the default listing, the detail and replacement links. When the ADR had superseded another one that is still `superseded` and not deleted, that one returns to `accepted` in the same transaction. Appends timeline entries for both changes.",
+    "Human-only soft delete for project:update holders. The row is kept and stamped `deletedAt`/`deletedBy`, and disappears from the default listing, the detail and replacement links. When an accepted ADR had superseded another one that is still `superseded` and not deleted, that one returns to `accepted` in the same transaction; deleting an ADR that is itself superseded changes no other ADR. Appends a timeline entry for each change.",
   middleware: [
     workspaceAccess.fromProject("projectId"),
     requireWorkspacePermission({ project: ["update"] }),
@@ -187,7 +187,7 @@ const restoreRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Restore a deleted ADR",
   description:
-    "Human-only, project:update. Clears `deletedAt`/`deletedBy`. When the ADR supersedes another one, that one must still be `accepted` and not deleted, and is superseded again in the same transaction; otherwise the restore is a 409 and nothing changes. Appends timeline entries for both changes.",
+    "Human-only, project:update. Clears `deletedAt`/`deletedBy`. When an accepted ADR supersedes another one, that one must still be `accepted` and not deleted, and is superseded again in the same transaction; otherwise the restore is a 409 and nothing changes. Restoring an ADR that is itself superseded changes no other ADR. Appends a timeline entry for each change.",
   middleware: [
     workspaceAccess.fromProject("projectId"),
     requireWorkspacePermission({ project: ["update"] }),

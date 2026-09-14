@@ -1845,6 +1845,48 @@ describe("API integration: agent terms", () => {
       expect((await restore(app, ws, term.id)).status).toBe(404);
     });
 
+    it("[REQ-AGENT-AUTOAPPLY-43] deleting and restoring a term writes no timeline entry; its deleted_by and deleted_at are the record", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const ws = admin.workspace.id;
+      // A project and a ledger entry exist, so a stray timeline write would
+      // have somewhere to land.
+      const { entry } = await seedSourceEntry(ws);
+      const term = await seedTerm(ws, {
+        canonical: "Ledger",
+        sourceEntryId: entry.id,
+      });
+
+      mockAuthenticatedSession(admin.user);
+      const { app } = createApp();
+      const timeline = () =>
+        db
+          .select({ id: agentEntryTable.id })
+          .from(agentEntryTable)
+          .where(eq(agentEntryTable.workspaceId, ws));
+      const termRow = async () => {
+        const [row] = await db
+          .select()
+          .from(agentTermTable)
+          .where(eq(agentTermTable.id, term.id));
+        return row;
+      };
+      const before = await timeline();
+      expect(before).toHaveLength(1);
+
+      expect((await remove(app, ws, term.id)).status).toBe(200);
+      const deleted = await termRow();
+      expect(deleted?.deletedBy).toBe(admin.user.id);
+      expect(deleted?.deletedAt).toBeInstanceOf(Date);
+      expect(await timeline()).toEqual(before);
+
+      expect((await restore(app, ws, term.id)).status).toBe(200);
+      expect(await termRow()).toMatchObject({
+        deletedBy: null,
+        deletedAt: null,
+      });
+      expect(await timeline()).toEqual(before);
+    });
+
     it("deletes a disputed or retired term too — confidence and state do not gate it", async () => {
       const admin = await createWorkspaceMember({ role: "admin" });
       const disputed = await seedTerm(admin.workspace.id, {
