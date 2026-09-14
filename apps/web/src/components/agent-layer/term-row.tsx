@@ -127,7 +127,7 @@ type TermRowProps = {
   onSetDomain?: (term: AgentTerm, domainId: string | null) => void;
   /**
    * Records the review when a person opens an unreviewed item's definition
-   * (agent-autoapply). Absent where the viewer cannot review.
+   * (agent-autoapply). Any reader may record it.
    */
   onOpenUnreviewed?: (term: AgentTerm) => unknown;
   /** Display name of whoever deleted the item, for the deleted filter. */

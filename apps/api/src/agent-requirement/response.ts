@@ -69,7 +69,7 @@ export const requirementItemSchema = z
     createdAt: responseTimestamp,
     updatedAt: responseTimestamp.openapi({
       description:
-        "Moves only when `text` or `status` changes. Downstream stale checks compare against this.",
+        "Moves only when `text`, `status`, `layer` or `story` changes. Downstream stale checks compare against this.",
     }),
     coverage: z.array(requirementCoverageSchema),
     designs: z.array(

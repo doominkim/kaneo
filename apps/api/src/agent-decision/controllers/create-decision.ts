@@ -20,6 +20,7 @@ import {
   creatorColumns,
   type DecisionAuthor,
 } from "./decision-author";
+import { lockChainRoot } from "./decision-chain";
 import { getDecision } from "./decision-record";
 import { statusEntry } from "./decision-timeline";
 
@@ -38,6 +39,8 @@ export type CreateDecisionInput = {
   sourceEntryId?: string | null;
   supersedesDecisionId?: string | null;
   author: DecisionAuthor;
+  /** An API-key call: authored by the key's owner, but not a review. */
+  viaApiKey?: boolean;
 };
 
 function nullableText(value: string | null | undefined) {
@@ -97,6 +100,10 @@ export async function createDecision(input: CreateDecisionInput) {
             message: "The ADR to supersede was not found",
           });
         }
+        // Serialises with delete and restore in the same chain (see
+        // decision-chain.ts); the conditional update below then sees the
+        // state they committed.
+        await lockChainRoot(tx, input.projectId, previous.id);
       }
 
       const [counter] = await tx
@@ -152,7 +159,7 @@ export async function createDecision(input: CreateDecisionInput) {
           refs: input.refs ?? null,
           sourceEntryId: input.sourceEntryId ?? null,
           supersedesDecisionId: previous?.id ?? null,
-          ...acceptanceColumns(input.author, now),
+          ...acceptanceColumns(input.author, now, input.viaApiKey),
           ...creatorColumns(input.author),
           createdAt: now,
           updatedAt: now,

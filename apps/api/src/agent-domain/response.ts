@@ -59,6 +59,10 @@ const linkedTermSchema = z
     canonical: z.string(),
     confidence: z.string(),
     state: z.string(),
+    reviewed: z.boolean().openapi({
+      description:
+        "False while no person has reviewed the item. It applies either way; this tells a reader whether anyone has looked.",
+    }),
   })
   .openapi("AgentDomainTerm");
 

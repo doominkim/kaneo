@@ -526,7 +526,8 @@ describe("API integration: agent terms", () => {
       expect((await filed.json()) as Term).toMatchObject({
         id: term.id,
         domainId: page.id,
-        confidence: "proposed",
+        // The column default since 0014: a term applies on insert.
+        confidence: "confirmed",
       });
       const unfiled = await patch(asAdmin, term.id, null);
       expect(((await unfiled.json()) as Term).domainId).toBeNull();
@@ -621,7 +622,9 @@ describe("API integration: agent terms", () => {
           aliases: [],
           notToConfuseWith: [],
           anchors: [],
-          confidence: "proposed",
+          // `proposed` is refused by a CHECK since 0014; `disputed` is the
+          // other non-confirmed value a filter can still select.
+          confidence: "disputed",
           state: "active",
         },
         {
@@ -639,7 +642,7 @@ describe("API integration: agent terms", () => {
           aliases: [],
           notToConfuseWith: [],
           anchors: [],
-          confidence: "proposed",
+          confidence: "disputed",
           state: "retired",
         },
       ]);
@@ -681,12 +684,12 @@ describe("API integration: agent terms", () => {
       mockAuthenticatedSession(member.user);
       const { app } = createApp();
 
-      const proposed = (await (
+      const disputed = (await (
         await app.request(
-          `/api/agent-term/${member.workspace.id}?confidence=proposed`,
+          `/api/agent-term/${member.workspace.id}?confidence=disputed`,
         )
       ).json()) as TermList;
-      expect(proposed.terms.map((term) => term.canonical)).toEqual([
+      expect(disputed.terms.map((term) => term.canonical)).toEqual([
         "Mid",
         "Zeta",
       ]);
@@ -716,8 +719,15 @@ describe("API integration: agent terms", () => {
         .insert(agentDomainTable)
         .values({ workspaceId: ws, slug: "ops", title: "Ops" })
         .returning();
+      // `confidence` now defaults to `confirmed` and `proposed` is refused by
+      // a CHECK (0014), so the non-confirmed rows are explicitly disputed.
       await db.insert(agentTermTable).values([
-        { workspaceId: ws, canonical: "Filed", domainId: billing.id },
+        {
+          workspaceId: ws,
+          canonical: "Filed",
+          domainId: billing.id,
+          confidence: "disputed",
+        },
         {
           workspaceId: ws,
           canonical: "FiledConfirmed",
@@ -725,7 +735,7 @@ describe("API integration: agent terms", () => {
           confidence: "confirmed",
         },
         { workspaceId: ws, canonical: "Elsewhere", domainId: ops.id },
-        { workspaceId: ws, canonical: "Loose" },
+        { workspaceId: ws, canonical: "Loose", confidence: "disputed" },
         {
           workspaceId: ws,
           canonical: "LooseConfirmed",
@@ -771,7 +781,7 @@ describe("API integration: agent terms", () => {
       await expect(
         list(`domainId=${billing.id}&confidence=confirmed`),
       ).resolves.toEqual(["FiledConfirmed"]);
-      await expect(list("domainId=none&confidence=proposed")).resolves.toEqual([
+      await expect(list("domainId=none&confidence=disputed")).resolves.toEqual([
         "Loose",
       ]);
     });
@@ -1185,6 +1195,10 @@ describe("API integration: agent terms", () => {
   });
 
   describe("confirming", () => {
+    /**
+     * An applied term no person has reviewed. `proposed` itself is refused by
+     * a CHECK since 0014, so "not yet ruled on" is the missing review.
+     */
     async function seedProposedTerm(workspaceId: string) {
       const [term] = await db
         .insert(agentTermTable)
@@ -1194,7 +1208,7 @@ describe("API integration: agent terms", () => {
           aliases: [],
           notToConfuseWith: [],
           anchors: [],
-          confidence: "proposed",
+          confidence: "confirmed",
         })
         .returning();
       return term;
@@ -1219,7 +1233,7 @@ describe("API integration: agent terms", () => {
         .select()
         .from(agentTermTable)
         .where(eq(agentTermTable.id, term.id));
-      expect(persisted?.confidence).toBe("proposed");
+      expect(persisted).toMatchObject({ reviewerId: null, reviewedAt: null });
     });
 
     it("confirms for an admin and stamps lastVerifiedAt", async () => {
@@ -1328,7 +1342,7 @@ describe("API integration: agent terms", () => {
         .select()
         .from(agentTermTable)
         .where(eq(agentTermTable.id, foreignTerm.id));
-      expect(persisted?.confidence).toBe("proposed");
+      expect(persisted).toMatchObject({ reviewerId: null, reviewedAt: null });
     });
 
     it("[REQ-AGENT-AUTOAPPLY-9] refuses a review sent with an API key, even from a workspace:update holder", async () => {
@@ -1766,6 +1780,197 @@ describe("API integration: agent terms", () => {
       await expect(again.text()).resolves.toBe(
         "Term already exists and was rejected: Ledger — Two different things are called this",
       );
+    });
+  });
+
+  describe("review route", () => {
+    function markReviewed(
+      app: ReturnType<typeof createApp>["app"],
+      workspaceId: string,
+      termId: string,
+      headers: Record<string, string> = {},
+    ) {
+      return app.request(`/api/agent-term/${workspaceId}/${termId}/review`, {
+        method: "POST",
+        headers,
+      });
+    }
+
+    async function seedUnreviewed(workspaceId: string) {
+      const [term] = await db
+        .insert(agentTermTable)
+        .values({
+          workspaceId,
+          canonical: "Ledger",
+          confidence: "confirmed",
+          lastVerifiedAt: new Date("2026-09-01T00:00:00.000Z"),
+        })
+        .returning();
+      return term;
+    }
+
+    async function termRow(termId: string) {
+      const [row] = await db
+        .select()
+        .from(agentTermTable)
+        .where(eq(agentTermTable.id, termId));
+      return row;
+    }
+
+    it("[REQ-AGENT-AUTOAPPLY-8] [REQ-AGENT-AUTOAPPLY-9] any member of the workspace marks a knowledge item reviewed; only the review marker moves", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const ws = admin.workspace.id;
+      const term = await seedUnreviewed(ws);
+      const viewerId = `user-${randomUUID()}`;
+      const [viewer] = await db
+        .insert(schema.userTable)
+        .values({
+          id: viewerId,
+          email: `${viewerId}@example.com`,
+          emailVerified: true,
+          name: "Viewer",
+        })
+        .returning();
+      await db.insert(schema.workspaceUserTable).values({
+        workspaceId: ws,
+        userId: viewerId,
+        role: "viewer",
+        joinedAt: new Date(),
+      });
+
+      mockAuthenticatedSession(viewer);
+      const asViewer = createApp().app;
+      const reviewed = await markReviewed(asViewer, ws, term.id);
+      expect(reviewed.status, await reviewed.clone().text()).toBe(200);
+      expect(await reviewed.json()).toMatchObject({
+        id: term.id,
+        confidence: "confirmed",
+        reviewerId: viewerId,
+        reviewer: { userId: viewerId, name: "Viewer" },
+        reviewed: true,
+        lastVerifiedAt: "2026-09-01T00:00:00.000Z",
+      });
+      expect(await termRow(term.id)).toMatchObject({
+        confidence: "confirmed",
+        reviewerId: viewerId,
+        lastVerifiedAt: new Date("2026-09-01T00:00:00.000Z"),
+      });
+      // Reading is not a verdict: the viewer still cannot confirm or dispute.
+      expect(
+        (
+          await confirm(asViewer, ws, {
+            termId: term.id,
+            confidence: "confirmed",
+          })
+        ).status,
+      ).toBe(403);
+      expect(
+        await db
+          .select({ id: agentEntryTable.id })
+          .from(agentEntryTable)
+          .where(eq(agentEntryTable.workspaceId, ws)),
+      ).toEqual([]);
+
+      const outsider = await createWorkspaceMember({ role: "admin" });
+      mockAuthenticatedSession(outsider.user);
+      expect((await markReviewed(createApp().app, ws, term.id)).status).toBe(
+        403,
+      );
+
+      mockAuthenticatedSession(admin.user);
+      const asAdmin = createApp().app;
+      expect((await markReviewed(asAdmin, ws, "nope")).status).toBe(404);
+      await db
+        .update(agentTermTable)
+        .set({ deletedAt: new Date(), deletedBy: admin.user.id })
+        .where(eq(agentTermTable.id, term.id));
+      expect((await markReviewed(asAdmin, ws, term.id)).status).toBe(404);
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-9] an API key cannot mark a knowledge item reviewed", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const term = await seedUnreviewed(admin.workspace.id);
+      mockAuthenticatedSession(admin.user);
+      const { app } = createApp();
+      await seedApiKey(admin.user.id);
+
+      expect(
+        (await markReviewed(app, admin.workspace.id, term.id, viaKey)).status,
+      ).toBe(403);
+      expect(await termRow(term.id)).toMatchObject({
+        reviewerId: null,
+        reviewedAt: null,
+      });
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-6] a proposal sent with an API key is owned by the key's owner but stays unreviewed", async () => {
+      const member = await createWorkspaceMember();
+      mockAuthenticatedSession(member.user);
+      const { app } = createApp();
+      await seedApiKey(member.user.id);
+
+      const response = await app.request("/api/agent-term", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...viaKey },
+        body: JSON.stringify({
+          workspaceId: member.workspace.id,
+          canonical: "Keyed",
+        }),
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      const term = (await response.json()) as Term;
+      expect(term).toMatchObject({
+        confidence: "confirmed",
+        actorId: null,
+        reviewerId: null,
+        reviewedAt: null,
+        reviewed: false,
+      });
+      expect((await termRow(term.id))?.ownerId).toBe(member.user.id);
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-14] restoring a term whose replacement is deleted is refused until the replacement is back", async () => {
+      const admin = await createWorkspaceMember({ role: "admin" });
+      const ws = admin.workspace.id;
+      const [replacement] = await db
+        .insert(agentTermTable)
+        .values({ workspaceId: ws, canonical: "Ledger" })
+        .returning();
+      const [referrer] = await db
+        .insert(agentTermTable)
+        .values({
+          workspaceId: ws,
+          canonical: "Work log",
+          state: "retired",
+          supersededBy: replacement.id,
+        })
+        .returning();
+      mockAuthenticatedSession(admin.user);
+      const { app } = createApp();
+      const call = (termId: string, action: "delete" | "restore") =>
+        app.request(
+          `/api/agent-term/${ws}/${termId}${action === "restore" ? "/restore" : ""}`,
+          { method: action === "restore" ? "POST" : "DELETE" },
+        );
+
+      expect((await call(referrer.id, "delete")).status).toBe(200);
+      expect((await call(replacement.id, "delete")).status).toBe(200);
+
+      const refused = await call(referrer.id, "restore");
+      expect(refused.status).toBe(409);
+      await expect(refused.text()).resolves.toBe(
+        'Term is superseded by "Ledger", which is deleted; restore that term first',
+      );
+      expect((await termRow(referrer.id))?.deletedAt).not.toBeNull();
+
+      expect((await call(replacement.id, "restore")).status).toBe(200);
+      const restored = await call(referrer.id, "restore");
+      expect(restored.status).toBe(200);
+      expect(await restored.json()).toMatchObject({
+        id: referrer.id,
+        supersededBy: replacement.id,
+        deletedAt: null,
+      });
     });
   });
 

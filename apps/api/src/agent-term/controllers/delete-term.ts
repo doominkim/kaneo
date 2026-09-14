@@ -15,62 +15,70 @@ import { agentTermTable } from "../../database/schema-agent-layer";
  * read. That is a 409 and not a 403: the caller has the right, the row is in
  * the wrong state.
  *
+ * The term's row is locked before the referrer check. Restoring a referrer
+ * locks this row too (see `restoreTerm`), so the two cannot interleave into a
+ * live referrer naming a deleted term.
+ *
  * Scoped by workspace: a term id from another workspace is "not found", and
  * so is one that is already deleted.
  */
 async function deleteTerm(workspaceId: string, termId: string, userId: string) {
-  const [term] = await db
-    .select({ id: agentTermTable.id })
-    .from(agentTermTable)
-    .where(
-      and(
-        eq(agentTermTable.id, termId),
-        eq(agentTermTable.workspaceId, workspaceId),
-        isNull(agentTermTable.deletedAt),
-      ),
-    )
-    .limit(1);
+  return db.transaction(async (tx) => {
+    const [term] = await tx
+      .select({ id: agentTermTable.id })
+      .from(agentTermTable)
+      .where(
+        and(
+          eq(agentTermTable.id, termId),
+          eq(agentTermTable.workspaceId, workspaceId),
+          isNull(agentTermTable.deletedAt),
+        ),
+      )
+      .limit(1)
+      .for("update");
 
-  if (!term) {
-    throw new HTTPException(404, { message: "Term not found" });
-  }
+    if (!term) {
+      throw new HTTPException(404, { message: "Term not found" });
+    }
 
-  const [referrer] = await db
-    .select({ id: agentTermTable.id, canonical: agentTermTable.canonical })
-    .from(agentTermTable)
-    .where(
-      and(
-        eq(agentTermTable.workspaceId, workspaceId),
-        eq(agentTermTable.supersededBy, termId),
-        isNull(agentTermTable.deletedAt),
-      ),
-    )
-    .limit(1);
+    const [referrer] = await tx
+      .select({ id: agentTermTable.id, canonical: agentTermTable.canonical })
+      .from(agentTermTable)
+      .where(
+        and(
+          eq(agentTermTable.workspaceId, workspaceId),
+          eq(agentTermTable.supersededBy, termId),
+          isNull(agentTermTable.deletedAt),
+        ),
+      )
+      .limit(1);
 
-  if (referrer) {
-    throw new HTTPException(409, {
-      message: `Term is referenced as the replacement of "${referrer.canonical}" and cannot be deleted`,
-    });
-  }
+    if (referrer) {
+      throw new HTTPException(409, {
+        message: `Term is referenced as the replacement of "${referrer.canonical}" and cannot be deleted`,
+      });
+    }
 
-  // The predicate repeats `deleted_at IS NULL` so two concurrent deletes
-  // cannot both win: the second finds no row and reports 404.
-  const [deleted] = await db
-    .update(agentTermTable)
-    .set({ deletedAt: new Date(), deletedBy: userId })
-    .where(
-      and(
-        eq(agentTermTable.id, termId),
-        eq(agentTermTable.workspaceId, workspaceId),
-        isNull(agentTermTable.deletedAt),
-      ),
-    )
-    .returning({ id: agentTermTable.id, canonical: agentTermTable.canonical });
+    const [deleted] = await tx
+      .update(agentTermTable)
+      .set({ deletedAt: new Date(), deletedBy: userId })
+      .where(
+        and(
+          eq(agentTermTable.id, termId),
+          eq(agentTermTable.workspaceId, workspaceId),
+          isNull(agentTermTable.deletedAt),
+        ),
+      )
+      .returning({
+        id: agentTermTable.id,
+        canonical: agentTermTable.canonical,
+      });
 
-  if (!deleted) {
-    throw new HTTPException(404, { message: "Term not found" });
-  }
-  return deleted;
+    if (!deleted) {
+      throw new HTTPException(404, { message: "Term not found" });
+    }
+    return deleted;
+  });
 }
 
 export default deleteTerm;

@@ -75,7 +75,7 @@ const createRouteDefinition = createRoute({
   tags: ["Agent Layer"],
   summary: "Create an ADR",
   description:
-    "Creates an accepted ADR at once — there is no draft — and atomically allocates its monotonically increasing project-local number. With `supersedesDecisionId` the previous accepted ADR becomes superseded in the same transaction. Every linked task must belong to the project. Provider and model together attribute the ADR to an agent, which leaves it unreviewed until a person reviews it; omitting both attributes it to the calling person, who is recorded as acceptor and reviewer. Creation and replacement append structured timeline entries.",
+    "Creates an accepted ADR at once — there is no draft — and atomically allocates its monotonically increasing project-local number. With `supersedesDecisionId` the previous accepted ADR becomes superseded in the same transaction. Every linked task must belong to the project. Provider and model together attribute the ADR to an agent, which leaves it unreviewed until a person reviews it; omitting both attributes it to the calling person, who is recorded as acceptor and, when signed in, reviewer. An API-key call is attributed to the key's owner but leaves the ADR unreviewed. Creation and replacement append structured timeline entries.",
   middleware: [
     workspaceAccess.fromProject("projectId"),
     requireWorkspacePermission({ task: ["update"] }),
@@ -123,7 +123,7 @@ const promoteRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Promote a legacy decision entry to an ADR",
   description:
-    "Idempotently copies an existing, visible `kind=decision` ledger entry into an accepted ADR reviewed by the calling person. `decision.why`, `decision.what`, and `decision.rejected` map to ADR fields; the freeform entry body is preserved separately as `sourceNote`, not asserted to be consequences. The source entry is never changed. If the ADR promoted from the entry was deleted, promoting again is a 409.",
+    "Idempotently copies an existing, visible `kind=decision` ledger entry into an accepted ADR, reviewed by the calling person when signed in and left unreviewed for an API-key call. `decision.why`, `decision.what`, and `decision.rejected` map to ADR fields; the freeform entry body is preserved separately as `sourceNote`, not asserted to be consequences. The source entry is never changed. If the ADR promoted from the entry was deleted, promoting again is a 409.",
   middleware: [
     workspaceAccess.fromProject("projectId"),
     requireWorkspacePermission({ task: ["update"] }),
@@ -165,7 +165,7 @@ const deleteRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Delete an ADR",
   description:
-    "Human-only soft delete for project:update holders. The row is kept and stamped `deletedAt`/`deletedBy`, and disappears from the default listing, the detail and replacement links. When an accepted ADR had superseded another one that is still `superseded` and not deleted, that one returns to `accepted` in the same transaction; deleting an ADR that is itself superseded changes no other ADR. Appends a timeline entry for each change.",
+    "Human-only soft delete for project:update holders. The row is kept and stamped `deletedAt`/`deletedBy`, and disappears from the default listing, the detail and replacement links. Deleting an accepted ADR returns its nearest non-deleted predecessor in the supersede chain (skipping deleted ones) to `accepted` in the same transaction, so a chain with any live ADR keeps exactly one accepted ADR; deleting an ADR that is itself superseded changes no other ADR. Appends a timeline entry for each change.",
   middleware: [
     workspaceAccess.fromProject("projectId"),
     requireWorkspacePermission({ project: ["update"] }),
@@ -187,7 +187,7 @@ const restoreRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Restore a deleted ADR",
   description:
-    "Human-only, project:update. Clears `deletedAt`/`deletedBy`. When an accepted ADR supersedes another one, that one must still be `accepted` and not deleted, and is superseded again in the same transaction; otherwise the restore is a 409 and nothing changes. Restoring an ADR that is itself superseded changes no other ADR. Appends a timeline entry for each change.",
+    "Human-only, project:update. Clears `deletedAt`/`deletedBy`; the ADR keeps the status it had when deleted. An accepted ADR is restored when its supersede chain has no live accepted ADR, or when the chain's accepted ADR is its nearest non-deleted predecessor, which is superseded again in the same transaction; any other accepted ADR in the chain is a 409 and nothing changes. A superseded ADR is restored only while a live accepted ADR replaces it further down the chain (409 otherwise), and no other ADR changes. Appends a timeline entry for each change.",
   middleware: [
     workspaceAccess.fromProject("projectId"),
     requireWorkspacePermission({ project: ["update"] }),
@@ -232,6 +232,7 @@ const agentDecision = apiRouter<BaseVariables & { workspaceId: string }>()
         ...body,
         workspaceId: c.get("workspaceId"),
         author,
+        viaApiKey: Boolean(c.get("apiKey")),
       }),
       200,
     );
@@ -247,6 +248,7 @@ const agentDecision = apiRouter<BaseVariables & { workspaceId: string }>()
         projectId,
         entryId,
         userId: c.get("userId"),
+        viaApiKey: Boolean(c.get("apiKey")),
       }),
       200,
     );

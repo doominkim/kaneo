@@ -98,6 +98,9 @@ vi.mock("@/hooks/queries/agent-layer/use-member-names", () => ({
 vi.mock("@/hooks/mutations/agent-layer/use-confirm-agent-term", () => ({
   useConfirmAgentTerm: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
+vi.mock("@/hooks/mutations/agent-layer/use-review-agent-term", () => ({
+  useReviewAgentTerm: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 vi.mock("@/hooks/mutations/agent-layer/use-delete-agent-term", () => ({
   useDeleteAgentTerm: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));

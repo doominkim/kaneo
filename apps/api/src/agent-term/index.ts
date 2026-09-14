@@ -14,6 +14,7 @@ import listTerms from "./controllers/list-terms";
 import proposeTerm from "./controllers/propose-term";
 import resolveTerm from "./controllers/resolve-term";
 import restoreTerm from "./controllers/restore-term";
+import reviewTerm from "./controllers/review-term";
 import setTermDomain from "./controllers/set-term-domain";
 import {
   resolveResultSchema,
@@ -72,7 +73,7 @@ const proposeRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Propose a term",
   description:
-    "Adds a term that applies at once: it is stored `confirmed` and resolves immediately. Send `provider` and `model` together from an agent so the term records which model wrote it — one without the other is a 400; such a term stays unreviewed until a person reviews it. An agent proposal must also send `sourceEntryId`, the ledger entry the definition came out of, or the request is a 400. A person proposes with none of the three and is recorded as the reviewer.",
+    "Adds a term that applies at once: it is stored `confirmed` and resolves immediately. Send `provider` and `model` together from an agent so the term records which model wrote it — one without the other is a 400; such a term stays unreviewed until a person reviews it. An agent proposal must also send `sourceEntryId`, the ledger entry the definition came out of, or the request is a 400. A signed-in person proposes with none of the three and is recorded as the reviewer; an API-key proposal is owned by the key's owner but stays unreviewed.",
   middleware: [
     workspaceAccess.fromBody("workspaceId"),
     requireWorkspacePermission({ task: ["update"] }),
@@ -102,7 +103,7 @@ const confirmRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Review a term",
   description:
-    "Human review outcome; API-key callers get a 403. `confirmed` records the calling user as reviewer with `reviewedAt`, clearing the unreviewed mark on an agent's term; `disputed` requires `rejectReason`, stores it and withdraws the term from resolve. Also stamps lastVerifiedAt, which the re-verification schedule reads. A soft-deleted term is not found.",
+    "Human review outcome; API-key callers get a 403. `confirmed` records the calling user as reviewer with `reviewedAt`, clearing the unreviewed mark on an agent's term; `disputed` requires `rejectReason`, stores it and withdraws the term from resolve. Also stamps lastVerifiedAt, which the re-verification schedule reads. A soft-deleted term is not found. To record only that a person read a term, use `POST /{workspaceId}/{termId}/review`.",
   middleware: [
     workspaceAccess.fromParam("workspaceId"),
     requireWorkspacePermission({ workspace: ["update"] }),
@@ -123,6 +124,23 @@ const confirmRoute = createRoute({
       "No workspace access, missing workspace:update, or API-key caller",
     ),
     404: errorResponse("Term not found"),
+  },
+});
+
+const reviewRoute = createRoute({
+  method: "post",
+  operationId: "reviewAgentTerm",
+  path: "/{workspaceId}/{termId}/review",
+  tags: ["Agent Layer"],
+  summary: "Mark a term reviewed",
+  description:
+    "Human-only: API-key callers get a 403 and no MCP tool exists. Records the calling person as having read the term (`reviewerId`/`reviewedAt`), like reviewing an ADR or a requirement document; any workspace member may do it. Confidence, the reject reason and `lastVerifiedAt` are left alone. A soft-deleted term is not found. Writes no timeline entry.",
+  middleware: [workspaceAccess.fromParam("workspaceId")] as const,
+  request: { params: termParams },
+  responses: {
+    200: jsonResponse("The reviewed term", termSchema),
+    403: errorResponse("No workspace access, or API-key caller"),
+    404: errorResponse("Term not found in this workspace, or deleted"),
   },
 });
 
@@ -186,7 +204,7 @@ const restoreRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Restore a deleted term",
   description:
-    "Human-only, workspace:update. Clears `deletedAt`/`deletedBy`, so the term resolves and lists again with the confidence and review it had.",
+    "Human-only, workspace:update. Clears `deletedAt`/`deletedBy`, so the term resolves and lists again with the confidence and review it had. A term whose `supersededBy` names a deleted term is a 409 until that term is restored.",
   middleware: [
     workspaceAccess.fromParam("workspaceId"),
     requireWorkspacePermission({ workspace: ["update"] }),
@@ -198,6 +216,7 @@ const restoreRoute = createRoute({
       "No workspace access, missing workspace:update, or API-key caller",
     ),
     404: errorResponse("Term not found in this workspace, or not deleted"),
+    409: errorResponse("The term it is superseded by is deleted"),
   },
 });
 
@@ -223,6 +242,7 @@ const agentTerm = apiRouter<BaseVariables & { workspaceId: string }>()
       await proposeTerm({
         ...c.req.valid("json"),
         ownerId: c.get("userId"),
+        viaApiKey: Boolean(c.get("apiKey")),
       }),
       200,
     ),
@@ -242,6 +262,11 @@ const agentTerm = apiRouter<BaseVariables & { workspaceId: string }>()
       ),
       200,
     );
+  })
+  .openapi(reviewRoute, async (c) => {
+    rejectApiKey(c);
+    const { workspaceId, termId } = c.req.valid("param");
+    return c.json(await reviewTerm(workspaceId, termId, c.get("userId")), 200);
   })
   .openapi(setDomainRoute, async (c) => {
     const { workspaceId, termId } = c.req.valid("param");

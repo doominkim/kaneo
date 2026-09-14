@@ -7,6 +7,7 @@ import {
   agentEntryTable,
 } from "../../database/schema-agent-layer";
 import { isConstraintError } from "./database-error";
+import { adrLabel, lockChain } from "./decision-chain";
 import { getDecision } from "./decision-record";
 import { removalEntry, statusEntry } from "./decision-timeline";
 
@@ -14,7 +15,11 @@ import { removalEntry, statusEntry } from "./decision-timeline";
  * The human side of an auto-applied ADR (agent-autoapply): review, soft
  * delete and restore. The routes refuse API keys before calling these. All
  * timeline entries are authored by the calling person, one per ADR that
- * actually changed.
+ * actually changed, in the same transaction as the change.
+ *
+ * Delete and restore keep the supersede-chain invariant described in
+ * `decision-chain.ts`: per chain, at most one live accepted ADR, exactly one
+ * while any ADR of the chain is live.
  */
 
 function inProject(projectId: string, decisionId: string) {
@@ -44,11 +49,11 @@ export async function reviewDecision(input: {
 }
 
 /**
- * Soft-deletes D. When D is the accepted ADR that superseded P, P goes back
- * to `accepted` — a wrong replacement is undone by deleting it — unless P is
- * no longer `superseded` or is itself deleted. A D that is already superseded
- * is history rather than the live replacement of anything, so deleting it
- * changes no other ADR.
+ * Soft-deletes D. When D is accepted, acceptance goes back to D's nearest
+ * live ancestor — walking past ancestors that are deleted themselves — so a
+ * wrong replacement is undone by deleting it. A D that is already superseded
+ * is history rather than the live end of its chain, so deleting it changes no
+ * other ADR.
  */
 export async function deleteDecision(input: {
   workspaceId: string;
@@ -58,6 +63,9 @@ export async function deleteDecision(input: {
 }) {
   const now = new Date();
   return db.transaction(async (tx) => {
+    const chain = await lockChain(tx, input.projectId, input.decisionId);
+    if (!chain) throw new HTTPException(404, { message: "ADR not found" });
+
     const [deleted] = await tx
       .update(agentDecisionTable)
       .set({ deletedAt: now, deletedBy: input.userId })
@@ -71,13 +79,22 @@ export async function deleteDecision(input: {
     if (!deleted) throw new HTTPException(404, { message: "ADR not found" });
 
     let restored: AgentDecision | undefined;
-    if (deleted.status === "accepted" && deleted.supersedesDecisionId) {
+    const ancestor =
+      deleted.status === "accepted"
+        ? chain.nearestLiveAncestor(deleted.id)
+        : null;
+    // The other-accepted check only matters for rows written before the
+    // invariant existed: it never turns one accepted ADR into two.
+    const otherAccepted = chain
+      .liveAccepted()
+      .some((node) => node.id !== deleted.id);
+    if (ancestor?.status === "superseded" && !otherAccepted) {
       [restored] = await tx
         .update(agentDecisionTable)
         .set({ status: "accepted", updatedAt: now })
         .where(
           and(
-            inProject(input.projectId, deleted.supersedesDecisionId),
+            inProject(input.projectId, ancestor.id),
             eq(agentDecisionTable.status, "superseded"),
             isNull(agentDecisionTable.deletedAt),
           ),
@@ -104,13 +121,15 @@ export async function deleteDecision(input: {
 }
 
 /**
- * Restores D to how it was before the delete. A deleted ADR cannot be
- * superseded, so D's status is still the one it had when it was deleted.
+ * Restores D. A deleted ADR cannot be superseded, so D's status is still the
+ * one it had when it was deleted, and it comes back with that status.
  *
- * When D is accepted and supersedes P, P must still be `accepted` and not
- * deleted to be superseded again; otherwise the restore is a 409 and nothing
- * changes, because two live replacements of one ADR, or a replacement of a
- * deleted one, is not a state D was in. A superseded D is only un-deleted.
+ * - D accepted: with no live accepted ADR in the chain, D is simply restored.
+ *   When the chain's accepted ADR is D's nearest live ancestor, that ADR is
+ *   superseded again in the same transaction. Any other accepted ADR means
+ *   the chain moved on without D: 409, nothing changes.
+ * - D superseded: restored only while a live accepted ADR is among its
+ *   descendants, and no other ADR changes; otherwise 409.
  */
 export async function restoreDecision(input: {
   workspaceId: string;
@@ -121,37 +140,45 @@ export async function restoreDecision(input: {
   const now = new Date();
   try {
     const decisionId = await db.transaction(async (tx) => {
-      const [target] = await tx
-        .select()
-        .from(agentDecisionTable)
-        .where(
-          and(
-            inProject(input.projectId, input.decisionId),
-            isNotNull(agentDecisionTable.deletedAt),
-          ),
-        )
-        .limit(1);
-      if (!target) throw new HTTPException(404, { message: "ADR not found" });
+      const chain = await lockChain(tx, input.projectId, input.decisionId);
+      const target = chain?.node(input.decisionId);
+      if (!chain || !target?.deletedAt) {
+        throw new HTTPException(404, { message: "ADR not found" });
+      }
 
       let resuperseded: AgentDecision | undefined;
-      if (target.status === "accepted" && target.supersedesDecisionId) {
-        [resuperseded] = await tx
-          .update(agentDecisionTable)
-          .set({ status: "superseded", updatedAt: now })
-          .where(
-            and(
-              inProject(input.projectId, target.supersedesDecisionId),
-              eq(agentDecisionTable.status, "accepted"),
-              isNull(agentDecisionTable.deletedAt),
-            ),
-          )
-          .returning();
-        if (!resuperseded) {
+      if (target.status === "accepted") {
+        const [accepted, ...more] = chain.liveAccepted();
+        const ancestor = chain.nearestLiveAncestor(target.id);
+        if (accepted && (more.length > 0 || accepted.id !== ancestor?.id)) {
           throw new HTTPException(409, {
-            message:
-              "The ADR this one superseded is no longer accepted, so it cannot be superseded again",
+            message: `${adrLabel(accepted)} is now the accepted ADR of this supersede chain; restoring this one would make a second accepted ADR`,
           });
         }
+        if (accepted) {
+          [resuperseded] = await tx
+            .update(agentDecisionTable)
+            .set({ status: "superseded", updatedAt: now })
+            .where(
+              and(
+                inProject(input.projectId, accepted.id),
+                eq(agentDecisionTable.status, "accepted"),
+                isNull(agentDecisionTable.deletedAt),
+              ),
+            )
+            .returning();
+          if (!resuperseded) {
+            throw new HTTPException(409, {
+              message:
+                "The ADR this one superseded is no longer accepted, so it cannot be superseded again",
+            });
+          }
+        }
+      } else if (!chain.hasLiveAcceptedBelow(target.id)) {
+        throw new HTTPException(409, {
+          message:
+            "No live ADR replaces this superseded ADR; restore the ADR that replaced it first",
+        });
       }
 
       const [restored] = await tx

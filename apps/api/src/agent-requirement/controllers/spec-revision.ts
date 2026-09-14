@@ -7,10 +7,11 @@ import { userTable } from "../../database/schema";
 import {
   agentActorTable,
   agentSpecRevisionTable,
+  type SpecRevisionItem,
 } from "../../database/schema-agent-layer";
 import type { Author } from "./shared";
 
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /** A revision belongs to exactly one requirement set or design. */
 export type RevisionTarget = { setId: string } | { designId: string };
@@ -33,6 +34,8 @@ export async function insertRevision(
     title: string;
     body: string;
     requirementKeys: string[] | null;
+    /** The set's rows after the save; requirement revisions only. */
+    items?: SpecRevisionItem[] | null;
     author: Author;
     revertedFromId?: string | null;
     createdAt: Date;
@@ -45,6 +48,7 @@ export async function insertRevision(
     title: input.title,
     body: input.body,
     requirementKeys: input.requirementKeys,
+    items: input.items ?? null,
     createdBy: "updatedBy" in input.author ? input.author.updatedBy : null,
     actorId: "actorId" in input.author ? input.author.actorId : null,
     revertedFromId: input.revertedFromId ?? null,
@@ -117,4 +121,46 @@ export async function getRevision(target: RevisionTarget, revisionId: string) {
     body: row.body,
     requirementKeys: row.requirementKeys ?? null,
   };
+}
+
+/**
+ * What a revert needs from a revision, including the stored item rows that
+ * the public revision response does not carry.
+ */
+export async function getRevisionContent(
+  target: RevisionTarget,
+  revisionId: string,
+) {
+  const [row] = await db
+    .select({
+      id: agentSpecRevisionTable.id,
+      title: agentSpecRevisionTable.title,
+      body: agentSpecRevisionTable.body,
+      requirementKeys: agentSpecRevisionTable.requirementKeys,
+      items: agentSpecRevisionTable.items,
+    })
+    .from(agentSpecRevisionTable)
+    .where(
+      and(targetCondition(target), eq(agentSpecRevisionTable.id, revisionId)),
+    )
+    .limit(1);
+  if (!row) {
+    throw new HTTPException(404, { message: "Revision not found" });
+  }
+  return row;
+}
+
+/** A set's rows as a revision stores them: seq order, content fields only. */
+export function snapshotItems(
+  rows: Array<SpecRevisionItem & { seq: number }>,
+): SpecRevisionItem[] {
+  return [...rows]
+    .sort((a, b) => a.seq - b.seq || a.key.localeCompare(b.key))
+    .map(({ key, text, layer, story, status }) => ({
+      key,
+      text,
+      layer,
+      story,
+      status,
+    }));
 }

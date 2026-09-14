@@ -48,7 +48,10 @@ export async function reviewDesign(input: {
   return { ...row, reviewedAt, reviewedBy: input.userId };
 }
 
-/** Soft delete; requirement links, task links and revisions are kept and hidden. */
+/**
+ * Soft delete; requirement links, task links and revisions are kept and
+ * hidden. The timeline entry is written in the same transaction.
+ */
 export async function deleteDesign(input: {
   workspaceId: string;
   projectId: string;
@@ -56,23 +59,32 @@ export async function deleteDesign(input: {
   userId: string;
 }) {
   const deletedAt = new Date();
-  const [row] = await db
-    .update(agentDesignTable)
-    .set({ deletedAt, deletedBy: input.userId })
-    .where(
-      and(
-        byFeature(input.projectId, input.feature),
-        isNull(agentDesignTable.deletedAt),
-      ),
-    )
-    .returning({ id: agentDesignTable.id, feature: agentDesignTable.feature });
-  if (!row) throw notFound();
-  await appendEntry({
-    workspaceId: input.workspaceId,
-    userId: input.userId,
-    projectId: input.projectId,
-    kind: "work",
-    summary: `[design:${input.feature}] 설계 문서 삭제`,
+  const row = await db.transaction(async (tx) => {
+    const [deleted] = await tx
+      .update(agentDesignTable)
+      .set({ deletedAt, deletedBy: input.userId })
+      .where(
+        and(
+          byFeature(input.projectId, input.feature),
+          isNull(agentDesignTable.deletedAt),
+        ),
+      )
+      .returning({
+        id: agentDesignTable.id,
+        feature: agentDesignTable.feature,
+      });
+    if (!deleted) throw notFound();
+    await appendEntry(
+      {
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+        projectId: input.projectId,
+        kind: "work",
+        summary: `[design:${input.feature}] 설계 문서 삭제`,
+      },
+      tx,
+    );
+    return deleted;
   });
   return { ...row, deletedAt, deletedBy: input.userId };
 }
@@ -83,23 +95,28 @@ export async function restoreDesign(input: {
   feature: string;
   userId: string;
 }) {
-  const [row] = await db
-    .update(agentDesignTable)
-    .set({ deletedAt: null, deletedBy: null })
-    .where(
-      and(
-        byFeature(input.projectId, input.feature),
-        isNotNull(agentDesignTable.deletedAt),
-      ),
-    )
-    .returning({ id: agentDesignTable.id });
-  if (!row) throw notFound();
-  await appendEntry({
-    workspaceId: input.workspaceId,
-    userId: input.userId,
-    projectId: input.projectId,
-    kind: "work",
-    summary: `[design:${input.feature}] 설계 문서 복구`,
+  await db.transaction(async (tx) => {
+    const [restored] = await tx
+      .update(agentDesignTable)
+      .set({ deletedAt: null, deletedBy: null })
+      .where(
+        and(
+          byFeature(input.projectId, input.feature),
+          isNotNull(agentDesignTable.deletedAt),
+        ),
+      )
+      .returning({ id: agentDesignTable.id });
+    if (!restored) throw notFound();
+    await appendEntry(
+      {
+        workspaceId: input.workspaceId,
+        userId: input.userId,
+        projectId: input.projectId,
+        kind: "work",
+        summary: `[design:${input.feature}] 설계 문서 복구`,
+      },
+      tx,
+    );
   });
   return getDesign(input.projectId, input.feature);
 }

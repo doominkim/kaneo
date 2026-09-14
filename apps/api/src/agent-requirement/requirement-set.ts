@@ -17,6 +17,10 @@ const requirementSetKeysSchema = z
     title: z.string(),
     status: z.string(),
     approvedAt: responseTimestamp.nullable(),
+    reviewed: z.boolean().openapi({
+      description:
+        "False while the set's latest save came from an agent or an API key and no person has reviewed it since. The keys apply either way.",
+    }),
     updatedAt: responseTimestamp,
     items: z.array(
       z.object({

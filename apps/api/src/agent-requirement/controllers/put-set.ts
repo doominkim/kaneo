@@ -5,6 +5,7 @@ import db from "../../database";
 import {
   agentRequirementItemTable,
   agentRequirementSetTable,
+  type SpecRevisionItem,
 } from "../../database/schema-agent-layer";
 import { buildKey, parseKey } from "../keys";
 import { parseRequirementDoc } from "../parse";
@@ -14,13 +15,15 @@ import {
   authorColumns,
   type EntryAuthor,
 } from "./shared";
-import { insertRevision } from "./spec-revision";
+import { insertRevision, snapshotItems } from "./spec-revision";
+
+type ItemStatus = "active" | "deferred" | "dropped";
 
 type ItemInput = {
   key?: string;
   text: string;
   layer?: string | null;
-  status?: "active" | "deferred" | "dropped";
+  status?: ItemStatus;
   story?: string | null;
 };
 
@@ -34,8 +37,24 @@ type PutInput = {
   sourceSlug?: string | null;
   author: Author;
   entryAuthor: EntryAuthor;
+  /** An API-key call: attributed to the key's owner, but not a review. */
+  viaApiKey?: boolean;
   /** Set by a revert: the revision this save restores. */
   revertedFromId?: string | null;
+  /**
+   * Set by a revert whose revision stored the set's rows. The rows are made
+   * to match these exactly, whatever mode the body is in, and a row the
+   * revision did not have is dropped (keys are never deleted).
+   */
+  restoreItems?: SpecRevisionItem[] | null;
+};
+
+type ItemChange = {
+  key: string;
+  previousText: string;
+  previousStatus: string;
+  previousLayer?: string | null;
+  previousStory?: string | null;
 };
 
 function isUniqueViolation(error: unknown): boolean {
@@ -43,25 +62,41 @@ function isUniqueViolation(error: unknown): boolean {
   return (cause as { code?: string })?.code === "23505";
 }
 
+function describeChange(change: ItemChange) {
+  const lines = [
+    `## ${change.key} (이전 상태 ${change.previousStatus})`,
+    `이전 문장:\n${change.previousText}`,
+  ];
+  if (change.previousLayer !== undefined) {
+    lines.push(`이전 layer: ${change.previousLayer ?? "(없음)"}`);
+  }
+  if (change.previousStory !== undefined) {
+    lines.push(`이전 story: ${change.previousStory ?? "(없음)"}`);
+  }
+  return lines.join("\n");
+}
+
 /**
  * Create-or-replace the set's own fields and upsert the items sent.
  *
  * Items are rows, so the payload is a partial: an item not mentioned is left
  * alone (never deleted — REQ-SPEC-TABS-3). To retire one, send it with
- * `status: "dropped"`. A changed `text` or `status` moves `updatedAt`, which is
- * the clock every downstream stale check reads, and leaves the previous text on
- * the timeline (REQ-SPEC-TABS-9).
+ * `status: "dropped"`. A changed `text`, `status`, `layer` or `story` moves
+ * `updatedAt`, which is the clock every downstream stale check reads, and
+ * leaves the previous values on the timeline (REQ-SPEC-TABS-9).
  *
  * Every save applies immediately (agent-autoapply): the set is `approved` as
- * of this save and the review marker follows the author. When the title or
- * the stored body differs from what was there, `revisedAt` moves and one
- * revision is appended in the same transaction; an identical re-save writes
- * neither. A soft-deleted set is refused rather than silently brought back,
- * so a person's delete cannot be undone by the next agent write.
+ * of this save and the review marker follows the author. The set's content is
+ * its title, body and rows: when any of them differs from what was there,
+ * `revisedAt` moves and one revision holding all three is appended in the
+ * same transaction; an identical re-save writes neither. The timeline entry
+ * is written in the same transaction too, so a save never lands without it.
+ * A soft-deleted set is refused rather than silently brought back, so a
+ * person's delete cannot be undone by the next agent write.
  */
 async function putSet(input: PutInput) {
   const isAgent = "actorId" in input.author;
-  const result = await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     const [existing] = await tx
       .select()
       .from(agentRequirementSetTable)
@@ -89,26 +124,35 @@ async function putSet(input: PutInput) {
     );
     const docMode = parsed.criteria.length > 0;
     const body = docMode ? parsed.body : input.body;
-    const items: ItemInput[] = docMode
-      ? parsed.criteria.map((criterion) => ({
-          key: criterion.key,
-          text: criterion.text,
-          layer: criterion.layer,
-          story: criterion.story,
-          status: criterion.dropped ? "dropped" : undefined,
+    const restoring = input.restoreItems != null;
+    const items: ItemInput[] = input.restoreItems
+      ? input.restoreItems.map((item) => ({
+          key: item.key,
+          text: item.text,
+          layer: item.layer,
+          story: item.story,
+          status: item.status as ItemStatus,
         }))
-      : input.items;
+      : docMode
+        ? parsed.criteria.map((criterion) => ({
+            key: criterion.key,
+            text: criterion.text,
+            layer: criterion.layer,
+            story: criterion.story,
+            status: criterion.dropped ? "dropped" : undefined,
+          }))
+        : input.items;
+    // A document body and a revision's rows are the whole list, so a row they
+    // do not name is dropped; an items payload is a partial and leaves it.
+    const dropUnlisted = restoring || docMode;
 
     const now = new Date();
-    const contentChanged =
-      !existing || existing.title !== input.title || existing.body !== body;
     const values = {
       title: input.title,
       body,
       sourceSlug: input.sourceSlug ?? existing?.sourceSlug ?? null,
-      ...appliedColumns(input.author, now),
+      ...appliedColumns(input.author, now, input.viaApiKey),
       ...authorColumns(input.author),
-      ...(contentChanged ? { revisedAt: now } : {}),
       updatedAt: now,
     };
 
@@ -127,6 +171,7 @@ async function putSet(input: PutInput) {
           projectId: input.projectId,
           feature: input.feature,
           ...values,
+          revisedAt: now,
         })
         .returning();
     }
@@ -140,15 +185,12 @@ async function putSet(input: PutInput) {
     const current = await tx
       .select()
       .from(agentRequirementItemTable)
-      .where(eq(agentRequirementItemTable.setId, set.id));
+      .where(eq(agentRequirementItemTable.setId, setId));
+    const before = snapshotItems(current);
     const byKey = new Map(current.map((item) => [item.key, item]));
 
     let nextSeq = docMode ? Math.max(set.nextSeq, parsed.nextSeq) : set.nextSeq;
-    const changes: Array<{
-      key: string;
-      previousText: string;
-      previousStatus: string;
-    }> = [];
+    const changes: ItemChange[] = [];
     const seenKeys = new Set<string>();
 
     for (const item of items) {
@@ -170,14 +212,23 @@ async function putSet(input: PutInput) {
           (docMode && existingItem.status === "dropped"
             ? "active"
             : existingItem.status);
+        const nextLayer =
+          item.layer === undefined ? existingItem.layer : item.layer;
+        const nextStory =
+          item.story === undefined ? existingItem.story : item.story;
+        const layerChanged = existingItem.layer !== nextLayer;
+        const storyChanged = existingItem.story !== nextStory;
         const changed =
-          existingItem.text !== item.text || existingItem.status !== nextStatus;
+          existingItem.text !== item.text ||
+          existingItem.status !== nextStatus ||
+          layerChanged ||
+          storyChanged;
         await tx
           .update(agentRequirementItemTable)
           .set({
             text: item.text,
-            layer: item.layer === undefined ? existingItem.layer : item.layer,
-            story: item.story === undefined ? existingItem.story : item.story,
+            layer: nextLayer,
+            story: nextStory,
             status: nextStatus,
             ...(changed ? { updatedAt: new Date() } : {}),
           })
@@ -187,6 +238,8 @@ async function putSet(input: PutInput) {
             key: existingItem.key,
             previousText: existingItem.text,
             previousStatus: existingItem.status,
+            ...(layerChanged ? { previousLayer: existingItem.layer } : {}),
+            ...(storyChanged ? { previousStory: existingItem.story } : {}),
           });
         }
         continue;
@@ -206,7 +259,7 @@ async function putSet(input: PutInput) {
       }
       try {
         await tx.insert(agentRequirementItemTable).values({
-          setId: set.id,
+          setId,
           projectId: input.projectId,
           key,
           seq,
@@ -225,7 +278,7 @@ async function putSet(input: PutInput) {
       }
     }
 
-    if (docMode) {
+    if (dropUnlisted) {
       for (const row of current) {
         if (seenKeys.has(row.key) || row.status === "dropped") continue;
         await tx
@@ -240,11 +293,27 @@ async function putSet(input: PutInput) {
       }
     }
 
-    if (nextSeq !== set.nextSeq) {
+    const after = snapshotItems(
+      await tx
+        .select()
+        .from(agentRequirementItemTable)
+        .where(eq(agentRequirementItemTable.setId, setId)),
+    );
+    const contentChanged =
+      !existing ||
+      existing.title !== input.title ||
+      existing.body !== body ||
+      JSON.stringify(before) !== JSON.stringify(after);
+
+    const setUpdate = {
+      ...(nextSeq !== set.nextSeq ? { nextSeq } : {}),
+      ...(existing && contentChanged ? { revisedAt: now } : {}),
+    };
+    if (Object.keys(setUpdate).length > 0) {
       [set] = await tx
         .update(agentRequirementSetTable)
-        .set({ nextSeq })
-        .where(eq(agentRequirementSetTable.id, set.id))
+        .set(setUpdate)
+        .where(eq(agentRequirementSetTable.id, setId))
         .returning();
     }
 
@@ -255,46 +324,40 @@ async function putSet(input: PutInput) {
         title: input.title,
         body,
         requirementKeys: null,
+        items: after,
         author: input.author,
         revertedFromId: input.revertedFromId,
         createdAt: now,
       });
     }
 
-    return {
-      set: set as typeof agentRequirementSetTable.$inferSelect,
-      changes,
-    };
+    // One timeline entry per save, not per item: a document edit that touches
+    // twenty lines is one event to a reader. Previous values ride in the body
+    // so nothing is lost (REQ-SPEC-TABS-9).
+    if (changes.length) {
+      const keys = changes.map((change) => change.key);
+      await appendEntry(
+        {
+          workspaceId: input.workspaceId,
+          userId: input.entryAuthor.userId,
+          projectId: input.projectId,
+          provider: isAgent ? input.entryAuthor.provider : undefined,
+          model: isAgent ? input.entryAuthor.model : undefined,
+          sessionId: input.entryAuthor.sessionId ?? null,
+          kind: "work",
+          summary:
+            `[requirements:${input.feature}] 기준 ${keys.length}건 수정: ${keys.join(", ")}`.slice(
+              0,
+              200,
+            ),
+          body: changes.map(describeChange).join("\n\n"),
+        },
+        tx,
+      );
+    }
+
+    return set as typeof agentRequirementSetTable.$inferSelect;
   });
-
-  // One timeline entry per save, not per item: a document edit that touches
-  // twenty lines is one event to a reader. Previous sentences ride in the body
-  // so nothing is lost (REQ-SPEC-TABS-9).
-  if (result.changes.length) {
-    const keys = result.changes.map((change) => change.key);
-    await appendEntry({
-      workspaceId: input.workspaceId,
-      userId: input.entryAuthor.userId,
-      projectId: input.projectId,
-      provider: isAgent ? input.entryAuthor.provider : undefined,
-      model: isAgent ? input.entryAuthor.model : undefined,
-      sessionId: input.entryAuthor.sessionId ?? null,
-      kind: "work",
-      summary:
-        `[requirements:${input.feature}] 기준 ${keys.length}건 수정: ${keys.join(", ")}`.slice(
-          0,
-          200,
-        ),
-      body: result.changes
-        .map(
-          (change) =>
-            `## ${change.key} (이전 상태 ${change.previousStatus})\n이전 문장:\n${change.previousText}`,
-        )
-        .join("\n\n"),
-    });
-  }
-
-  return result.set;
 }
 
 export default putSet;

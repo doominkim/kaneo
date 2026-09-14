@@ -707,6 +707,7 @@ describe("agent_domain_get", () => {
         title: `Child ${i}`,
       })),
       terms: ["Refund"],
+      unreviewedTerms: [],
       projects: [{ id: "p1", name: "Billing v2" }],
       documents: [
         { projectId: "p1", slug: "refund-flow", title: "Refund flow" },
@@ -1232,18 +1233,23 @@ describe("agent_brief features", () => {
       return Response.json({});
     });
     const result = await call("agent_brief", { projectId: "p1" });
+    // The fixture carries no `reviewed`, so the review fields fall back to null.
     expect(result.features).toEqual([
       {
         feature: "feature-hub",
         requirements: "approved",
+        requirementsReviewed: null,
         design: "stale",
+        designReviewed: null,
         tasks: "2/8",
         staleTasks: 1,
       },
       {
         feature: "beta",
         requirements: null,
+        requirementsReviewed: null,
         design: "draft",
+        designReviewed: null,
         tasks: "0/0",
         staleTasks: 0,
       },
@@ -1804,5 +1810,123 @@ describe("agent_brief decisions", () => {
     expect(
       (await call("agent_brief", { projectId: "p1" })).decisions,
     ).toBeNull();
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-37] relays each feature document's review state beside its status", async () => {
+    apiFetch.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes("/api/agent-feature/")
+        ? Response.json({
+            features: [
+              {
+                feature: "alpha",
+                requirements: { status: "approved", reviewed: false },
+                design: { status: "approved", stale: false, reviewed: true },
+                tasks: { total: 1, done: 0, stale: 0 },
+              },
+              {
+                feature: "beta",
+                requirements: null,
+                design: { status: "approved", stale: true, reviewed: false },
+                tasks: { total: 0, done: 0, stale: 0 },
+              },
+            ],
+          })
+        : Response.json({}),
+    );
+    const { features } = await call("agent_brief", { projectId: "p1" });
+    expect(
+      features.map(
+        (f: {
+          feature: string;
+          requirementsReviewed: boolean | null;
+          designReviewed: boolean | null;
+        }) => [f.feature, f.requirementsReviewed, f.designReviewed],
+      ),
+    ).toEqual([
+      ["alpha", false, true],
+      ["beta", null, false],
+    ]);
+  });
+});
+
+describe("agent read paths expose review state (agent-autoapply)", () => {
+  it("[REQ-AGENT-AUTOAPPLY-36] agent_requirements_get and agent_design_get relay reviewed", async () => {
+    apiFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/agent-requirement/")) {
+        return Response.json({
+          id: "set-1",
+          feature: "alpha",
+          title: "Alpha",
+          body: "",
+          status: "approved",
+          approvedAt: "2026-09-14T00:00:00.000Z",
+          reviewed: false,
+          sourceSlug: null,
+          updatedAt: "2026-09-14T00:00:00.000Z",
+          items: [],
+        });
+      }
+      return Response.json({
+        id: "d1",
+        feature: "alpha",
+        title: "D",
+        body: "",
+        status: "approved",
+        approvedAt: "2026-09-14T00:00:00.000Z",
+        reviewed: true,
+        updatedAt: "2026-09-14T00:00:00.000Z",
+        stale: { stale: false, causes: [] },
+        requirements: [],
+        tasks: [],
+      });
+    });
+    expect(
+      await call("agent_requirements_get", {
+        projectId: "p1",
+        feature: "alpha",
+      }),
+    ).toMatchObject({ id: "set-1", reviewed: false });
+    expect(
+      await call("agent_design_get", { projectId: "p1", feature: "alpha" }),
+    ).toMatchObject({ id: "d1", reviewed: true });
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-36] agent_domain_get names the shown terms no person has reviewed", async () => {
+    apiFetch.mockImplementation(async () =>
+      Response.json({
+        ...domainPage("body"),
+        terms: [
+          {
+            id: "t1",
+            canonical: "Refund",
+            confidence: "confirmed",
+            state: "active",
+            reviewed: true,
+          },
+          {
+            id: "t2",
+            canonical: "Clawback",
+            confidence: "confirmed",
+            state: "active",
+            reviewed: false,
+          },
+          {
+            id: "t3",
+            canonical: "Chargeback",
+            confidence: "disputed",
+            state: "active",
+            reviewed: false,
+          },
+        ],
+      }),
+    );
+    const page = await call("agent_domain_get", {
+      workspaceId: "ws-1",
+      domainId: "b",
+    });
+    expect(page.terms).toEqual(["Refund", "Clawback"]);
+    // A disputed term is not shown, so it is not listed as unreviewed either.
+    expect(page.unreviewedTerms).toEqual(["Clawback"]);
   });
 });

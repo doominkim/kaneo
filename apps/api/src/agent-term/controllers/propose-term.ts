@@ -19,6 +19,8 @@ type ProposeInput = {
   /** Both set by an agent caller, both absent for a person proposing in the UI. */
   provider?: string | null;
   model?: string | null;
+  /** An API-key call: owned by the key's owner, but not a review. */
+  viaApiKey?: boolean;
 };
 
 function conflictMessage(
@@ -113,8 +115,10 @@ async function proposeTerm(input: ProposeInput) {
       actorId: actor?.id ?? null,
       confidence: "confirmed",
       state: "active",
-      reviewerId: actor ? null : input.ownerId,
-      reviewedAt: actor ? null : new Date(),
+      // Only a signed-in person proposing is a review. An API key is the
+      // owner's permission, not the owner reading the term.
+      reviewerId: actor || input.viaApiKey ? null : input.ownerId,
+      reviewedAt: actor || input.viaApiKey ? null : new Date(),
     })
     .returning();
 

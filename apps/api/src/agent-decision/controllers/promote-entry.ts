@@ -47,14 +47,15 @@ function readPromoted(
 
 /**
  * Idempotently copy an immutable legacy decision into an ADR. Like every ADR
- * it is accepted on creation; promoting is a person's action, so it is also
- * reviewed from the start.
+ * it is accepted on creation; a signed-in person promoting it is also its
+ * reviewer, while an API-key promotion leaves it unreviewed.
  */
 async function promoteEntry(input: {
   workspaceId: string;
   projectId: string;
   entryId: string;
   userId: string;
+  viaApiKey?: boolean;
 }) {
   const promoted = await findPromoted(input.projectId, input.entryId);
   if (promoted) return readPromoted(input.projectId, promoted);
@@ -92,6 +93,7 @@ async function promoteEntry(input: {
       taskIds: entry.taskId ? [entry.taskId] : [],
       sourceEntryId: input.entryId,
       author: { userId: input.userId, actorId: null },
+      viaApiKey: input.viaApiKey,
     });
   } catch (error) {
     if (

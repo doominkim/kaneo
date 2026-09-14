@@ -79,7 +79,7 @@ const putRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Create or update a requirement set",
   description:
-    "Replaces `title`/`body` and upserts the items sent. Items are rows: an item omitted from the payload is untouched, never deleted — send `status: \"dropped\"` to retire one. A changed `text` or `status` moves the item's `updatedAt`, which every downstream stale check reads. The save applies immediately (`approved`, `approvedAt` = now) and, being a person's save, marks the set reviewed. A changed title or body appends a revision. A soft-deleted set is a 409 until it is restored. This is the human path (`updatedBy`); agents write through MCP.",
+    "Replaces `title`/`body` and upserts the items sent. Items are rows: an item omitted from the payload is untouched, never deleted — send `status: \"dropped\"` to retire one. A changed `text`, `status`, `layer` or `story` moves the item's `updatedAt`, which every downstream stale check reads. The save applies immediately (`approved`, `approvedAt` = now). A signed-in person's save marks the set reviewed; an API-key save is attributed to the key's owner but leaves the set unreviewed. A changed title, body or item appends a revision that stores all three. A soft-deleted set is a 409 until it is restored. This is the human path (`updatedBy`); agents write through MCP.",
   middleware: [
     workspaceAccess.fromProject("projectId"),
     requireWorkspacePermission({ task: ["update"] }),
@@ -266,6 +266,7 @@ const agentRequirement = apiRouter<BaseVariables & { workspaceId: string }>()
       workspaceId: c.get("workspaceId"),
       author: { updatedBy: userId },
       entryAuthor: { userId },
+      viaApiKey: Boolean(c.get("apiKey")),
     });
     return c.json(await getSet(projectId, feature), 200);
   })

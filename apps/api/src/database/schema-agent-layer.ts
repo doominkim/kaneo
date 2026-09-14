@@ -255,8 +255,12 @@ export const agentDecisionTable = pgTable(
     /** Uninterpreted body copied from a promoted legacy decision entry. */
     sourceNote: text("source_note"),
     reversible: boolean("reversible"),
-    /** draft | accepted | superseded */
-    status: text("status").notNull().default("draft"),
+    /**
+     * accepted | superseded. `draft` is gone (agent-autoapply) and refused by
+     * a CHECK since 0014, so a legacy writer relying on the default cannot
+     * bring it back.
+     */
+    status: text("status").notNull().default("accepted"),
     /** Same reference shape as `agent_entry.refs`. */
     refs: jsonb("refs"),
     /** Optional provenance when an existing ledger decision became this ADR. */
@@ -332,6 +336,7 @@ export const agentDecisionTable = pgTable(
       table.number,
     ),
     index("agent_decision_workspaceId_idx").on(table.workspaceId),
+    check("agent_decision_status_not_draft", sql`${table.status} <> 'draft'`),
   ],
 );
 
@@ -576,8 +581,11 @@ export const agentTermTable = pgTable(
      */
     anchors: jsonb("anchors"),
 
-    /** proposed | confirmed | disputed — model-proposed entries never auto-confirm */
-    confidence: text("confidence").notNull().default("proposed"),
+    /**
+     * confirmed | disputed. Terms apply on proposal (agent-autoapply), so
+     * `proposed` is no longer written; a CHECK refuses it since 0014.
+     */
+    confidence: text("confidence").notNull().default("confirmed"),
     /** active | dormant | stale | retired(tombstone) */
     state: text("state").notNull().default("active"),
     /** tombstone pointer: "dead, look at this instead" */
@@ -669,6 +677,10 @@ export const agentTermTable = pgTable(
     index("agent_term_state_idx").on(table.state),
     index("agent_term_confidence_idx").on(table.confidence),
     index("agent_term_domainId_idx").on(table.domainId),
+    check(
+      "agent_term_confidence_not_proposed",
+      sql`${table.confidence} <> 'proposed'`,
+    ),
   ],
 );
 
@@ -931,8 +943,8 @@ export const agentRequirementSetTable = pgTable(
     title: text("title").notNull(),
     /** markdown: background, scope, out-of-scope. Items are rows, not body. */
     body: text("body").notNull().default(""),
-    /** draft | approved */
-    status: text("status").notNull().default("draft"),
+    /** `approved`; `draft` is refused by a CHECK since 0014 (agent-autoapply). */
+    status: text("status").notNull().default("approved"),
     approvedAt: timestamp("approved_at", { mode: "date" }),
     approvedBy: text("approved_by").references(() => userTable.id, {
       onDelete: "set null",
@@ -966,8 +978,9 @@ export const agentRequirementSetTable = pgTable(
       onUpdate: "cascade",
     }),
     /**
-     * When title/body last changed, i.e. when the latest `agent_spec_revision`
-     * was taken. The DB default only keeps older insert paths valid.
+     * When the title, body or rows last changed, i.e. when the latest
+     * `agent_spec_revision` was taken. The DB default only keeps older insert
+     * paths valid.
      */
     revisedAt: timestamp("revised_at", { mode: "date" }).defaultNow().notNull(),
     createdAt: timestamp("created_at", { mode: "date" }).defaultNow().notNull(),
@@ -979,6 +992,10 @@ export const agentRequirementSetTable = pgTable(
       table.feature,
     ),
     index("agent_requirement_set_project_idx").on(table.projectId),
+    check(
+      "agent_requirement_set_status_not_draft",
+      sql`${table.status} <> 'draft'`,
+    ),
   ],
 );
 
@@ -986,8 +1003,8 @@ export const agentRequirementSetTable = pgTable(
  * One requirement. `key` is `REQ-<FEATURE>-<seq>`, unique per project, and is
  * the string tests and commits cite. Rows are never deleted — status goes to
  * `dropped` — because a deleted key would orphan the tests that reference it.
- * `updatedAt` moves only when `text` or `status` changes; it is the upstream
- * clock for the stale computation.
+ * `updatedAt` moves only when `text`, `status`, `layer` or `story` changes; it
+ * is the upstream clock for the stale computation.
  */
 export const agentRequirementItemTable = pgTable(
   "agent_requirement_item",
@@ -1052,8 +1069,8 @@ export const agentDesignTable = pgTable(
     title: text("title").notNull(),
     /** markdown, ≤ 200KB enforced in Zod */
     body: text("body").notNull(),
-    /** draft | approved */
-    status: text("status").notNull().default("draft"),
+    /** `approved`; `draft` is refused by a CHECK since 0014 (agent-autoapply). */
+    status: text("status").notNull().default("approved"),
     approvedAt: timestamp("approved_at", { mode: "date" }),
     approvedBy: text("approved_by").references(() => userTable.id, {
       onDelete: "set null",
@@ -1091,6 +1108,7 @@ export const agentDesignTable = pgTable(
       table.feature,
     ),
     index("agent_design_project_idx").on(table.projectId),
+    check("agent_design_status_not_draft", sql`${table.status} <> 'draft'`),
   ],
 );
 
@@ -1227,8 +1245,17 @@ export const agentRequirementCoverageTable = pgTable(
   ],
 );
 
+/** One requirement row as a revision stores it (0014). */
+export type SpecRevisionItem = {
+  key: string;
+  text: string;
+  layer: string | null;
+  story: string | null;
+  status: string;
+};
+
 /**
- * A stored copy of a requirement set's or design's title/body (0013,
+ * A stored copy of a requirement set's or design's content (0013,
  * agent-autoapply). Agent writes apply immediately, so a revision is what a
  * person restores a document from after a wrong write. Rows are only
  * appended; a restore writes a new revision and records its source in
@@ -1237,7 +1264,10 @@ export const agentRequirementCoverageTable = pgTable(
  * Exactly one of `setId`/`designId` is set, enforced by a CHECK because the
  * two targets share every other column. `requirementKeys` is filled on design
  * revisions only: it is the design's requirement-link list at that moment,
- * as keys because keys are what the design API accepts.
+ * as keys because keys are what the design API accepts. `items` (0014) is
+ * filled on requirement revisions only: every row of the set in `seq` order,
+ * because a set's criteria can change without its body changing. It is NULL
+ * on requirement revisions older than 0014 that the backfill did not reach.
  *
  * Authorship follows the document rule: `createdBy` (human) or `actorId`
  * (agent), both SET NULL so a revision outlives either author.
@@ -1266,6 +1296,8 @@ export const agentSpecRevisionTable = pgTable(
     body: text("body").notNull(),
     /** string[] of requirement item keys; design revisions only */
     requirementKeys: jsonb("requirement_keys").$type<string[]>(),
+    /** SpecRevisionItem[] in seq order; requirement revisions only (0014) */
+    items: jsonb("items").$type<SpecRevisionItem[]>(),
     createdBy: text("created_by").references(() => userTable.id, {
       onDelete: "set null",
       onUpdate: "cascade",

@@ -58,6 +58,8 @@ async function putDesign(input: {
   sourceSlug?: string | null;
   author: Author;
   entryAuthor: EntryAuthor;
+  /** An API-key call: attributed to the key's owner, but not a review. */
+  viaApiKey?: boolean;
   /** Set by a revert: the revision this save restores. */
   revertedFromId?: string | null;
 }) {
@@ -117,7 +119,7 @@ async function putDesign(input: {
       title: input.title,
       body: input.body,
       sourceSlug: input.sourceSlug ?? existing?.sourceSlug ?? null,
-      ...appliedColumns(input.author, now),
+      ...appliedColumns(input.author, now, input.viaApiKey),
       ...authorColumns(input.author),
       ...(contentChanged ? { revisedAt: now } : {}),
       updatedAt: now,

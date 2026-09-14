@@ -128,8 +128,8 @@ type DocumentDetail = {
 
 type FeatureSummaryOut = {
   feature: string;
-  requirements: { status: string } | null;
-  design: { status: string; stale: boolean } | null;
+  requirements: { status: string; reviewed: boolean } | null;
+  design: { status: string; stale: boolean; reviewed: boolean } | null;
   tasks: { total: number; done: number; stale: number };
 };
 
@@ -146,7 +146,7 @@ type DomainPage = DomainNode & {
   actor: { model: string } | null;
   ancestors: DomainNode[];
   children: DomainNode[];
-  terms: Array<{ canonical: string; confidence: string }>;
+  terms: Array<{ canonical: string; confidence: string; reviewed: boolean }>;
   projects: Array<{ id: string; name: string }>;
   documents: Array<{ projectId: string; slug: string; title: string }>;
 };
@@ -239,6 +239,11 @@ function shapeDomainPage(page: DomainPage, offset: number) {
       title: c.title,
     })),
     terms: cap(terms).map((t) => t.canonical),
+    // The shown terms no person has reviewed yet (agent-autoapply): they
+    // resolve anyway, and a reader should weigh them accordingly.
+    unreviewedTerms: cap(terms)
+      .filter((t) => t.reviewed === false)
+      .map((t) => t.canonical),
     projects: cap(page.projects).map((p) => ({ id: p.id, name: p.name })),
     documents: cap(page.documents).map((d) => ({
       projectId: d.projectId,
@@ -402,7 +407,7 @@ export function registerAgentTools(
     "agent_brief",
     {
       description:
-        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries (deleted ones hidden), live claims, the 20 most recently updated document titles (slug/title/updatedAt — deliverables, not a knowledge base; judge them by author and age; documentsTotal shows what was cut), and the project's linked domain pages (`domains`, read them with agent_domain_get), `features` (requirement/design status, task progress, stale count per feature), and `decisions` ({accepted, unreviewed} ADR counts; list them with agent_decision_list). Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
+        "Boot a session on a project in ONE call: open tasks (title/status only), recent ledger entries (deleted ones hidden), live claims, the 20 most recently updated document titles (slug/title/updatedAt — deliverables, not a knowledge base; judge them by author and age; documentsTotal shows what was cut), and the project's linked domain pages (`domains`, read them with agent_domain_get), `features` (requirement/design status and reviewed, task progress, stale count per feature), and `decisions` ({accepted, unreviewed} ADR counts; list them with agent_decision_list). Replaces the list_workspaces -> list_projects -> list_tasks -> ... sequence.",
       inputSchema: z.object({
         projectId: z.string(),
         entries: z.number().int().min(1).max(20).default(5),
@@ -462,14 +467,18 @@ export function registerAgentTools(
             .map((d) => ({ id: d.id, title: d.title })),
           // What is being built and how far along (REQ-FEATURE-HUB-17); the
           // documents themselves are one agent_requirements_get away.
+          // `requirementsReviewed`/`designReviewed` are null when that
+          // document does not exist, false while no person has reviewed it.
           features: (features.features ?? []).map((f) => ({
             feature: f.feature,
             requirements: f.requirements?.status ?? null,
+            requirementsReviewed: f.requirements?.reviewed ?? null,
             design: f.design
               ? f.design.stale
                 ? "stale"
                 : f.design.status
               : null,
+            designReviewed: f.design?.reviewed ?? null,
             tasks: `${f.tasks.done}/${f.tasks.total}`,
             staleTasks: f.tasks.stale,
           })),
@@ -773,7 +782,7 @@ export function registerAgentTools(
     "agent_domain_get",
     {
       description:
-        "One domain page by `domainId` or `slugPath` (root-to-child slugs, e.g. `billing/refunds`): meta, up to 8KB of body from byte `offset` (call again with offset=nextOffset while `truncated`), children, and the terms, projects and documents filed under it (names, 20 each).",
+        "One domain page by `domainId` or `slugPath` (root-to-child slugs, e.g. `billing/refunds`): meta, up to 8KB of body from byte `offset` (call again with offset=nextOffset while `truncated`), children, and the terms, projects and documents filed under it (names, 20 each; unreviewedTerms = shown terms no human read yet).",
       inputSchema: z
         .object({
           workspaceId: z.string(),
@@ -934,6 +943,7 @@ export function registerAgentTools(
     body: string;
     status: string;
     approvedAt: string | null;
+    reviewed: boolean;
     sourceSlug: string | null;
     updatedAt: string;
     items: RequirementItemOut[];
@@ -944,6 +954,7 @@ export function registerAgentTools(
     title: set.title,
     status: set.status,
     approvedAt: set.approvedAt,
+    reviewed: set.reviewed,
     sourceSlug: set.sourceSlug,
     updatedAt: set.updatedAt,
     items: set.items.map((item) => ({
@@ -963,7 +974,7 @@ export function registerAgentTools(
     "agent_requirements_get",
     {
       description:
-        "Requirement set for `feature`: items (key, text, status, covered, designs, tasks) plus a body slice. Omit `feature` to list sets.",
+        "Requirement set for `feature`: reviewed (false = no human read it yet), items (key, text, status, covered, designs, tasks) plus a body slice. Omit `feature` to list sets.",
       inputSchema: z.object({
         projectId: z.string(),
         feature: z.string().regex(FEATURE_PATTERN).optional(),
@@ -1034,6 +1045,7 @@ export function registerAgentTools(
     body: string;
     status: string;
     approvedAt: string | null;
+    reviewed: boolean;
     updatedAt: string;
     stale: { stale: boolean; causes: unknown[] };
     requirements: Array<{
@@ -1048,7 +1060,7 @@ export function registerAgentTools(
     "agent_design_get",
     {
       description:
-        "Design for `feature`: stale verdict, covered requirement keys, derived tasks, body slice. Omit `feature` to list designs.",
+        "Design for `feature`: reviewed (false = no human read it yet), stale verdict, covered requirement keys, derived tasks, body slice. Omit `feature` to list designs.",
       inputSchema: z.object({
         projectId: z.string(),
         feature: z.string().regex(FEATURE_PATTERN).optional(),
@@ -1072,6 +1084,7 @@ export function registerAgentTools(
           title: design.title,
           status: design.status,
           approvedAt: design.approvedAt,
+          reviewed: design.reviewed,
           updatedAt: design.updatedAt,
           stale: design.stale,
           requirements: design.requirements,

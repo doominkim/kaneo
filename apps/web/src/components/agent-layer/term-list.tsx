@@ -22,6 +22,7 @@ import type {
 import { useConfirmAgentTerm } from "@/hooks/mutations/agent-layer/use-confirm-agent-term";
 import { useDeleteAgentTerm } from "@/hooks/mutations/agent-layer/use-delete-agent-term";
 import { useRestoreAgentTerm } from "@/hooks/mutations/agent-layer/use-restore-agent-term";
+import { useReviewAgentTerm } from "@/hooks/mutations/agent-layer/use-review-agent-term";
 import { useSetAgentTermDomain } from "@/hooks/mutations/agent-layer/use-set-agent-term-domain";
 import { useAgentDomains } from "@/hooks/queries/agent-layer/use-agent-domains";
 import { useAgentTerms } from "@/hooks/queries/agent-layer/use-agent-terms";
@@ -50,9 +51,9 @@ type PendingReview = {
 type TermListProps = {
   workspaceId: string;
   /**
-   * workspace:update. Confirm, dispute and filing on review surfaces; delete,
-   * restore and the review mark on opening a definition on every surface,
-   * because the API gates all of them the same way.
+   * workspace:update. Confirm, dispute and filing on review surfaces; delete
+   * and restore on every surface. The review mark on opening a definition
+   * needs only workspace access and is recorded for every reader.
    */
   canReview: boolean;
   /**
@@ -104,7 +105,7 @@ export function TermList({
   const review = useConfirmAgentTerm();
   // Its own mutation, so a review landing from an opened definition never
   // disables the dialog's submit.
-  const markOnOpen = useConfirmAgentTerm();
+  const markOnOpen = useReviewAgentTerm();
   const remove = useDeleteAgentTerm();
   const restore = useRestoreAgentTerm();
   const domains = useAgentDomains(workspaceId);
@@ -182,14 +183,10 @@ export function TermList({
   };
 
   // Opening an unreviewed item's definition is its review (agent-autoapply).
-  // For knowledge items the review route is `confirm`, which needs
-  // workspace:update, so rows only get this where `canReview` holds.
+  // The review route needs only workspace access, like ADR and document
+  // reviews, so every reader's opening counts; confirm stays the verdict.
   const markReviewed = (term: AgentTerm) =>
-    markOnOpen.mutateAsync({
-      workspaceId,
-      termId: term.id,
-      confidence: "confirmed",
-    });
+    markOnOpen.mutateAsync({ workspaceId, termId: term.id });
 
   // 409 carries the API's own reason (another term's `supersededBy` points
   // here); it is shown verbatim rather than mapped.
@@ -323,7 +320,7 @@ export function TermList({
                 domainNodes={domains.data?.domains}
                 canSetDomain={reviewable}
                 onSetDomain={handleSetDomain}
-                onOpenUnreviewed={canReview ? markReviewed : undefined}
+                onOpenUnreviewed={markReviewed}
                 deletedByName={
                   term.deletedBy ? memberNames.get(term.deletedBy) : null
                 }

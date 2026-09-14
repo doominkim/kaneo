@@ -110,6 +110,9 @@ vi.mock("@/hooks/queries/agent-layer/use-agent-terms", () => ({
 vi.mock("@/hooks/mutations/agent-layer/use-confirm-agent-term", () => ({
   useConfirmAgentTerm: () => ({ mutateAsync: mocks.review, isPending: false }),
 }));
+vi.mock("@/hooks/mutations/agent-layer/use-review-agent-term", () => ({
+  useReviewAgentTerm: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 vi.mock("@/hooks/mutations/agent-layer/use-delete-agent-term", () => ({
   useDeleteAgentTerm: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
@@ -186,8 +189,15 @@ const page: AgentDomainPage = {
       canonical: "복약지도",
       confidence: "confirmed",
       state: "active",
+      reviewed: true,
     },
-    { id: "t2", canonical: "조제료", confidence: "proposed", state: "active" },
+    {
+      id: "t2",
+      canonical: "조제료",
+      confidence: "proposed",
+      state: "active",
+      reviewed: false,
+    },
   ],
   projects: [{ id: "p1", name: "Vanpharm", slug: "VAN" }],
   documents: [

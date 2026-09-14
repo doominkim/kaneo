@@ -1,4 +1,4 @@
-import { and, count, eq, isNull } from "drizzle-orm";
+import { and, count, eq, isNotNull, isNull } from "drizzle-orm";
 import { HTTPException } from "hono/http-exception";
 import db from "../../database";
 import {
@@ -15,37 +15,53 @@ import { requireDomainInWorkspace } from "./domain-lookup";
  * terms and detaches three projects is exactly the kind of data loss the
  * refusal exists to make a person look at. The message carries the counts so
  * the person knows what to unlink.
+ *
+ * A soft-deleted knowledge item still names its page and is counted apart
+ * from the live ones (agent-autoapply): SET NULL would quietly unfile it, and
+ * its restore would bring it back to no page. Restore it and move it, or
+ * leave the page in place.
  */
 async function deleteDomain(workspaceId: string, domainId: string) {
   await requireDomainInWorkspace(workspaceId, domainId);
 
-  const [[children], [terms], [documents], [projects]] = await Promise.all([
-    db
-      .select({ n: count() })
-      .from(agentDomainTable)
-      .where(eq(agentDomainTable.parentId, domainId)),
-    db
-      .select({ n: count() })
-      .from(agentTermTable)
-      .where(
-        and(
-          eq(agentTermTable.domainId, domainId),
-          isNull(agentTermTable.deletedAt),
+  const [[children], [terms], [deletedTerms], [documents], [projects]] =
+    await Promise.all([
+      db
+        .select({ n: count() })
+        .from(agentDomainTable)
+        .where(eq(agentDomainTable.parentId, domainId)),
+      db
+        .select({ n: count() })
+        .from(agentTermTable)
+        .where(
+          and(
+            eq(agentTermTable.domainId, domainId),
+            isNull(agentTermTable.deletedAt),
+          ),
         ),
-      ),
-    db
-      .select({ n: count() })
-      .from(agentDocumentTable)
-      .where(eq(agentDocumentTable.domainId, domainId)),
-    db
-      .select({ n: count() })
-      .from(agentProjectDomainTable)
-      .where(eq(agentProjectDomainTable.domainId, domainId)),
-  ]);
+      db
+        .select({ n: count() })
+        .from(agentTermTable)
+        .where(
+          and(
+            eq(agentTermTable.domainId, domainId),
+            isNotNull(agentTermTable.deletedAt),
+          ),
+        ),
+      db
+        .select({ n: count() })
+        .from(agentDocumentTable)
+        .where(eq(agentDocumentTable.domainId, domainId)),
+      db
+        .select({ n: count() })
+        .from(agentProjectDomainTable)
+        .where(eq(agentProjectDomainTable.domainId, domainId)),
+    ]);
 
   const blockers = [
     [children?.n ?? 0, "child page"],
     [terms?.n ?? 0, "term"],
+    [deletedTerms?.n ?? 0, "deleted term"],
     [documents?.n ?? 0, "document"],
     [projects?.n ?? 0, "project"],
   ] as const;

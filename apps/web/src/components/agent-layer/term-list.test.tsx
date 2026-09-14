@@ -14,6 +14,7 @@ import { TermList } from "./term-list";
 const mocks = vi.hoisted(() => ({
   terms: vi.fn(),
   review: vi.fn(),
+  markReviewed: vi.fn(),
   remove: vi.fn(),
   restore: vi.fn(),
   toastSuccess: vi.fn(),
@@ -48,6 +49,12 @@ vi.mock("@/hooks/queries/agent-layer/use-agent-terms", () => ({
 }));
 vi.mock("@/hooks/mutations/agent-layer/use-confirm-agent-term", () => ({
   useConfirmAgentTerm: () => ({ mutateAsync: mocks.review, isPending: false }),
+}));
+vi.mock("@/hooks/mutations/agent-layer/use-review-agent-term", () => ({
+  useReviewAgentTerm: () => ({
+    mutateAsync: mocks.markReviewed,
+    isPending: false,
+  }),
 }));
 vi.mock("@/hooks/mutations/agent-layer/use-delete-agent-term", () => ({
   useDeleteAgentTerm: () => ({ mutateAsync: mocks.remove, isPending: false }),
@@ -148,6 +155,7 @@ const terms: AgentTerm[] = [
 
 beforeEach(() => {
   mocks.review.mockReset().mockResolvedValue(terms[0]);
+  mocks.markReviewed.mockReset().mockResolvedValue(terms[0]);
   mocks.remove
     .mockReset()
     .mockResolvedValue({ id: "t1", canonical: "급여코드" });
@@ -608,23 +616,24 @@ describe("TermList", () => {
     const row = screen.getByTestId("term-row");
     expect(within(row).getByTestId("unreviewed-badge")).toBeInTheDocument();
     // Listing an item is not reading it.
-    expect(mocks.review).not.toHaveBeenCalled();
+    expect(mocks.markReviewed).not.toHaveBeenCalled();
 
     const toggle = within(row).getByTestId("definition-toggle");
     fireEvent.click(toggle);
-    expect(mocks.review).toHaveBeenCalledTimes(1);
-    expect(mocks.review).toHaveBeenCalledWith({
+    // The review route, not confirm: reading is not a verdict on the item.
+    expect(mocks.markReviewed).toHaveBeenCalledTimes(1);
+    expect(mocks.markReviewed).toHaveBeenCalledWith({
       workspaceId: "ws",
       termId: "u1",
-      confidence: "confirmed",
     });
+    expect(mocks.review).not.toHaveBeenCalled();
 
     fireEvent.click(toggle);
     fireEvent.click(toggle);
-    expect(mocks.review).toHaveBeenCalledTimes(1);
+    expect(mocks.markReviewed).toHaveBeenCalledTimes(1);
   });
 
-  it("[REQ-AGENT-AUTOAPPLY-8] without workspace:update an opened definition is only read, because the review route needs it", () => {
+  it("[REQ-AGENT-AUTOAPPLY-8] a reader without workspace:update also marks an opened definition reviewed", () => {
     mocks.terms.mockReturnValue({
       isPending: false,
       isError: false,
@@ -644,7 +653,14 @@ describe("TermList", () => {
     fireEvent.click(screen.getByTestId("definition-toggle"));
     expect(screen.getByTestId("definition")).toBeInTheDocument();
     expect(screen.getByTestId("unreviewed-badge")).toBeInTheDocument();
+    expect(mocks.markReviewed).toHaveBeenCalledTimes(1);
+    expect(mocks.markReviewed).toHaveBeenCalledWith({
+      workspaceId: "ws",
+      termId: "u1",
+    });
+    // Confirm stays gated: no verdict controls for this reader.
     expect(mocks.review).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("confirm-term")).toBeNull();
   });
 
   it("[REQ-AGENT-AUTOAPPLY-8] an unreviewed item can still be marked reviewed from the confirm action", async () => {

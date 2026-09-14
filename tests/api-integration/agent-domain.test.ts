@@ -668,6 +668,79 @@ describe("API integration: agent domain pages", () => {
     expect((await get(app, ws, child.id)).status).toBe(200);
   });
 
+  it("[REQ-AGENT-AUTOAPPLY-14] [REQ-AGENT-AUTOAPPLY-36] a soft-deleted knowledge item still blocks deleting its page, and the page lists live items with their review state", async () => {
+    const admin = await createWorkspaceMember({ role: "admin" });
+    const ws = admin.workspace.id;
+    mockAuthenticatedSession(admin.user);
+    const { app } = createApp();
+
+    const page = await created(app, ws, { slug: "billing", title: "Billing" });
+    const [gone] = await db
+      .insert(agentTermTable)
+      .values({
+        workspaceId: ws,
+        canonical: "Gone",
+        domainId: page.id,
+        deletedAt: new Date(),
+        deletedBy: admin.user.id,
+      })
+      .returning();
+    await db.insert(agentTermTable).values([
+      { workspaceId: ws, canonical: "Unread", domainId: page.id },
+      {
+        workspaceId: ws,
+        canonical: "Read",
+        domainId: page.id,
+        reviewerId: admin.user.id,
+        reviewedAt: new Date(),
+      },
+    ]);
+
+    const detail = (await (await get(app, ws, page.id)).json()) as DomainPage;
+    expect(
+      detail.terms.map((t) => [
+        t.canonical,
+        (t as unknown as { reviewed: boolean }).reviewed,
+      ]),
+    ).toEqual([
+      ["Read", true],
+      ["Unread", false],
+    ]);
+
+    // Unfile the live items; the deleted one alone still holds the page, so
+    // its domain link is never nulled behind its back.
+    await db
+      .update(agentTermTable)
+      .set({ domainId: null })
+      .where(eq(agentTermTable.workspaceId, ws));
+    await db
+      .update(agentTermTable)
+      .set({ domainId: page.id })
+      .where(eq(agentTermTable.id, gone.id));
+    const blocked = await remove(app, ws, page.id);
+    expect(blocked.status).toBe(409);
+    await expect(blocked.text()).resolves.toBe(
+      "Domain still has 1 deleted term; move or unlink them first",
+    );
+
+    // Restored, it is back on its page and can be moved like any item.
+    const restored = await app.request(
+      `/api/agent-term/${ws}/${gone.id}/restore`,
+      { method: "POST" },
+    );
+    expect(restored.status).toBe(200);
+    expect(await restored.json()).toMatchObject({ domainId: page.id });
+    const unfiled = await app.request(
+      `/api/agent-term/${ws}/${gone.id}/domain`,
+      {
+        method: "PATCH",
+        ...json({ domainId: null }),
+      },
+    );
+    expect(unfiled.status).toBe(200);
+    expect((await remove(app, ws, page.id)).status).toBe(200);
+  });
+
   it("gates writes by permission: viewer reads only, member creates and edits, admin moves and deletes", async () => {
     const admin = await createWorkspaceMember({ role: "admin" });
     const ws = admin.workspace.id;

@@ -60,6 +60,7 @@ async function getDomain(workspaceId: string, domainId: string) {
         canonical: agentTermTable.canonical,
         confidence: agentTermTable.confidence,
         state: agentTermTable.state,
+        reviewedAt: agentTermTable.reviewedAt,
       })
       .from(agentTermTable)
       .where(
@@ -108,7 +109,10 @@ async function getDomain(workspaceId: string, domainId: string) {
     ),
     ancestors,
     children,
-    terms,
+    terms: terms.map(({ reviewedAt, ...term }) => ({
+      ...term,
+      reviewed: reviewedAt !== null,
+    })),
     projects,
     documents,
   };

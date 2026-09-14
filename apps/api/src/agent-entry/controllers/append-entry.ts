@@ -33,9 +33,18 @@ type AppendInput = {
   usage?: EntryUsage | null;
 };
 
+/** `db` itself, or the transaction a caller's change runs in. */
+export type EntryExecutor = Pick<typeof db, "insert" | "select">;
+
 /**
  * Append one ledger record. There is no update or delete counterpart — the
  * ledger is append-only, and a correction is a new row rather than an edit.
+ *
+ * Pass the caller's transaction as `executor` when the entry records a change
+ * made in it, so the change and its timeline entry commit or roll back
+ * together. Actor resolution and the settings read stay on `db`: an actor row
+ * is identity, not part of the change, and neither blocks on the caller's
+ * locks.
  *
  * `coreChanged` is decided here, not by the caller (DESIGN.md §6.2): the
  * project's core-path patterns are matched against `refs.files` at append
@@ -46,7 +55,7 @@ type AppendInput = {
  * `createdBy` (neither given: the calling user). The schema already rejected
  * the mixed cases, so `provider && model` is the only branch decided here.
  */
-async function appendEntry(input: AppendInput) {
+async function appendEntry(input: AppendInput, executor: EntryExecutor = db) {
   const isAgent = input.provider != null && input.model != null;
   const [actor, author, settings] = await Promise.all([
     isAgent
@@ -59,7 +68,7 @@ async function appendEntry(input: AppendInput) {
       : null,
     isAgent
       ? null
-      : db
+      : executor
           .select({ id: userTable.id, name: userTable.name })
           .from(userTable)
           .where(eq(userTable.id, input.userId))
@@ -69,7 +78,7 @@ async function appendEntry(input: AppendInput) {
   ]);
   const coreChanged = judgeCoreChanged(input.refs?.files, settings.corePaths);
 
-  const [entry] = await db
+  const [entry] = await executor
     .insert(agentEntryTable)
     .values({
       workspaceId: input.workspaceId,

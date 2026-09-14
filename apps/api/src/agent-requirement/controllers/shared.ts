@@ -19,15 +19,20 @@ export function authorColumns(author: Author) {
  * the document applies at once, and the review marker follows the author. A
  * person's save counts as their review; an agent's save clears any earlier
  * review, because the content a person saw is no longer the content stored.
+ *
+ * An API-key save is attributed to the key's owner (`updatedBy`) but is not a
+ * review: a key carries its owner's permissions, not proof that anyone read
+ * the content, so it clears the marker exactly like an agent's save.
  */
-export function appliedColumns(author: Author, now: Date) {
+export function appliedColumns(author: Author, now: Date, viaApiKey = false) {
   const userId = "updatedBy" in author ? author.updatedBy : null;
+  const reviewer = viaApiKey ? null : userId;
   return {
     status: "approved",
     approvedAt: now,
     approvedBy: userId,
-    reviewedAt: userId ? now : null,
-    reviewedBy: userId,
+    reviewedAt: reviewer ? now : null,
+    reviewedBy: reviewer,
   };
 }
 

@@ -340,6 +340,61 @@ describe("API integration: feature summaries", () => {
     expect(await brief()).toEqual({ accepted: 2, unreviewed: 1 });
   });
 
+  it("[REQ-AGENT-AUTOAPPLY-37] agent_brief shows per feature whether its requirements and design were reviewed", async () => {
+    const { app, project } = await setup();
+    await mcpToolCall(app, "agent_requirements_put", {
+      projectId: project.id,
+      feature: "alpha",
+      title: "Alpha",
+      items: [{ text: "a1" }],
+      ...identity,
+    });
+    await app.request(
+      `/api/agent-design/${project.id}/alpha`,
+      json({ title: "Alpha design", body: "d" }),
+    );
+    await mcpToolCall(app, "agent_design_put", {
+      projectId: project.id,
+      feature: "beta",
+      title: "Beta design",
+      body: "d",
+      ...identity,
+    });
+
+    routeFetchInto(app);
+    const brief = async () =>
+      toolJson<{
+        features: Array<{
+          feature: string;
+          requirementsReviewed: boolean | null;
+          designReviewed: boolean | null;
+        }>;
+      }>(await mcpToolCall(app, "agent_brief", { projectId: project.id }))
+        .features.map((f) => [
+          f.feature,
+          f.requirementsReviewed,
+          f.designReviewed,
+        ])
+        .sort();
+
+    expect(await brief()).toEqual([
+      ["alpha", false, true],
+      ["beta", null, false],
+    ]);
+
+    expect(
+      (
+        await app.request(`/api/agent-requirement/${project.id}/alpha/review`, {
+          method: "POST",
+        })
+      ).status,
+    ).toBe(200);
+    expect(await brief()).toEqual([
+      ["alpha", true, true],
+      ["beta", null, false],
+    ]);
+  });
+
   it("[REQ-AGENT-AUTOAPPLY-12] [REQ-AGENT-AUTOAPPLY-17] agent_brief, the feature summary and the feature task list leave a deleted document out and show it again after restore", async () => {
     const { app, project, columns } = await setup("admin");
     await app.request(

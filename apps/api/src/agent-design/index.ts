@@ -75,7 +75,7 @@ const putRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "Create or replace a design",
   description:
-    "Overwrites title/body. `requirementKeys`, when sent, replaces the design's requirement links; unknown keys are a 400. The save applies immediately and, being a person's save, marks the design reviewed. A change to the title, body or covered keys moves `revisedAt` (linked tasks go stale) and appends a revision. A soft-deleted design is a 409 until it is restored.",
+    "Overwrites title/body. `requirementKeys`, when sent, replaces the design's requirement links; unknown keys are a 400. The save applies immediately. A signed-in person's save marks the design reviewed; an API-key save is attributed to the key's owner but leaves the design unreviewed. A change to the title, body or covered keys moves `revisedAt` (linked tasks go stale) and appends a revision. A soft-deleted design is a 409 until it is restored.",
   middleware: [
     workspaceAccess.fromProject("projectId"),
     requireWorkspacePermission({ task: ["update"] }),
@@ -238,6 +238,7 @@ const agentDesign = apiRouter<BaseVariables & { workspaceId: string }>()
       workspaceId: c.get("workspaceId"),
       author: { updatedBy: userId },
       entryAuthor: { userId },
+      viaApiKey: Boolean(c.get("apiKey")),
     });
     return c.json(await getDesign(projectId, feature), 200);
   })

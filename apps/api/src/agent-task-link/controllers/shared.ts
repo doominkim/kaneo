@@ -18,6 +18,23 @@ export async function requireTaskInProject(projectId: string, taskId: string) {
   return task;
 }
 
+/**
+ * The project's design ids that are not soft-deleted, as a subquery; the
+ * design counterpart of `liveItemIds`. Writes that touch a task's links in
+ * bulk stay among these, so a hidden link is left exactly as it was.
+ */
+export function liveDesignIds(projectId: string) {
+  return db
+    .select({ id: agentDesignTable.id })
+    .from(agentDesignTable)
+    .where(
+      and(
+        eq(agentDesignTable.projectId, projectId),
+        isNull(agentDesignTable.deletedAt),
+      ),
+    );
+}
+
 export async function resolveDesignsByFeature(
   projectId: string,
   features: string[],

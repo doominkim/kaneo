@@ -26,6 +26,7 @@ async function getSetKeys(projectId: string, feature: string) {
     title: set.title,
     status: set.status,
     approvedAt: set.approvedAt,
+    reviewed: set.reviewedAt !== null,
     updatedAt: set.updatedAt,
     items,
   };

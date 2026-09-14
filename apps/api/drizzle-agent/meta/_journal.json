@@ -99,6 +99,13 @@
       "when": 1789350189920,
       "tag": "0013_agent_autoapply",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789361915453,
+      "tag": "0014_agent_autoapply_integrity",
+      "breakpoints": true
     }
   ]
 }

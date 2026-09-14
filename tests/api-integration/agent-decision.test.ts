@@ -1730,6 +1730,9 @@ describe("API integration: ADR", () => {
         "restore",
       );
       expect(conflict.status).toBe(409);
+      await expect(conflict.text()).resolves.toBe(
+        "ADR-003 is now the accepted ADR of this supersede chain; restoring this one would make a second accepted ADR",
+      );
       expect((await rowOf(replacement.id))?.deletedAt).not.toBeNull();
       expect(
         (
@@ -1741,13 +1744,25 @@ describe("API integration: ADR", () => {
         ).supersededBy,
       ).toMatchObject({ id: other.id });
 
-      // A deleted predecessor cannot be superseded again either.
+      // Once nothing else in the chain is live, the replacement comes back as
+      // the chain's only accepted ADR; the deleted predecessor is not touched.
       await lifecycle(app, project.id, other.id, "delete");
+      expect((await rowOf(previous.id))?.status).toBe("accepted");
       await lifecycle(app, project.id, previous.id, "delete");
-      expect(
-        (await lifecycle(app, project.id, replacement.id, "restore")).status,
-      ).toBe(409);
-      expect((await rowOf(replacement.id))?.deletedAt).not.toBeNull();
+      const previousDeleted = await rowOf(previous.id);
+      const alone = await jsonDecision(
+        await lifecycle(app, project.id, replacement.id, "restore"),
+      );
+      expect(alone).toMatchObject({
+        status: "accepted",
+        deletedAt: null,
+        supersedes: null,
+      });
+      expect(await rowOf(previous.id)).toMatchObject({
+        status: "accepted",
+        deletedAt: previousDeleted?.deletedAt,
+        updatedAt: previousDeleted?.updatedAt,
+      });
     });
 
     /** P ← D ← E: D superseded P and was itself superseded by E. */
@@ -1855,6 +1870,308 @@ describe("API integration: ADR", () => {
       expect(addedSince(entriesBefore, await entriesFor(project.id))).toEqual([
         ["work", "ADR-002 복구 · D middle"],
       ]);
+    });
+
+    /** Title → status, with `/deleted` appended for a soft-deleted row. */
+    async function chainState(decisions: Array<{ id: string }>) {
+      const state: Record<string, string> = {};
+      for (const { id } of decisions) {
+        const row = await rowOf(id);
+        state[row?.title ?? id] =
+          `${row?.status}${row?.deletedAt ? "/deleted" : ""}`;
+      }
+      return state;
+    }
+
+    function liveAcceptedCount(state: Record<string, string>) {
+      return Object.values(state).filter((value) => value === "accepted")
+        .length;
+    }
+
+    it("[REQ-AGENT-AUTOAPPLY-20] [REQ-AGENT-AUTOAPPLY-21] [REQ-AGENT-AUTOAPPLY-22] [REQ-AGENT-AUTOAPPLY-44] P←D←E: D 와 E 를 지우면 P 가 accepted 가 되고, E 복구로 P 가 다시 superseded, D 복구로 원래 상태가 된다", async () => {
+      const { project, app } = await adminSetup();
+      const chain = await seedChain(app, project.id);
+      const { previous, middle, latest } = chain;
+      const all = [previous, middle, latest];
+      expect(await chainState(all)).toEqual({
+        "P original": "superseded",
+        "D middle": "superseded",
+        "E latest": "accepted",
+      });
+
+      // D is already superseded: deleting it moves nothing else.
+      expect(
+        await (await lifecycle(app, project.id, middle.id, "delete")).json(),
+      ).toMatchObject({ restoredDecisionId: null });
+      // E is accepted: acceptance walks past the deleted D to P.
+      expect(
+        await (await lifecycle(app, project.id, latest.id, "delete")).json(),
+      ).toMatchObject({ restoredDecisionId: previous.id });
+      expect(await chainState(all)).toEqual({
+        "P original": "accepted",
+        "D middle": "superseded/deleted",
+        "E latest": "accepted/deleted",
+      });
+
+      // D cannot come back before E: nothing live would replace it.
+      const early = await lifecycle(app, project.id, middle.id, "restore");
+      expect(early.status).toBe(409);
+      await expect(early.text()).resolves.toBe(
+        "No live ADR replaces this superseded ADR; restore the ADR that replaced it first",
+      );
+
+      // E comes back: P, its nearest live ancestor, is superseded again.
+      expect(
+        await jsonDecision(
+          await lifecycle(app, project.id, latest.id, "restore"),
+        ),
+      ).toMatchObject({ status: "accepted", deletedAt: null });
+      expect(await chainState(all)).toEqual({
+        "P original": "superseded",
+        "D middle": "superseded/deleted",
+        "E latest": "accepted",
+      });
+
+      // Now D: E replaces it again, so it returns exactly as it was.
+      expect(
+        await jsonDecision(
+          await lifecycle(app, project.id, middle.id, "restore"),
+        ),
+      ).toMatchObject({
+        status: "superseded",
+        supersedes: { id: previous.id, status: "superseded" },
+        supersededBy: { id: latest.id, status: "accepted" },
+      });
+      expect(await chainState(all)).toEqual({
+        "P original": "superseded",
+        "D middle": "superseded",
+        "E latest": "accepted",
+      });
+      expect(
+        (await listDecisions(app, project.id)).decisions.map((d) => d.id),
+      ).toEqual([latest.id]);
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-20] [REQ-AGENT-AUTOAPPLY-22] 길이 4 체인 P←A←B←C 에서 accepted 는 매 단계 하나이고, 이어받은 체인이나 살아 있는 후손이 있으면 복구는 409", async () => {
+      const { project, app } = await adminSetup();
+      const p = await jsonDecision(
+        await createDecision(app, project.id, { title: "P" }),
+      );
+      const a = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "A",
+          supersedesDecisionId: p.id,
+        }),
+      );
+      const b = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "B",
+          supersedesDecisionId: a.id,
+        }),
+      );
+      const c = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "C",
+          supersedesDecisionId: b.id,
+        }),
+      );
+      const all = [p, a, b, c];
+      const step = async (
+        decision: { id: string },
+        action: "delete" | "restore",
+        status = 200,
+      ) => {
+        const response = await lifecycle(app, project.id, decision.id, action);
+        expect(response.status, await response.clone().text()).toBe(status);
+        const state = await chainState(all);
+        expect(liveAcceptedCount(state), JSON.stringify(state)).toBe(1);
+        return response;
+      };
+
+      await step(b, "delete");
+      expect(await (await step(c, "delete")).json()).toMatchObject({
+        restoredDecisionId: a.id,
+      });
+      expect(await (await step(a, "delete")).json()).toMatchObject({
+        restoredDecisionId: p.id,
+      });
+      expect(await chainState(all)).toEqual({
+        P: "accepted",
+        A: "accepted/deleted",
+        B: "superseded/deleted",
+        C: "accepted/deleted",
+      });
+
+      await step(c, "restore");
+      await step(b, "restore");
+      // A was the accepted end when it was deleted, but C is live below it now:
+      // A back as accepted would be a second accepted ADR.
+      const blocked = await step(a, "restore", 409);
+      await expect(blocked.text()).resolves.toBe(
+        "ADR-004 is now the accepted ADR of this supersede chain; restoring this one would make a second accepted ADR",
+      );
+      expect(await chainState(all)).toEqual({
+        P: "superseded",
+        A: "accepted/deleted",
+        B: "superseded",
+        C: "accepted",
+      });
+
+      // Another ADR takes the chain over from B; C cannot come back.
+      expect(await (await step(c, "delete")).json()).toMatchObject({
+        restoredDecisionId: b.id,
+      });
+      const x = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "X",
+          supersedesDecisionId: b.id,
+        }),
+      );
+      all.push(x);
+      const takenOver = await step(c, "restore", 409);
+      await expect(takenOver.text()).resolves.toBe(
+        "ADR-005 is now the accepted ADR of this supersede chain; restoring this one would make a second accepted ADR",
+      );
+      expect(await chainState(all)).toEqual({
+        P: "superseded",
+        A: "accepted/deleted",
+        B: "superseded",
+        C: "accepted/deleted",
+        X: "accepted",
+      });
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-22] 같은 체인에 동시에 들어온 복구와 대체 작성 중 하나만 성공해 accepted 가 하나로 남는다", async () => {
+      const { project, app } = await adminSetup();
+      // P ← C ← D and, after D was deleted, P ← X: two branches whose heads
+      // do not share a direct predecessor, so no unique index separates them.
+      const p = await jsonDecision(
+        await createDecision(app, project.id, { title: "P" }),
+      );
+      const c = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "C",
+          supersedesDecisionId: p.id,
+        }),
+      );
+      const d = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "D",
+          supersedesDecisionId: c.id,
+        }),
+      );
+      await lifecycle(app, project.id, c.id, "delete");
+      await lifecycle(app, project.id, d.id, "delete");
+      const x = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "X",
+          supersedesDecisionId: p.id,
+        }),
+      );
+      await lifecycle(app, project.id, x.id, "delete");
+      await lifecycle(app, project.id, p.id, "delete");
+      const all = [p, c, d, x];
+      expect(await chainState(all)).toEqual({
+        P: "accepted/deleted",
+        C: "superseded/deleted",
+        D: "accepted/deleted",
+        X: "accepted/deleted",
+      });
+
+      const racing = await Promise.all([
+        lifecycle(app, project.id, d.id, "restore"),
+        lifecycle(app, project.id, x.id, "restore"),
+      ]);
+      expect(racing.map((r) => r.status).sort()).toEqual([200, 409]);
+      expect(liveAcceptedCount(await chainState(all))).toBe(1);
+
+      // A replacement written while the chain's head is being restored.
+      const q = await jsonDecision(
+        await createDecision(app, project.id, { title: "Q" }),
+      );
+      const r = await jsonDecision(
+        await createDecision(app, project.id, {
+          title: "R",
+          supersedesDecisionId: q.id,
+        }),
+      );
+      await lifecycle(app, project.id, r.id, "delete");
+      const [created, restored] = await Promise.all([
+        createDecision(app, project.id, {
+          title: "Y",
+          supersedesDecisionId: q.id,
+        }),
+        lifecycle(app, project.id, r.id, "restore"),
+      ]);
+      expect([created.status, restored.status].sort()).toEqual([200, 409]);
+      // Y exists only when the create won.
+      const [y] = await db
+        .select({ id: agentDecisionTable.id })
+        .from(agentDecisionTable)
+        .where(
+          and(
+            eq(agentDecisionTable.projectId, project.id),
+            eq(agentDecisionTable.title, "Y"),
+          ),
+        );
+      const qrState = await chainState(y ? [q, r, y] : [q, r]);
+      expect(liveAcceptedCount(qrState), JSON.stringify(qrState)).toBe(1);
+    });
+
+    it("[REQ-AGENT-AUTOAPPLY-6] API 키로 만든 ADR 과 승격한 ADR 은 키 소유자가 작성자이지만 미확인으로 남는다", async () => {
+      const { admin, project, app } = await adminSetup();
+      const [entry] = await db
+        .insert(agentEntryTable)
+        .values({
+          workspaceId: admin.workspace.id,
+          projectId: project.id,
+          createdBy: admin.user.id,
+          kind: "decision",
+          summary: "Use a durable queue",
+          decision: {
+            what: "Persist jobs before acknowledging them.",
+            why: "Restarts must not lose work.",
+          },
+        })
+        .returning();
+      if (!entry) throw new Error("Failed to seed source entry");
+
+      await seedApiKey(admin.user.id);
+      const unreviewed = {
+        status: "accepted",
+        createdBy: admin.user.id,
+        createdActor: null,
+        acceptedBy: admin.user.id,
+        reviewed: false,
+        reviewedAt: null,
+        reviewedBy: null,
+      };
+      const created = await jsonDecision(
+        await app.request("/api/agent-decision", {
+          method: "POST",
+          headers: { "content-type": "application/json", ...viaKey },
+          body: JSON.stringify({
+            projectId: project.id,
+            title: "Keyed ADR",
+            context: "Written by a script.",
+            decision: "Record it.",
+            taskIds: [],
+          }),
+        }),
+      );
+      expect(created).toMatchObject(unreviewed);
+
+      const promoted = await jsonDecision(
+        await app.request(
+          `/api/agent-decision/${project.id}/from-entry/${entry.id}`,
+          { method: "POST", headers: viaKey },
+        ),
+      );
+      expect(promoted).toMatchObject({
+        ...unreviewed,
+        sourceEntryId: entry.id,
+      });
+      expect((await listDecisions(app, project.id)).unreviewedTotal).toBe(2);
     });
 
     it("[REQ-AGENT-AUTOAPPLY-16] API 키로는 ADR 을 삭제·복구하지 못한다", async () => {

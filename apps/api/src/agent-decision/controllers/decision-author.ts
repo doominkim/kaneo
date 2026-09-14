@@ -39,13 +39,21 @@ export function creatorColumns(author: DecisionAuthor) {
  * An ADR is accepted the moment it is created (agent-autoapply). A person's
  * ADR is also reviewed by them; an agent's stays unreviewed until a person
  * marks it, and `acceptedBy` stays null because no person accepted it.
+ *
+ * An API-key write keeps the key's owner as author but stays unreviewed: the
+ * key proves permission, not that a person read the ADR.
  */
-export function acceptanceColumns(author: DecisionAuthor, now: Date) {
+export function acceptanceColumns(
+  author: DecisionAuthor,
+  now: Date,
+  viaApiKey = false,
+) {
+  const reviewer = viaApiKey ? null : author.userId;
   return {
     status: "accepted",
     acceptedAt: now,
     acceptedBy: author.userId,
-    reviewedAt: author.userId ? now : null,
-    reviewedBy: author.userId,
+    reviewedAt: reviewer ? now : null,
+    reviewedBy: reviewer,
   };
 }
