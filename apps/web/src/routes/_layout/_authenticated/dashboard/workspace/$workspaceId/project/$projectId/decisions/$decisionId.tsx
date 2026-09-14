@@ -1,35 +1,55 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Pencil, Plus, Search } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Undo2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { z } from "zod";
 import { AdrEditorDialog } from "@/components/agent-layer/adr-editor-dialog";
 import { AgentAuthorBadge } from "@/components/agent-layer/agent-author-badge";
+import {
+  DeletedStamp,
+  UnreviewedBadge,
+} from "@/components/agent-layer/spec-badges";
 import ProjectLayout from "@/components/common/project-layout";
 import PageTitle from "@/components/page-title";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { useAcceptAgentDecision } from "@/hooks/mutations/agent-layer/use-agent-decisions";
+import type {
+  AgentDecisionDeleteResult,
+  AgentDecisionDetail,
+} from "@/fetchers/agent-layer/agent-decisions";
+import { isAgentLayerStatus } from "@/fetchers/agent-layer/api-error";
 import {
-  useAgentDecision,
-  useAgentDecisions,
-} from "@/hooks/queries/agent-layer/use-agent-decisions";
+  useDeleteAgentDecision,
+  useRestoreAgentDecision,
+  useReviewAgentDecision,
+} from "@/hooks/mutations/agent-layer/use-agent-decisions";
+import { useAgentDecision } from "@/hooks/queries/agent-layer/use-agent-decisions";
+import { useMemberNames } from "@/hooks/queries/agent-layer/use-member-names";
+import { useReviewOnOpen } from "@/hooks/use-review-on-open";
 import { useWorkspacePermission } from "@/hooks/use-workspace-permission";
+import { toast } from "@/lib/toast";
 
 const decisionStatus = z.enum([
   "current",
   "all",
-  "draft",
   "accepted",
   "superseded",
+  "deleted",
 ]);
 
 export const Route = createFileRoute(
   "/_layout/_authenticated/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId",
 )({
   validateSearch: z.object({
-    supersedes: z.string().optional(),
     origin: z
       .enum(["knowledge", "task"])
       .catch("knowledge")
@@ -40,6 +60,8 @@ export const Route = createFileRoute(
   }),
   component: RouteComponent,
 });
+
+const padNumber = (value: number) => String(value).padStart(3, "0");
 
 function Section({
   title,
@@ -74,35 +96,35 @@ function RefList({ label, items }: { label: string; items?: string[] }) {
   );
 }
 
+type DeletedHere = {
+  item: AgentDecisionDetail;
+  result: AgentDecisionDeleteResult;
+};
+
 function RouteComponent() {
   const { t } = useTranslation();
   const { workspaceId, projectId, decisionId } = Route.useParams();
   const search = Route.useSearch();
   const navigate = useNavigate();
   const decision = useAgentDecision(projectId, decisionId);
+  const memberNames = useMemberNames(workspaceId);
   const { canUpdateTasks, canUpdateProjects } = useWorkspacePermission();
-  const [edit, setEdit] = useState(false);
+  const review = useReviewAgentDecision();
+  const remove = useDeleteAgentDecision();
+  const restore = useRestoreAgentDecision();
   const [replacement, setReplacement] = useState(false);
-  const [acceptedSearch, setAcceptedSearch] = useState("");
-  const [replacementChoice, setReplacementChoice] = useState<{
-    ownerId: string;
-    value: string;
-  } | null>(null);
-  const [acceptError, setAcceptError] = useState<string | null>(null);
-  const accept = useAcceptAgentDecision();
-  const item = decision.data;
-  const selectedSupersedes =
-    replacementChoice && replacementChoice.ownerId === decisionId
-      ? replacementChoice.value
-      : (search.supersedes ?? "");
-  const selectedSupersedesDetail = useAgentDecision(
-    projectId,
-    selectedSupersedes || undefined,
-  );
-  const accepted = useAgentDecisions({
-    projectId,
-    status: "accepted",
-    q: acceptedSearch.trim() || undefined,
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  // The detail route does not find a deleted ADR, so the one deleted on this
+  // page is kept here: it stays readable and offers its own restore.
+  const [deleted, setDeleted] = useState<DeletedHere | null>(null);
+  const deletedHere = deleted?.item.id === decisionId ? deleted : null;
+  const item = deletedHere?.item ?? decision.data;
+
+  const showUnreviewed = useReviewOnOpen({
+    itemId: item?.id,
+    reviewed: item?.reviewed,
+    enabled: !deletedHere,
+    onReview: () => review.mutateAsync({ projectId, decisionId }),
   });
 
   const back = () => {
@@ -123,30 +145,51 @@ function RouteComponent() {
     });
   };
 
-  const acceptDraft = async () => {
+  const openRecord = (id: string) =>
+    navigate({
+      to: "/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId",
+      params: { workspaceId, projectId, decisionId: id },
+      search,
+    });
+
+  const handleDelete = async () => {
     if (!item) return;
-    if (
-      selectedSupersedes &&
-      !window.confirm(t("agentLayer:adr.confirmSupersede"))
-    ) {
-      return;
-    }
     try {
-      setAcceptError(null);
-      await accept.mutateAsync({
+      const result = await remove.mutateAsync({
         projectId,
         decisionId: item.id,
-        expectedUpdatedAt: item.updatedAt,
-        ...(selectedSupersedes
-          ? { supersedesDecisionId: selectedSupersedes }
-          : {}),
       });
-    } catch {
-      setAcceptError(t("agentLayer:adr.acceptFailed"));
+      setDeleted({ item, result });
+      setIsDeleteOpen(false);
+      toast.success(
+        t("agentLayer:adr.deleted", { number: padNumber(item.number) }),
+      );
+    } catch (cause) {
+      toast.error(t("agentLayer:adr.deleteFailed"), {
+        description: cause instanceof Error ? cause.message : undefined,
+      });
     }
   };
 
-  if (decision.isPending) {
+  const handleRestore = async () => {
+    if (!item) return;
+    try {
+      await restore.mutateAsync({ projectId, decisionId: item.id });
+      setDeleted(null);
+      toast.success(
+        t("agentLayer:adr.restored", { number: padNumber(item.number) }),
+      );
+    } catch (cause) {
+      toast.error(
+        isAgentLayerStatus(cause, 409)
+          ? t("agentLayer:adr.restoreConflict")
+          : t("agentLayer:common.restoreFailed"),
+        { description: cause instanceof Error ? cause.message : undefined },
+      );
+    }
+  };
+
+  if (!item && decision.isPending) {
     return (
       <ProjectLayout
         projectId={projectId}
@@ -167,7 +210,11 @@ function RouteComponent() {
         activeView="knowledge"
       >
         <div className="space-y-3 p-5">
-          {decision.isError ? (
+          {isAgentLayerStatus(decision.error, 404) ? (
+            <p className="text-sm text-muted-foreground">
+              {t("agentLayer:adr.notFound")}
+            </p>
+          ) : decision.isError ? (
             <p className="text-sm text-destructive">
               {t("agentLayer:adr.detailLoadFailed")}
             </p>
@@ -180,24 +227,24 @@ function RouteComponent() {
     );
   }
 
-  const statusLabel = {
-    draft: t("agentLayer:adr.statusDraft"),
-    accepted: t("agentLayer:adr.statusAccepted"),
-    superseded: t("agentLayer:adr.statusSuperseded"),
-  }[item.status];
-  const acceptedRecords =
-    accepted.data?.pages
-      .flatMap((page) => page.decisions)
-      .filter((record) => record.id !== item.id) ?? [];
-  const selectedRecord = selectedSupersedesDetail.data;
-  const acceptedOptions = [
-    ...acceptedRecords,
-    ...(selectedRecord &&
-    selectedRecord.id !== item.id &&
-    !acceptedRecords.some((record) => record.id === selectedRecord.id)
-      ? [selectedRecord]
-      : []),
-  ];
+  const isDeleted = Boolean(deletedHere);
+  const statusLabel =
+    item.status === "accepted"
+      ? t("agentLayer:adr.statusAccepted")
+      : t("agentLayer:adr.statusSuperseded");
+  // Deleting an accepted ADR returns the one it superseded to `accepted`.
+  const returnsPrevious =
+    item.status === "accepted" && item.supersedes?.status === "superseded"
+      ? item.supersedes
+      : null;
+  const restoredPrevious =
+    deletedHere?.result.restoredDecisionId &&
+    item.supersedes?.id === deletedHere.result.restoredDecisionId
+      ? item.supersedes
+      : null;
+  const reviewerName = item.reviewedBy
+    ? memberNames.get(item.reviewedBy)
+    : undefined;
   const refs = item.refs;
 
   return (
@@ -207,7 +254,7 @@ function RouteComponent() {
       activeView="knowledge"
     >
       <PageTitle
-        title={`ADR-${String(item.number).padStart(3, "0")} · ${item.title}`}
+        title={`ADR-${padNumber(item.number)} · ${item.title}`}
         hideAppName
       />
       <div className="h-full overflow-y-auto">
@@ -217,55 +264,111 @@ function RouteComponent() {
               <ArrowLeft /> {t("agentLayer:adr.back")}
             </Button>
             <div className="flex gap-2">
-              {item.status === "draft" && canUpdateTasks() ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setEdit(true)}
-                >
-                  <Pencil /> {t("agentLayer:adr.editAction")}
-                </Button>
-              ) : null}
-              {item.status === "draft" && canUpdateProjects() ? (
-                <Button
-                  size="sm"
-                  onClick={acceptDraft}
-                  disabled={accept.isPending}
-                  data-testid="accept-adr"
-                >
-                  {accept.isPending
-                    ? t("agentLayer:adr.accepting")
-                    : t("agentLayer:adr.accept")}
-                </Button>
-              ) : null}
-              {item.status === "accepted" && canUpdateTasks() ? (
+              {!isDeleted && item.status === "accepted" && canUpdateTasks() ? (
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => setReplacement(true)}
+                  data-testid="supersede-adr"
                 >
-                  <Plus /> {t("agentLayer:adr.createReplacement")}
+                  <Plus /> {t("agentLayer:adr.supersede")}
+                </Button>
+              ) : null}
+              {!isDeleted && canUpdateProjects() ? (
+                <Button
+                  size="sm"
+                  variant="destructive-outline"
+                  onClick={() => setIsDeleteOpen(true)}
+                  data-testid="delete-adr"
+                >
+                  <Trash2 /> {t("agentLayer:adr.delete")}
                 </Button>
               ) : null}
             </div>
           </div>
 
+          {deletedHere ? (
+            <div
+              role="status"
+              className="space-y-1 rounded-md border border-destructive/40 bg-destructive/8 px-3 py-2 text-sm"
+              data-testid="adr-deleted-banner"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">
+                  {t("agentLayer:adr.deletedBanner")}
+                </span>
+                <DeletedStamp
+                  deletedAt={deletedHere.result.deletedAt}
+                  deletedByName={memberNames.get(deletedHere.result.deletedBy)}
+                />
+                {canUpdateProjects() ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    className="ml-auto"
+                    onClick={handleRestore}
+                    disabled={restore.isPending}
+                    data-testid="restore-adr"
+                  >
+                    <Undo2 />
+                    {restore.isPending
+                      ? t("agentLayer:common.restoring")
+                      : t("agentLayer:common.restore")}
+                  </Button>
+                ) : null}
+              </div>
+              {restoredPrevious ? (
+                <p className="text-xs text-muted-foreground">
+                  {t("agentLayer:adr.restoredPrevious", {
+                    number: padNumber(restoredPrevious.number),
+                  })}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {!isDeleted && item.supersededBy ? (
+            <div
+              role="status"
+              className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm"
+              data-testid="adr-superseded-banner"
+            >
+              <span>
+                {t("agentLayer:adr.supersededByRecord", {
+                  number: padNumber(item.supersededBy.number),
+                  title: item.supersededBy.title,
+                })}
+              </span>
+              <Button
+                size="xs"
+                variant="outline"
+                className="ml-auto"
+                onClick={() =>
+                  item.supersededBy && openRecord(item.supersededBy.id)
+                }
+              >
+                {t("agentLayer:adr.openRecord")}
+              </Button>
+            </div>
+          ) : null}
+
           <header className="space-y-2 border-b pb-5">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-sm text-muted-foreground">
-                ADR-{String(item.number).padStart(3, "0")}
+                ADR-{padNumber(item.number)}
               </span>
               <Badge
-                variant={
-                  item.status === "accepted"
-                    ? "success"
-                    : item.status === "superseded"
-                      ? "secondary"
-                      : "outline"
-                }
+                variant={item.status === "accepted" ? "success" : "secondary"}
+                data-testid="adr-status"
               >
                 {statusLabel}
               </Badge>
+              {isDeleted ? (
+                <Badge variant="error" data-testid="adr-deleted">
+                  {t("agentLayer:adr.statusDeleted")}
+                </Badge>
+              ) : null}
+              {showUnreviewed && !isDeleted ? <UnreviewedBadge /> : null}
             </div>
             <h1 className="text-2xl font-semibold">{item.title}</h1>
             <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
@@ -279,93 +382,18 @@ function RouteComponent() {
                 <span>{t("agentLayer:common.unknownAuthor")}</span>
               )}
               <span>· {new Date(item.createdAt).toLocaleString()}</span>
-              {item.acceptedAt ? (
+              {item.reviewedAt ? (
                 <>
-                  <span>· {t("agentLayer:adr.acceptedBy")}</span>
-                  {item.acceptor ? (
-                    <AgentAuthorBadge humanName={item.acceptor.name} />
-                  ) : (
-                    <span>{t("agentLayer:common.unknownAuthor")}</span>
-                  )}
-                  <span>· {new Date(item.acceptedAt).toLocaleString()}</span>
+                  <span>· {t("agentLayer:adr.reviewedBy")}</span>
+                  <span data-testid="adr-reviewer">
+                    {reviewerName ?? t("agentLayer:common.unknownAuthor")}
+                  </span>
+                  <span>· {new Date(item.reviewedAt).toLocaleString()}</span>
                 </>
               ) : null}
             </div>
           </header>
 
-          {item.status === "draft" && canUpdateProjects() ? (
-            <section className="space-y-2">
-              <label
-                className="block text-sm font-medium"
-                htmlFor="adr-supersedes-search"
-              >
-                {t("agentLayer:adr.supersedes")}
-              </label>
-              <div className="relative">
-                <Search className="absolute left-2 top-2 size-4 text-muted-foreground" />
-                <Input
-                  id="adr-supersedes-search"
-                  className="pl-8"
-                  value={acceptedSearch}
-                  onChange={(event) => setAcceptedSearch(event.target.value)}
-                  placeholder={t("agentLayer:adr.searchAccepted")}
-                />
-              </div>
-              <select
-                className="w-full rounded border bg-background p-2 text-sm"
-                value={selectedSupersedes}
-                onChange={(event) =>
-                  setReplacementChoice({
-                    ownerId: decisionId,
-                    value: event.target.value,
-                  })
-                }
-                data-testid="adr-supersedes-select"
-                disabled={accept.isPending}
-              >
-                <option value="">{t("agentLayer:adr.noSupersedes")}</option>
-                {acceptedOptions.map((record) => (
-                  <option value={record.id} key={record.id}>
-                    ADR-{String(record.number).padStart(3, "0")} ·{" "}
-                    {record.title}
-                  </option>
-                ))}
-              </select>
-              {accepted.isError ? (
-                <div className="flex items-center gap-2">
-                  <p className="text-xs text-destructive">
-                    {t("agentLayer:adr.acceptedLoadFailed")}
-                  </p>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() => accepted.refetch()}
-                  >
-                    {t("agentLayer:adr.retry")}
-                  </Button>
-                </div>
-              ) : null}
-              {accepted.hasNextPage ? (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() => accepted.fetchNextPage()}
-                  disabled={accepted.isFetchingNextPage}
-                >
-                  {t("agentLayer:adr.loadMoreAccepted")}
-                </Button>
-              ) : null}
-            </section>
-          ) : null}
-
-          {acceptError ? (
-            <div className="flex items-center gap-2" role="alert">
-              <p className="text-sm text-destructive">{acceptError}</p>
-              <Button size="xs" variant="outline" onClick={acceptDraft}>
-                {t("agentLayer:adr.retryAccept")}
-              </Button>
-            </div>
-          ) : null}
           <Section title={t("agentLayer:adr.context")}>{item.context}</Section>
           <Section title={t("agentLayer:adr.decision")}>
             {item.decision}
@@ -440,43 +468,81 @@ function RouteComponent() {
             )}
           </section>
           {item.supersedes ? (
-            <p className="text-sm">
-              {t("agentLayer:adr.supersedesRecord", {
-                number: String(item.supersedes.number).padStart(3, "0"),
-                title: item.supersedes.title,
-              })}
-            </p>
-          ) : null}
-          {item.supersededBy ? (
-            <p className="text-sm">
-              {t("agentLayer:adr.supersededByRecord", {
-                number: String(item.supersededBy.number).padStart(3, "0"),
-                title: item.supersededBy.title,
-              })}
-            </p>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span>
+                {t("agentLayer:adr.supersedesRecord", {
+                  number: padNumber(item.supersedes.number),
+                  title: item.supersedes.title,
+                })}
+              </span>
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() =>
+                  item.supersedes && openRecord(item.supersedes.id)
+                }
+              >
+                {t("agentLayer:adr.openRecord")}
+              </Button>
+            </div>
           ) : null}
         </article>
       </div>
       <AdrEditorDialog
-        open={edit}
-        onOpenChange={setEdit}
-        projectId={projectId}
-        decision={item}
-        onSaved={() => setEdit(false)}
-      />
-      <AdrEditorDialog
         open={replacement}
         onOpenChange={setReplacement}
         projectId={projectId}
-        initial={item}
-        onSaved={(created) =>
-          navigate({
-            to: "/dashboard/workspace/$workspaceId/project/$projectId/decisions/$decisionId",
-            params: { workspaceId, projectId, decisionId: created.id },
-            search: { ...search, supersedes: item.id },
-          })
-        }
+        supersedes={item}
+        onSaved={(created) => openRecord(created.id)}
       />
+      <AlertDialog
+        open={isDeleteOpen}
+        onOpenChange={(open) =>
+          !open && !remove.isPending && setIsDeleteOpen(false)
+        }
+      >
+        <AlertDialogContent data-testid="delete-adr-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t("agentLayer:adr.deleteTitle", {
+                number: padNumber(item.number),
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("agentLayer:adr.deleteDescription")}
+              {returnsPrevious
+                ? ` ${t("agentLayer:adr.deleteRestoresPrevious", {
+                    number: padNumber(returnsPrevious.number),
+                  })}`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose
+              render={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={remove.isPending}
+                />
+              }
+            >
+              {t("agentLayer:adr.cancel")}
+            </AlertDialogClose>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={remove.isPending}
+              onClick={handleDelete}
+              data-testid="delete-adr-submit"
+            >
+              {remove.isPending
+                ? t("agentLayer:adr.deleting")
+                : t("agentLayer:adr.delete")}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </ProjectLayout>
   );
 }

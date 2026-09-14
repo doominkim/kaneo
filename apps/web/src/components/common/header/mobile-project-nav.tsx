@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import {
   MobileProjectSections,
   type ProjectView,
+  type SectionBadges,
 } from "@/components/agent-layer/project-view-nav";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +26,7 @@ type MobileProjectNavProps = {
   workspaceId: string;
   projectId: string;
   activeView: ProjectView;
+  sectionBadges?: SectionBadges;
   onSelectView: (view: ProjectView) => void;
   onSelectBoard: () => void;
   onSelectBacklog: () => void;
@@ -38,6 +40,7 @@ export default function MobileProjectNav({
   workspaceId,
   projectId,
   activeView,
+  sectionBadges,
   onSelectView,
   onSelectBoard,
   onSelectBacklog,
@@ -67,6 +70,7 @@ export default function MobileProjectNav({
           <MobileProjectSections
             activeView={activeView}
             onSelectView={onSelectView}
+            badges={sectionBadges}
           />
 
           <div className="space-y-1">

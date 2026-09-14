@@ -64,17 +64,3 @@ export async function putAgentRequirementSet({
   if (!response.ok) return throwAgentLayerError(response);
   return response.json();
 }
-
-export async function approveAgentRequirementSet({
-  projectId,
-  feature,
-}: {
-  projectId: string;
-  feature: string;
-}) {
-  const response = await route[":feature"].approve.$post({
-    param: { projectId, feature },
-  });
-  if (!response.ok) return throwAgentLayerError(response);
-  return response.json();
-}

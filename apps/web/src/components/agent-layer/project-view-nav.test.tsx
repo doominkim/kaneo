@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  MobileProjectSections,
   ProjectSectionTabs,
   resolveProjectView,
   SECTIONS,
@@ -61,5 +62,43 @@ describe("project sections", () => {
       "feature",
       "docs",
     ]);
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-10] shows the unreviewed count on the Feature and knowledge tabs, and nothing at zero", () => {
+    render(
+      <ProjectSectionTabs
+        activeView="board"
+        onSelectView={() => {}}
+        badges={{ feature: 2, knowledge: 5, docs: 0 }}
+      />,
+    );
+    const countOn = (label: string) =>
+      screen
+        .getByText(label)
+        .closest("button")
+        ?.querySelector('[data-testid="unreviewed-count"] [aria-hidden="true"]')
+        ?.textContent ?? null;
+    expect(countOn("agentLayer:nav.feature")).toBe("2");
+    expect(countOn("agentLayer:nav.knowledge")).toBe("5");
+    expect(countOn("agentLayer:nav.docs")).toBeNull();
+    const counts = screen.getAllByTestId("unreviewed-count");
+    expect(counts).toHaveLength(2);
+    // Announced with its meaning, not as a bare digit.
+    expect(counts[0]).toHaveTextContent("agentLayer:common.unreviewedCount");
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-10] the mobile section grid carries the same counts", () => {
+    render(
+      <MobileProjectSections
+        activeView="board"
+        onSelectView={() => {}}
+        badges={{ knowledge: 3 }}
+      />,
+    );
+    const counts = screen.getAllByTestId("unreviewed-count");
+    expect(counts).toHaveLength(1);
+    expect(counts[0].closest("button")).toHaveTextContent(
+      "agentLayer:nav.knowledge",
+    );
   });
 });

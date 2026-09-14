@@ -8,11 +8,12 @@ import {
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentRequirementSet } from "@/fetchers/agent-layer/agent-requirements";
+import type { SpecTarget } from "@/fetchers/agent-layer/agent-spec-lifecycle";
 import { RequirementSetPage } from "./requirement-set-page";
 
 const mocks = vi.hoisted(() => ({
   put: vi.fn(),
-  approve: vi.fn(),
+  review: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -48,10 +49,31 @@ vi.mock("@/hooks/mutations/agent-layer/use-agent-spec", () => ({
     mutateAsync: mocks.put,
     isPending: false,
   }),
-  useApproveAgentRequirementSet: () => ({
-    mutateAsync: mocks.approve,
+  useReviewAgentSpec: () => ({
+    mutateAsync: mocks.review,
     isPending: false,
   }),
+}));
+// History and delete are exercised in spec-lifecycle.test.tsx; here only what
+// the page hands them.
+vi.mock("./spec-lifecycle", () => ({
+  SpecLifecycleActions: ({
+    target,
+    canRevert,
+    canDelete,
+  }: {
+    target: SpecTarget;
+    canRevert: boolean;
+    canDelete: boolean;
+  }) => (
+    <div
+      data-testid="spec-lifecycle"
+      data-kind={target.kind}
+      data-feature={target.feature}
+      data-can-revert={String(canRevert)}
+      data-can-delete={String(canDelete)}
+    />
+  ),
 }));
 
 function makeSet(
@@ -64,9 +86,13 @@ function makeSet(
     feature: "spec-tabs",
     title: "Spec tabs",
     body: "# scope",
-    status: "draft",
-    approvedAt: null,
+    status: "approved",
+    approvedAt: "2026-09-13T00:00:00.000Z",
     approvedBy: null,
+    reviewed: true,
+    reviewedAt: "2026-09-13T00:00:00.000Z",
+    reviewedBy: "u1",
+    revisedAt: "2026-09-13T00:00:00.000Z",
     nextSeq: 3,
     sourceSlug: null,
     updatedBy: "u1",
@@ -128,9 +154,12 @@ function makeSet(
   };
 }
 
+const unreviewed = () =>
+  makeSet({ reviewed: false, reviewedAt: null, reviewedBy: null });
+
 beforeEach(() => {
   mocks.put.mockReset().mockResolvedValue({});
-  mocks.approve.mockReset().mockResolvedValue({});
+  mocks.review.mockReset().mockResolvedValue({});
 });
 afterEach(() => cleanup());
 
@@ -160,8 +189,69 @@ describe("요구사항 문서 페이지", () => {
     );
   });
 
-  it("[REQ-SPEC-TABS-4] a draft set offers approve to an editor; an approved one does not", () => {
-    const { unmount } = render(
+  it("[REQ-AGENT-AUTOAPPLY-5] shows no approve button and no draft or approved status", () => {
+    render(
+      <RequirementSetPage
+        set={unreviewed()}
+        workspaceId="ws"
+        projectId="p1"
+        canEdit
+        canDelete
+      />,
+    );
+    expect(screen.queryByTestId("approve-set")).toBeNull();
+    expect(screen.queryByTestId("spec-status")).toBeNull();
+    const text = document.body.textContent ?? "";
+    for (const gone of [
+      "agentLayer:spec.approve",
+      "agentLayer:spec.statusDraft",
+      "agentLayer:spec.statusApproved",
+    ]) {
+      expect(text).not.toContain(gone);
+    }
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-8] opening an unreviewed document marks it reviewed once, for any reader", () => {
+    const set = unreviewed();
+    const { rerender } = render(
+      <RequirementSetPage
+        set={set}
+        workspaceId="ws"
+        projectId="p1"
+        canEdit={false}
+      />,
+    );
+    expect(mocks.review).toHaveBeenCalledTimes(1);
+    expect(mocks.review).toHaveBeenCalledWith({
+      kind: "requirement",
+      projectId: "p1",
+      feature: "spec-tabs",
+    });
+    expect(screen.getByTestId("unreviewed-badge")).toBeInTheDocument();
+
+    rerender(
+      <RequirementSetPage
+        set={{ ...set }}
+        workspaceId="ws"
+        projectId="p1"
+        canEdit={false}
+      />,
+    );
+    // The refetch comes back reviewed; the mark stays for this visit.
+    rerender(
+      <RequirementSetPage
+        set={{ ...set, reviewed: true }}
+        workspaceId="ws"
+        projectId="p1"
+        canEdit={false}
+      />,
+    );
+    expect(mocks.review).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("unreviewed-badge")).toBeInTheDocument();
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-8] a reviewed document is not reviewed again and carries no mark", () => {
+    render(
       <RequirementSetPage
         set={makeSet()}
         workspaceId="ws"
@@ -169,31 +259,41 @@ describe("요구사항 문서 페이지", () => {
         canEdit
       />,
     );
-    fireEvent.click(screen.getByTestId("approve-set"));
-    expect(mocks.approve).toHaveBeenCalledWith({
-      projectId: "p1",
-      feature: "spec-tabs",
-    });
+    expect(mocks.review).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("unreviewed-badge")).toBeNull();
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-18] [REQ-AGENT-AUTOAPPLY-25] hands every reader the history, revert to task:update and delete to project:update", () => {
+    const { unmount } = render(
+      <RequirementSetPage
+        set={makeSet()}
+        workspaceId="ws"
+        projectId="p1"
+        canEdit={false}
+      />,
+    );
+    const readOnly = screen.getByTestId("spec-lifecycle");
+    expect(readOnly).toHaveAttribute("data-kind", "requirement");
+    expect(readOnly).toHaveAttribute("data-feature", "spec-tabs");
+    expect(readOnly).toHaveAttribute("data-can-revert", "false");
+    expect(readOnly).toHaveAttribute("data-can-delete", "false");
     unmount();
 
     render(
       <RequirementSetPage
-        set={makeSet({
-          status: "approved",
-          approvedAt: "2026-09-13T01:00:00.000Z",
-        })}
+        set={makeSet()}
         workspaceId="ws"
         projectId="p1"
         canEdit
+        canDelete
       />,
     );
-    expect(screen.queryByTestId("approve-set")).toBeNull();
-    expect(screen.getByTestId("spec-status").getAttribute("data-status")).toBe(
-      "approved",
-    );
+    const manager = screen.getByTestId("spec-lifecycle");
+    expect(manager).toHaveAttribute("data-can-revert", "true");
+    expect(manager).toHaveAttribute("data-can-delete", "true");
   });
 
-  it("[REQ-SPEC-TABS-4] a reader without task:update sees neither approve nor edit", () => {
+  it("[REQ-SPEC-TABS-4] a reader without task:update cannot edit", () => {
     render(
       <RequirementSetPage
         set={makeSet()}
@@ -202,7 +302,6 @@ describe("요구사항 문서 페이지", () => {
         canEdit={false}
       />,
     );
-    expect(screen.queryByTestId("approve-set")).toBeNull();
     expect(screen.queryByTestId("edit-set")).toBeNull();
   });
 

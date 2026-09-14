@@ -21,9 +21,11 @@ import type {
 } from "@/fetchers/agent-layer/get-agent-terms";
 import { useConfirmAgentTerm } from "@/hooks/mutations/agent-layer/use-confirm-agent-term";
 import { useDeleteAgentTerm } from "@/hooks/mutations/agent-layer/use-delete-agent-term";
+import { useRestoreAgentTerm } from "@/hooks/mutations/agent-layer/use-restore-agent-term";
 import { useSetAgentTermDomain } from "@/hooks/mutations/agent-layer/use-set-agent-term-domain";
 import { useAgentDomains } from "@/hooks/queries/agent-layer/use-agent-domains";
 import { useAgentTerms } from "@/hooks/queries/agent-layer/use-agent-terms";
+import { useMemberNames } from "@/hooks/queries/agent-layer/use-member-names";
 import { cn } from "@/lib/cn";
 import { toast } from "@/lib/toast";
 import {
@@ -47,7 +49,11 @@ type PendingReview = {
 
 type TermListProps = {
   workspaceId: string;
-  /** workspace:update — the only path from proposed to confirmed. */
+  /**
+   * workspace:update. Confirm, dispute and filing on review surfaces; delete,
+   * restore and the review mark on opening a definition on every surface,
+   * because the API gates all of them the same way.
+   */
   canReview: boolean;
   /**
    * Scopes the list to one domain page; `"none"` is the unfiled bucket.
@@ -55,14 +61,15 @@ type TermListProps = {
    */
   domainId?: string;
   /**
-   * Read-only view of what agents can actually read. Pins the query to
-   * `confirmed` and drops the filters and the review controls, so the surface
-   * showing it cannot be mistaken for the review queue.
+   * The view of what agents read. Pins the live list to `confirmed` and drops
+   * the confidence and state filters and the confirm, dispute and filing
+   * controls, so the surface showing it cannot be mistaken for the review
+   * queue.
    */
   confirmedOnly?: boolean;
 };
 
-/** Knowledge list: filters, rows, human review. */
+/** Knowledge list: filters, rows, human review, soft delete and restore. */
 export function TermList({
   workspaceId,
   canReview,
@@ -74,25 +81,35 @@ export function TermList({
     undefined,
   );
   const [state, setState] = useState<AgentTermState | undefined>(undefined);
+  const [showDeleted, setShowDeleted] = useState(false);
   const [pending, setPending] = useState<PendingReview | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<AgentTerm | null>(null);
   // The read-only view overrides the permission rather than trusting its
   // caller to pass `canReview={false}` as well: one prop, one meaning.
-  const reviewable = canReview && !confirmedOnly;
-  // The filter state above is left mounted but unread here — nothing can set
-  // it while the chips are hidden, and branching it out would fork the row
-  // rendering too.
-  const query = useAgentTerms(workspaceId, {
-    confidence: confirmedOnly ? "confirmed" : confidence,
-    state: confirmedOnly ? undefined : state,
-    domainId,
-  });
+  const reviewable = canReview && !confirmedOnly && !showDeleted;
+  // Deleted items are listed whatever their confidence or state: the point of
+  // the filter is to find the one to restore.
+  const query = useAgentTerms(
+    workspaceId,
+    showDeleted
+      ? { domainId, deleted: true }
+      : {
+          confidence: confirmedOnly ? "confirmed" : confidence,
+          state: confirmedOnly ? undefined : state,
+          domainId,
+        },
+  );
   const review = useConfirmAgentTerm();
+  // Its own mutation, so a review landing from an opened definition never
+  // disables the dialog's submit.
+  const markOnOpen = useConfirmAgentTerm();
   const remove = useDeleteAgentTerm();
+  const restore = useRestoreAgentTerm();
   const domains = useAgentDomains(workspaceId);
   const setDomain = useSetAgentTermDomain();
+  const memberNames = useMemberNames(workspaceId);
 
   const handleSetDomain = async (term: AgentTerm, domainId: string | null) => {
     try {
@@ -164,8 +181,18 @@ export function TermList({
     }
   };
 
-  // 409 carries the API's own reason (reviewed term, or another term's
-  // `supersededBy` points here); it is shown verbatim rather than mapped.
+  // Opening an unreviewed item's definition is its review (agent-autoapply).
+  // For knowledge items the review route is `confirm`, which needs
+  // workspace:update, so rows only get this where `canReview` holds.
+  const markReviewed = (term: AgentTerm) =>
+    markOnOpen.mutateAsync({
+      workspaceId,
+      termId: term.id,
+      confidence: "confirmed",
+    });
+
+  // 409 carries the API's own reason (another term's `supersededBy` points
+  // here); it is shown verbatim rather than mapped.
   const handleDelete = async () => {
     if (!pendingDelete) return;
     try {
@@ -191,6 +218,19 @@ export function TermList({
     }
   };
 
+  const handleRestore = async (term: AgentTerm) => {
+    try {
+      await restore.mutateAsync({ workspaceId, termId: term.id });
+      toast.success(
+        t("agentLayer:knowledge.restored", { term: term.canonical }),
+      );
+    } catch (cause) {
+      toast.error(t("agentLayer:common.restoreFailed"), {
+        description: cause instanceof Error ? cause.message : undefined,
+      });
+    }
+  };
+
   const terms = query.data?.terms ?? [];
   // Said once above the list rather than on every row: on a review surface the
   // rows are unconfirmed by definition, and the reviewer needs the definitions
@@ -200,26 +240,48 @@ export function TermList({
 
   return (
     <div className="space-y-3" data-testid="term-list">
-      {confirmedOnly ? null : (
-        <div className="flex flex-wrap items-center gap-2">
-          <FilterGroup
-            label={t("agentLayer:knowledge.filterConfidence")}
-            value={confidence}
-            options={CONFIDENCES}
-            labelOf={(option) => t(`agentLayer:confidence.${option}`)}
-            onChange={setConfidence}
-            testId="confidence-filter"
-          />
-          <FilterGroup
-            label={t("agentLayer:knowledge.filterState")}
-            value={state}
-            options={STATES}
-            labelOf={(option) => t(`agentLayer:state.${option}`)}
-            onChange={setState}
-            testId="state-filter"
-          />
-        </div>
-      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {confirmedOnly || showDeleted ? null : (
+          <>
+            <FilterGroup
+              label={t("agentLayer:knowledge.filterConfidence")}
+              value={confidence}
+              options={CONFIDENCES}
+              labelOf={(option) => t(`agentLayer:confidence.${option}`)}
+              onChange={setConfidence}
+              testId="confidence-filter"
+            />
+            <FilterGroup
+              label={t("agentLayer:knowledge.filterState")}
+              value={state}
+              options={STATES}
+              labelOf={(option) => t(`agentLayer:state.${option}`)}
+              onChange={setState}
+              testId="state-filter"
+            />
+          </>
+        )}
+        <fieldset
+          className="inline-flex h-8 items-center gap-0.5 rounded-lg border border-border/80 bg-background p-0.5"
+          data-testid="deleted-filter"
+        >
+          <legend className="sr-only">
+            {t("agentLayer:common.deletedFilter")}
+          </legend>
+          <FilterButton
+            active={!showDeleted}
+            onClick={() => setShowDeleted(false)}
+          >
+            {t("agentLayer:common.filterLive")}
+          </FilterButton>
+          <FilterButton
+            active={showDeleted}
+            onClick={() => setShowDeleted(true)}
+          >
+            {t("agentLayer:common.filterDeleted")}
+          </FilterButton>
+        </fieldset>
+      </div>
 
       {query.isPending ? (
         <AgentLayerSkeleton rows={4} />
@@ -229,10 +291,14 @@ export function TermList({
           onRetry={() => query.refetch()}
         />
       ) : terms.length === 0 ? (
-        <AgentLayerEmpty
-          title={t("agentLayer:knowledge.termsEmpty")}
-          description={t("agentLayer:knowledge.termsEmptyHint")}
-        />
+        showDeleted ? (
+          <AgentLayerEmpty title={t("agentLayer:knowledge.deletedEmpty")} />
+        ) : (
+          <AgentLayerEmpty
+            title={t("agentLayer:knowledge.termsEmpty")}
+            description={t("agentLayer:knowledge.termsEmptyHint")}
+          />
+        )
       ) : (
         <>
           {showUnconfirmedHint ? (
@@ -251,12 +317,20 @@ export function TermList({
                 term={term}
                 canReview={reviewable}
                 onReview={openReview}
-                canDelete={reviewable}
+                canDelete={canReview}
                 onDelete={setPendingDelete}
                 workspaceId={workspaceId}
                 domainNodes={domains.data?.domains}
                 canSetDomain={reviewable}
                 onSetDomain={handleSetDomain}
+                onOpenUnreviewed={canReview ? markReviewed : undefined}
+                deletedByName={
+                  term.deletedBy ? memberNames.get(term.deletedBy) : null
+                }
+                onRestore={canReview ? handleRestore : undefined}
+                restoring={
+                  restore.isPending && restore.variables?.termId === term.id
+                }
               />
             ))}
           </ul>
@@ -281,7 +355,9 @@ export function TermList({
             <AlertDialogDescription>
               {pending?.confidence === "disputed"
                 ? t("agentLayer:knowledge.disputeDescription")
-                : t("agentLayer:knowledge.confirmDescription")}
+                : pending?.term.confidence === "confirmed"
+                  ? t("agentLayer:knowledge.markReviewedDescription")
+                  : t("agentLayer:knowledge.confirmDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {pending?.confidence === "disputed" ? (
@@ -370,7 +446,7 @@ export function TermList({
               })}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {t("agentLayer:knowledge.deleteDescription")}
+              {t("agentLayer:knowledge.softDeleteDescription")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

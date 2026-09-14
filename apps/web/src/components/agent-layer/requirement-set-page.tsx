@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, Check, Pencil, Plus } from "lucide-react";
+import { ArrowLeft, Pencil, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/public-project/markdown-renderer";
@@ -20,14 +20,16 @@ import type {
   AgentRequirementSet,
 } from "@/fetchers/agent-layer/agent-requirements";
 import {
-  useApproveAgentRequirementSet,
   usePutAgentRequirementSet,
+  useReviewAgentSpec,
 } from "@/hooks/mutations/agent-layer/use-agent-spec";
+import { useReviewOnOpen } from "@/hooks/use-review-on-open";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { toast } from "@/lib/toast";
 import { AgentAuthorBadge } from "./agent-author-badge";
 import { isDocMode, RequirementDoc } from "./requirement-doc";
-import { RequirementKeyChip, SpecStatusBadge } from "./spec-badges";
+import { RequirementKeyChip, UnreviewedBadge } from "./spec-badges";
+import { SpecLifecycleActions } from "./spec-lifecycle";
 
 type ItemDraft = AgentRequirementItemInput & { draftId: string };
 
@@ -38,6 +40,8 @@ type RequirementSetPageProps = {
   projectSlug?: string;
   authorName?: string | null;
   canEdit: boolean;
+  /** project:update: soft delete. */
+  canDelete?: boolean;
   startInEdit?: boolean;
   /** Mounted inside the feature page: the feature header already has the back link. */
   embedded?: boolean;
@@ -66,6 +70,7 @@ export function RequirementSetPage({
   projectSlug,
   authorName,
   canEdit,
+  canDelete = false,
   startInEdit = false,
   embedded = false,
 }: RequirementSetPageProps) {
@@ -75,7 +80,17 @@ export function RequirementSetPage({
   const [body, setBody] = useState(set.body);
   const [drafts, setDrafts] = useState<ItemDraft[]>(() => toDrafts(set.items));
   const put = usePutAgentRequirementSet();
-  const approve = useApproveAgentRequirementSet();
+  const review = useReviewAgentSpec();
+  const showUnreviewed = useReviewOnOpen({
+    itemId: set.id,
+    reviewed: set.reviewed,
+    onReview: () =>
+      review.mutateAsync({
+        kind: "requirement",
+        projectId,
+        feature: set.feature,
+      }),
+  });
   // The document is the source of truth once it carries criterion lines
   // (REQ-FEATURE-HUB-23): rows are shown from it and edited through it.
   const docMode = isDocMode(set.body);
@@ -122,17 +137,6 @@ export function RequirementSetPage({
     }
   };
 
-  const handleApprove = async () => {
-    try {
-      await approve.mutateAsync({ projectId, feature: set.feature });
-      toast.success(t("agentLayer:spec.approved"));
-    } catch (cause) {
-      toast.error(t("agentLayer:spec.approveFailed"), {
-        description: cause instanceof Error ? cause.message : undefined,
-      });
-    }
-  };
-
   const updateDraft = (draftId: string, patch: Partial<ItemDraft>) =>
     setDrafts((current) =>
       current.map((draft) =>
@@ -156,17 +160,7 @@ export function RequirementSetPage({
         <span className="font-mono text-xs text-muted-foreground">
           {set.feature}
         </span>
-        <SpecStatusBadge status={set.status} />
-        {set.approvedAt ? (
-          <span
-            className="text-xs text-muted-foreground"
-            title={formatDateTime(set.approvedAt)}
-          >
-            {t("agentLayer:spec.approvedAt", {
-              when: formatRelativeTime(set.approvedAt),
-            })}
-          </span>
-        ) : null}
+        {showUnreviewed ? <UnreviewedBadge /> : null}
         <div className="ml-auto flex items-center gap-1.5">
           {isEditing ? (
             <>
@@ -188,18 +182,15 @@ export function RequirementSetPage({
             </>
           ) : (
             <>
-              {canEdit && set.status !== "approved" ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={approve.isPending}
-                  onClick={handleApprove}
-                  data-testid="approve-set"
-                >
-                  <Check />
-                  {t("agentLayer:spec.approve")}
-                </Button>
-              ) : null}
+              <SpecLifecycleActions
+                target={{
+                  kind: "requirement",
+                  projectId,
+                  feature: set.feature,
+                }}
+                canRevert={canEdit}
+                canDelete={canDelete}
+              />
               {canEdit ? (
                 <Button
                   size="sm"
@@ -236,9 +227,6 @@ export function RequirementSetPage({
               <span title={formatDateTime(set.updatedAt)}>
                 {formatRelativeTime(set.updatedAt)}
               </span>
-              {canEdit ? (
-                <span>{t("agentLayer:spec.approvedHint")}</span>
-              ) : null}
             </div>
           </div>
 

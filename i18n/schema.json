@@ -9016,6 +9016,51 @@
 						},
 						"errorDescription": {
 							"type": "string"
+						},
+						"unreviewed": {
+							"type": "string"
+						},
+						"unreviewedCount": {
+							"type": "string"
+						},
+						"unreviewedCount_zero": {
+							"type": "string"
+						},
+						"unreviewedCount_one": {
+							"type": "string"
+						},
+						"unreviewedCount_two": {
+							"type": "string"
+						},
+						"unreviewedCount_few": {
+							"type": "string"
+						},
+						"unreviewedCount_many": {
+							"type": "string"
+						},
+						"unreviewedCount_other": {
+							"type": "string"
+						},
+						"deletedBy": {
+							"type": "string"
+						},
+						"deletedFilter": {
+							"type": "string"
+						},
+						"filterLive": {
+							"type": "string"
+						},
+						"filterDeleted": {
+							"type": "string"
+						},
+						"restore": {
+							"type": "string"
+						},
+						"restoring": {
+							"type": "string"
+						},
+						"restoreFailed": {
+							"type": "string"
 						}
 					},
 					"required": [
@@ -9032,7 +9077,15 @@
 						"notFoundTitle",
 						"notFoundDescription",
 						"errorTitle",
-						"errorDescription"
+						"errorDescription",
+						"unreviewed",
+						"deletedBy",
+						"deletedFilter",
+						"filterLive",
+						"filterDeleted",
+						"restore",
+						"restoring",
+						"restoreFailed"
 					]
 				},
 				"kind": {
@@ -9828,12 +9881,6 @@
 						"title": {
 							"type": "string"
 						},
-						"glossaryTitle": {
-							"type": "string"
-						},
-						"glossaryHint": {
-							"type": "string"
-						},
 						"reviewElsewhere": {
 							"type": "string"
 						},
@@ -9994,9 +10041,6 @@
 						"proposeTitle": {
 							"type": "string"
 						},
-						"proposeDescription": {
-							"type": "string"
-						},
 						"canonicalLabel": {
 							"type": "string"
 						},
@@ -10039,9 +10083,6 @@
 						"deleteTitle": {
 							"type": "string"
 						},
-						"deleteDescription": {
-							"type": "string"
-						},
 						"deleting": {
 							"type": "string"
 						},
@@ -10068,13 +10109,32 @@
 						},
 						"domainSetFailed": {
 							"type": "string"
+						},
+						"glossaryLiveTitle": {
+							"type": "string"
+						},
+						"glossaryLiveHint": {
+							"type": "string"
+						},
+						"softDeleteDescription": {
+							"type": "string"
+						},
+						"proposeAppliedDescription": {
+							"type": "string"
+						},
+						"markReviewedDescription": {
+							"type": "string"
+						},
+						"restored": {
+							"type": "string"
+						},
+						"deletedEmpty": {
+							"type": "string"
 						}
 					},
 					"required": [
 						"pageTitle",
 						"title",
-						"glossaryTitle",
-						"glossaryHint",
 						"reviewElsewhere",
 						"decisionsTitle",
 						"decisionsHint",
@@ -10117,7 +10177,6 @@
 						"reviewFailed",
 						"cancel",
 						"proposeTitle",
-						"proposeDescription",
 						"canonicalLabel",
 						"canonicalRequired",
 						"definitionLabel",
@@ -10132,7 +10191,6 @@
 						"proposeFailed",
 						"delete",
 						"deleteTitle",
-						"deleteDescription",
 						"deleting",
 						"deleted",
 						"deleteFailed",
@@ -10141,7 +10199,14 @@
 						"domainLabel",
 						"assignDomain",
 						"domainSet",
-						"domainSetFailed"
+						"domainSetFailed",
+						"glossaryLiveTitle",
+						"glossaryLiveHint",
+						"softDeleteDescription",
+						"proposeAppliedDescription",
+						"markReviewedDescription",
+						"restored",
+						"deletedEmpty"
 					]
 				},
 				"adr": {
@@ -10208,18 +10273,6 @@
 						"create": {
 							"type": "string"
 						},
-						"createTitle": {
-							"type": "string"
-						},
-						"edit": {
-							"type": "string"
-						},
-						"editorDescription": {
-							"type": "string"
-						},
-						"saveDraft": {
-							"type": "string"
-						},
 						"saving": {
 							"type": "string"
 						},
@@ -10227,9 +10280,6 @@
 							"type": "string"
 						},
 						"required": {
-							"type": "string"
-						},
-						"conflict": {
 							"type": "string"
 						},
 						"saveFailed": {
@@ -10265,46 +10315,7 @@
 						"back": {
 							"type": "string"
 						},
-						"editAction": {
-							"type": "string"
-						},
-						"accept": {
-							"type": "string"
-						},
-						"accepting": {
-							"type": "string"
-						},
-						"createReplacement": {
-							"type": "string"
-						},
 						"createdBy": {
-							"type": "string"
-						},
-						"acceptedBy": {
-							"type": "string"
-						},
-						"supersedes": {
-							"type": "string"
-						},
-						"searchAccepted": {
-							"type": "string"
-						},
-						"noSupersedes": {
-							"type": "string"
-						},
-						"acceptedLoadFailed": {
-							"type": "string"
-						},
-						"loadMoreAccepted": {
-							"type": "string"
-						},
-						"confirmSupersede": {
-							"type": "string"
-						},
-						"acceptFailed": {
-							"type": "string"
-						},
-						"retryAccept": {
 							"type": "string"
 						},
 						"loadingDetail": {
@@ -10349,13 +10360,76 @@
 						"promoteFailed": {
 							"type": "string"
 						},
-						"statusDraft": {
-							"type": "string"
-						},
 						"statusAccepted": {
 							"type": "string"
 						},
 						"statusSuperseded": {
+							"type": "string"
+						},
+						"newTitle": {
+							"type": "string"
+						},
+						"immutableHint": {
+							"type": "string"
+						},
+						"submit": {
+							"type": "string"
+						},
+						"supersede": {
+							"type": "string"
+						},
+						"supersedeTitle": {
+							"type": "string"
+						},
+						"supersedeHint": {
+							"type": "string"
+						},
+						"supersedeConflict": {
+							"type": "string"
+						},
+						"statusDeleted": {
+							"type": "string"
+						},
+						"delete": {
+							"type": "string"
+						},
+						"deleting": {
+							"type": "string"
+						},
+						"deleteTitle": {
+							"type": "string"
+						},
+						"deleteDescription": {
+							"type": "string"
+						},
+						"deleteRestoresPrevious": {
+							"type": "string"
+						},
+						"deleted": {
+							"type": "string"
+						},
+						"deleteFailed": {
+							"type": "string"
+						},
+						"deletedBanner": {
+							"type": "string"
+						},
+						"restored": {
+							"type": "string"
+						},
+						"restoredPrevious": {
+							"type": "string"
+						},
+						"restoreConflict": {
+							"type": "string"
+						},
+						"openRecord": {
+							"type": "string"
+						},
+						"reviewedBy": {
+							"type": "string"
+						},
+						"notFound": {
 							"type": "string"
 						}
 					},
@@ -10374,14 +10448,9 @@
 						"relatedEmpty",
 						"relatedLoadFailed",
 						"create",
-						"createTitle",
-						"edit",
-						"editorDescription",
-						"saveDraft",
 						"saving",
 						"cancel",
 						"required",
-						"conflict",
 						"saveFailed",
 						"loading",
 						"search",
@@ -10393,20 +10462,7 @@
 						"empty",
 						"loadFailed",
 						"back",
-						"editAction",
-						"accept",
-						"accepting",
-						"createReplacement",
 						"createdBy",
-						"acceptedBy",
-						"supersedes",
-						"searchAccepted",
-						"noSupersedes",
-						"acceptedLoadFailed",
-						"loadMoreAccepted",
-						"confirmSupersede",
-						"acceptFailed",
-						"retryAccept",
 						"loadingDetail",
 						"detailLoadFailed",
 						"references",
@@ -10421,9 +10477,30 @@
 						"promote",
 						"promoting",
 						"promoteFailed",
-						"statusDraft",
 						"statusAccepted",
-						"statusSuperseded"
+						"statusSuperseded",
+						"newTitle",
+						"immutableHint",
+						"submit",
+						"supersede",
+						"supersedeTitle",
+						"supersedeHint",
+						"supersedeConflict",
+						"statusDeleted",
+						"delete",
+						"deleting",
+						"deleteTitle",
+						"deleteDescription",
+						"deleteRestoresPrevious",
+						"deleted",
+						"deleteFailed",
+						"deletedBanner",
+						"restored",
+						"restoredPrevious",
+						"restoreConflict",
+						"openRecord",
+						"reviewedBy",
+						"notFound"
 					]
 				},
 				"confidence": {
@@ -10742,48 +10819,6 @@
 						"unfiledPageTitle": {
 							"type": "string"
 						},
-						"pendingReview": {
-							"type": "string"
-						},
-						"pendingReview_zero": {
-							"type": "string"
-						},
-						"pendingReview_one": {
-							"type": "string"
-						},
-						"pendingReview_two": {
-							"type": "string"
-						},
-						"pendingReview_few": {
-							"type": "string"
-						},
-						"pendingReview_many": {
-							"type": "string"
-						},
-						"pendingReview_other": {
-							"type": "string"
-						},
-						"pendingReviewSubtree": {
-							"type": "string"
-						},
-						"pendingReviewSubtree_zero": {
-							"type": "string"
-						},
-						"pendingReviewSubtree_one": {
-							"type": "string"
-						},
-						"pendingReviewSubtree_two": {
-							"type": "string"
-						},
-						"pendingReviewSubtree_few": {
-							"type": "string"
-						},
-						"pendingReviewSubtree_many": {
-							"type": "string"
-						},
-						"pendingReviewSubtree_other": {
-							"type": "string"
-						},
 						"termsEmpty": {
 							"type": "string"
 						},
@@ -10839,6 +10874,48 @@
 							"type": "string"
 						},
 						"deleteRefused": {
+							"type": "string"
+						},
+						"unreviewed": {
+							"type": "string"
+						},
+						"unreviewed_zero": {
+							"type": "string"
+						},
+						"unreviewed_one": {
+							"type": "string"
+						},
+						"unreviewed_two": {
+							"type": "string"
+						},
+						"unreviewed_few": {
+							"type": "string"
+						},
+						"unreviewed_many": {
+							"type": "string"
+						},
+						"unreviewed_other": {
+							"type": "string"
+						},
+						"unreviewedSubtree": {
+							"type": "string"
+						},
+						"unreviewedSubtree_zero": {
+							"type": "string"
+						},
+						"unreviewedSubtree_one": {
+							"type": "string"
+						},
+						"unreviewedSubtree_two": {
+							"type": "string"
+						},
+						"unreviewedSubtree_few": {
+							"type": "string"
+						},
+						"unreviewedSubtree_many": {
+							"type": "string"
+						},
+						"unreviewedSubtree_other": {
 							"type": "string"
 						}
 					},
@@ -10921,9 +10998,6 @@
 						"designTitle": {
 							"type": "string"
 						},
-						"designHint": {
-							"type": "string"
-						},
 						"newSet": {
 							"type": "string"
 						},
@@ -10987,40 +11061,10 @@
 						"columnTasks": {
 							"type": "string"
 						},
-						"statusDraft": {
-							"type": "string"
-						},
-						"statusApproved": {
-							"type": "string"
-						},
 						"stale": {
 							"type": "string"
 						},
-						"staleHint": {
-							"type": "string"
-						},
 						"staleRequirement": {
-							"type": "string"
-						},
-						"staleDesign": {
-							"type": "string"
-						},
-						"unapproved": {
-							"type": "string"
-						},
-						"approve": {
-							"type": "string"
-						},
-						"approved": {
-							"type": "string"
-						},
-						"approveFailed": {
-							"type": "string"
-						},
-						"approvedAt": {
-							"type": "string"
-						},
-						"approvedHint": {
 							"type": "string"
 						},
 						"edit": {
@@ -11111,9 +11155,6 @@
 							"type": "string"
 						},
 						"noRequirementSet": {
-							"type": "string"
-						},
-						"changedSinceApproval": {
 							"type": "string"
 						},
 						"derivedTasks": {
@@ -11295,6 +11336,108 @@
 						},
 						"docEditHint": {
 							"type": "string"
+						},
+						"changedSinceRevision": {
+							"type": "string"
+						},
+						"staleSinceRevision": {
+							"type": "string"
+						},
+						"staleDesignRevised": {
+							"type": "string"
+						},
+						"revisedAt": {
+							"type": "string"
+						},
+						"docRequirements": {
+							"type": "string"
+						},
+						"docDesign": {
+							"type": "string"
+						},
+						"delete": {
+							"type": "string"
+						},
+						"deleting": {
+							"type": "string"
+						},
+						"deleteTitle": {
+							"type": "string"
+						},
+						"deleteDescription": {
+							"type": "string"
+						},
+						"deleted": {
+							"type": "string"
+						},
+						"deleteFailed": {
+							"type": "string"
+						},
+						"restored": {
+							"type": "string"
+						},
+						"revisions": {
+							"type": "string"
+						},
+						"revisionsTitle": {
+							"type": "string"
+						},
+						"revisionsHint": {
+							"type": "string"
+						},
+						"revisionsEmpty": {
+							"type": "string"
+						},
+						"revisionCurrent": {
+							"type": "string"
+						},
+						"revisionReverted": {
+							"type": "string"
+						},
+						"revisionPickHint": {
+							"type": "string"
+						},
+						"revert": {
+							"type": "string"
+						},
+						"revertTitle": {
+							"type": "string"
+						},
+						"revertDescription": {
+							"type": "string"
+						},
+						"reverting": {
+							"type": "string"
+						},
+						"reverted": {
+							"type": "string"
+						},
+						"revertFailed": {
+							"type": "string"
+						},
+						"close": {
+							"type": "string"
+						},
+						"emptyDeleted": {
+							"type": "string"
+						},
+						"columnDocument": {
+							"type": "string"
+						},
+						"columnDeleted": {
+							"type": "string"
+						},
+						"requirementsDeletedHere": {
+							"type": "string"
+						},
+						"designDeletedHere": {
+							"type": "string"
+						},
+						"agentAckUnreviewed": {
+							"type": "string"
+						},
+						"agentAckUnreviewedHint": {
+							"type": "string"
 						}
 					},
 					"required": [
@@ -11303,7 +11446,6 @@
 						"requirementsTitle",
 						"requirementsHint",
 						"designTitle",
-						"designHint",
 						"newSet",
 						"newDesign",
 						"feature",
@@ -11325,18 +11467,8 @@
 						"columnCoverage",
 						"columnDesigns",
 						"columnTasks",
-						"statusDraft",
-						"statusApproved",
 						"stale",
-						"staleHint",
 						"staleRequirement",
-						"staleDesign",
-						"unapproved",
-						"approve",
-						"approved",
-						"approveFailed",
-						"approvedAt",
-						"approvedHint",
 						"edit",
 						"save",
 						"cancel",
@@ -11360,7 +11492,6 @@
 						"requirementsCovered",
 						"requirementsCoveredHint",
 						"noRequirementSet",
-						"changedSinceApproval",
 						"derivedTasks",
 						"noDerivedTasks",
 						"taskLinksTitle",
@@ -11406,7 +11537,41 @@
 						"docUnmentioned",
 						"criteriaHeading",
 						"otherStory",
-						"docEditHint"
+						"docEditHint",
+						"changedSinceRevision",
+						"staleSinceRevision",
+						"staleDesignRevised",
+						"revisedAt",
+						"docRequirements",
+						"docDesign",
+						"delete",
+						"deleting",
+						"deleteTitle",
+						"deleteDescription",
+						"deleted",
+						"deleteFailed",
+						"restored",
+						"revisions",
+						"revisionsTitle",
+						"revisionsHint",
+						"revisionsEmpty",
+						"revisionCurrent",
+						"revisionReverted",
+						"revisionPickHint",
+						"revert",
+						"revertTitle",
+						"revertDescription",
+						"reverting",
+						"reverted",
+						"revertFailed",
+						"close",
+						"emptyDeleted",
+						"columnDocument",
+						"columnDeleted",
+						"requirementsDeletedHere",
+						"designDeletedHere",
+						"agentAckUnreviewed",
+						"agentAckUnreviewedHint"
 					]
 				}
 			},

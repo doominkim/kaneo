@@ -1,4 +1,11 @@
-import { ChevronDown, ChevronRight, EyeOff, Trash2, User } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  EyeOff,
+  Trash2,
+  Undo2,
+  User,
+} from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/public-project/markdown-renderer";
@@ -10,10 +17,12 @@ import type {
   AgentTermConfidence,
   AgentTermState,
 } from "@/fetchers/agent-layer/get-agent-terms";
+import { useReviewOnOpen } from "@/hooks/use-review-on-open";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
 import { AgentAuthorBadge } from "./agent-author-badge";
 import { DomainChip } from "./domain-chip";
 import { DomainSelect } from "./domain-select";
+import { DeletedStamp, UnreviewedBadge } from "./spec-badges";
 
 export type TermAnchor = {
   kind: string;
@@ -116,6 +125,16 @@ type TermRowProps = {
   /** workspace:update — the same gate as review (KAN-14). */
   canSetDomain?: boolean;
   onSetDomain?: (term: AgentTerm, domainId: string | null) => void;
+  /**
+   * Records the review when a person opens an unreviewed item's definition
+   * (agent-autoapply). Absent where the viewer cannot review.
+   */
+  onOpenUnreviewed?: (term: AgentTerm) => unknown;
+  /** Display name of whoever deleted the item, for the deleted filter. */
+  deletedByName?: string | null;
+  /** workspace:update; offered on deleted rows only. */
+  onRestore?: (term: AgentTerm) => void;
+  restoring?: boolean;
 };
 
 /**
@@ -167,6 +186,10 @@ export function TermRow({
   domainNodes,
   canSetDomain = false,
   onSetDomain,
+  onOpenUnreviewed,
+  deletedByName,
+  onRestore,
+  restoring = false,
 }: TermRowProps) {
   const { t } = useTranslation();
   /*
@@ -189,6 +212,21 @@ export function TermRow({
   const domain = term.domainId
     ? domainNodes?.find((node) => node.id === term.domainId)
     : undefined;
+  const isDeleted = Boolean(term.deletedAt);
+  // A row's detail is its definition, so reading it is the review. The mark
+  // only lands on a term that already applies; turning a proposed or disputed
+  // term into a confirmed one stays an explicit decision in the dialog.
+  const showUnreviewed = useReviewOnOpen({
+    itemId: term.id,
+    reviewed: term.reviewed,
+    enabled:
+      Boolean(onOpenUnreviewed) &&
+      !isDeleted &&
+      showDefinition &&
+      Boolean(term.definition) &&
+      term.confidence === "confirmed",
+    onReview: () => onOpenUnreviewed?.(term),
+  });
 
   return (
     <li
@@ -202,6 +240,7 @@ export function TermRow({
           {term.canonical}
         </span>
         <ConfidenceBadge confidence={term.confidence} />
+        {showUnreviewed && !isDeleted ? <UnreviewedBadge /> : null}
         {term.state !== "active" ? <StateBadge state={term.state} /> : null}
         {term.aliases.map((alias) => (
           <Badge
@@ -217,13 +256,13 @@ export function TermRow({
           <DomainChip workspaceId={workspaceId} domain={domain} />
         ) : null}
         <span className="ml-auto flex items-center gap-1">
-          {canReview ? (
+          {canReview && !isDeleted ? (
             <>
               <Button
                 type="button"
                 variant="outline"
                 size="xs"
-                disabled={term.confidence === "confirmed"}
+                disabled={term.confidence === "confirmed" && term.reviewed}
                 onClick={() => onReview?.(term, "confirmed")}
                 data-testid="confirm-term"
               >
@@ -241,7 +280,7 @@ export function TermRow({
               </Button>
             </>
           ) : null}
-          {canDelete ? (
+          {canDelete && !isDeleted ? (
             <Button
               type="button"
               variant="ghost"
@@ -253,6 +292,19 @@ export function TermRow({
               data-testid="delete-term"
             >
               <Trash2 />
+            </Button>
+          ) : null}
+          {isDeleted && onRestore ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              disabled={restoring}
+              onClick={() => onRestore(term)}
+              data-testid="restore-term"
+            >
+              <Undo2 />
+              {t("agentLayer:common.restore")}
             </Button>
           ) : null}
         </span>
@@ -350,6 +402,12 @@ export function TermRow({
           <span>{t("agentLayer:knowledge.noDefinition")}</span>
         )}
         <TermProposer term={term} />
+        {isDeleted && term.deletedAt ? (
+          <DeletedStamp
+            deletedAt={term.deletedAt}
+            deletedByName={deletedByName}
+          />
+        ) : null}
         {term.reviewedAt ? (
           <span
             title={formatDateTime(term.reviewedAt)}
@@ -372,7 +430,7 @@ export function TermRow({
             })}
           </span>
         ) : null}
-        {canSetDomain && workspaceId ? (
+        {canSetDomain && workspaceId && !isDeleted ? (
           <span className="ml-auto inline-flex items-center gap-1">
             <span>{t("agentLayer:knowledge.assignDomain")}</span>
             <DomainSelect

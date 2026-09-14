@@ -11,11 +11,11 @@ export type DomainTreeNode = AgentDomainNode & {
   depth: number;
   children: DomainTreeNode[];
   /**
-   * `proposedCount` plus every descendant's. The API counts what is filed
+   * `unreviewedCount` plus every descendant's. The API counts what is filed
    * directly on a page, which is the right contract; a collapsed row still has
    * to say what is waiting underneath it, so the rollup is computed here.
    */
-  subtreeProposedCount: number;
+  subtreeUnreviewedCount: number;
 };
 
 /**
@@ -33,7 +33,7 @@ export function buildDomainTree(
       ...node,
       depth: 0,
       children: [],
-      subtreeProposedCount: node.proposedCount,
+      subtreeUnreviewedCount: node.unreviewedCount,
     });
   }
   const roots: DomainTreeNode[] = [];
@@ -50,9 +50,9 @@ export function buildDomainTree(
   };
   setDepth(roots, 0);
   const rollUp = (node: DomainTreeNode): number => {
-    let total = node.proposedCount;
+    let total = node.unreviewedCount;
     for (const child of node.children) total += rollUp(child);
-    node.subtreeProposedCount = total;
+    node.subtreeUnreviewedCount = total;
     return total;
   };
   for (const root of roots) rollUp(root);

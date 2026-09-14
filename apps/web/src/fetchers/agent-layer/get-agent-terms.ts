@@ -20,6 +20,8 @@ export type GetAgentTermsRequest = {
    * unfiled terms (`domain_id IS NULL`). Omitted, the whole workspace.
    */
   domainId?: string;
+  /** Only soft-deleted terms, each with `deletedAt`/`deletedBy`. */
+  deleted?: boolean;
   limit?: number;
 };
 
@@ -28,6 +30,7 @@ async function getAgentTerms({
   confidence,
   state,
   domainId,
+  deleted = false,
   limit = 100,
 }: GetAgentTermsRequest): Promise<AgentTermList> {
   const response = await client["agent-term"][":workspaceId"].$get({
@@ -37,6 +40,7 @@ async function getAgentTerms({
       ...(confidence ? { confidence } : {}),
       ...(state ? { state } : {}),
       ...(domainId ? { domainId } : {}),
+      ...(deleted ? { deleted: "true" as const } : {}),
     },
   });
 

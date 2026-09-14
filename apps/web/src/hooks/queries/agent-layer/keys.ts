@@ -1,3 +1,5 @@
+import type { AgentDecisionStatusFilter } from "@/fetchers/agent-layer/agent-decisions";
+import type { SpecKind } from "@/fetchers/agent-layer/agent-spec-lifecycle";
 import type { AgentEntryKind } from "@/fetchers/agent-layer/get-agent-entries";
 import type {
   AgentTermConfidence,
@@ -9,7 +11,14 @@ export type AgentTermFilters = {
   state?: AgentTermState;
   /** A domain page id, or `"none"` for the unfiled bucket. */
   domainId?: string;
+  /** Only soft-deleted terms. */
+  deleted?: boolean;
 };
+
+const SPEC_FAMILY = {
+  requirement: "agent-requirements",
+  design: "agent-designs",
+} as const satisfies Record<SpecKind, string>;
 
 /**
  * One place for the agent-layer cache keys so the mutation hooks and the
@@ -18,10 +27,14 @@ export type AgentTermFilters = {
 export const agentLayerKeys = {
   decisions: (
     projectId: string,
-    status: "current" | "all" | "draft" | "accepted" | "superseded" = "current",
+    status: AgentDecisionStatusFilter = "current",
     query = "",
     taskId?: string,
   ) => ["agent-decisions", projectId, status, query, taskId ?? "all"] as const,
+  // Same prefix as the list, so every decision mutation's
+  // `["agent-decisions", projectId]` invalidation refreshes the tab badge too.
+  decisionCounts: (projectId: string) =>
+    ["agent-decisions", projectId, "counts"] as const,
   decision: (projectId: string, decisionId: string) =>
     ["agent-decision", projectId, decisionId] as const,
   tree: (projectId: string) => ["agent-tree", projectId] as const,
@@ -70,6 +83,7 @@ export const agentLayerKeys = {
       filters.confidence ?? "all",
       filters.state ?? "all",
       filters.domainId ?? "all",
+      filters.deleted ? "deleted" : "live",
     ] as const,
   termResolve: (workspaceId: string, term: string) =>
     ["agent-term-resolve", workspaceId, term] as const,
@@ -94,8 +108,23 @@ export const agentLayerKeys = {
     ["agent-task-links", projectId, "badges"] as const,
   taskLinks: (projectId: string, taskId: string) =>
     ["agent-task-links", projectId, "task", taskId] as const,
-  features: (projectId: string) =>
-    ["agent-features", projectId, "list"] as const,
+  features: (projectId: string, deleted = false) =>
+    [
+      "agent-features",
+      projectId,
+      "list",
+      deleted ? "deleted" : "live",
+    ] as const,
   featureTasks: (projectId: string, feature: string) =>
     ["agent-features", projectId, "tasks", feature] as const,
+  // Under the document family's prefix, so a save, revert or restore that
+  // invalidates `[family, projectId]` refreshes the history too.
+  specRevisions: (kind: SpecKind, projectId: string, feature: string) =>
+    [SPEC_FAMILY[kind], projectId, "revisions", feature] as const,
+  specRevision: (
+    kind: SpecKind,
+    projectId: string,
+    feature: string,
+    revisionId: string,
+  ) => [SPEC_FAMILY[kind], projectId, "revision", feature, revisionId] as const,
 };

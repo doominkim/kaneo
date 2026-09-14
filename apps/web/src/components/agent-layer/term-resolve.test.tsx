@@ -46,6 +46,9 @@ const base: AgentTerm = {
   reviewedAt: null,
   rejectReason: null,
   lastVerifiedAt: null,
+  reviewed: true,
+  deletedAt: null,
+  deletedBy: null,
   createdAt: "2026-09-03T00:00:00.000Z",
 };
 

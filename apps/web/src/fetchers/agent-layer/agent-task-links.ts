@@ -68,3 +68,18 @@ export async function acknowledgeAgentTaskLinks({
   if (!response.ok) return throwAgentLayerError(response);
   return response.json();
 }
+
+/** Human-only review mark on every link of the task; the stale clock does not move. */
+export async function reviewAgentTaskLinks({
+  projectId,
+  taskId,
+}: {
+  projectId: string;
+  taskId: string;
+}) {
+  const response = await route[":taskId"].review.$post({
+    param: { projectId, taskId },
+  });
+  if (!response.ok) return throwAgentLayerError(response);
+  return response.json();
+}

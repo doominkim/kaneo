@@ -81,7 +81,7 @@ export function NavDomains() {
     });
 
   const unfiledPath = `/dashboard/workspace/${workspace.id}/domain/unfiled`;
-  const unfiledPending = domains.data?.unfiled.proposedCount ?? 0;
+  const unfiledUnreviewed = domains.data?.unfiled.unreviewedCount ?? 0;
 
   return (
     <>
@@ -155,7 +155,7 @@ export function NavDomains() {
                     <span className="truncate text-sidebar-foreground/70">
                       {t("agentLayer:domain.unfiled")}
                     </span>
-                    <PendingCount value={unfiledPending} />
+                    <PendingCount value={unfiledUnreviewed} />
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
@@ -181,9 +181,9 @@ export function NavDomains() {
 }
 
 /**
- * How many items on this page are still waiting on a person. Disputed items
- * are deliberately absent: a dispute is a finished review, and counting it
- * here would leave a number nobody can ever work down to zero.
+ * How many live items on this page no person has reviewed yet
+ * (agent-autoapply). The API counts them, and any review, a dispute included,
+ * takes an item out, so the number can always be worked down to zero.
  *
  * `rolledUp` marks the number as a subtree total, which reads differently to a
  * screen reader: the count is not what this page holds but what the branch
@@ -199,8 +199,8 @@ function PendingCount({
   const { t } = useTranslation();
   if (value <= 0) return null;
   const label = rolledUp
-    ? t("agentLayer:domain.pendingReviewSubtree", { count: value })
-    : t("agentLayer:domain.pendingReview", { count: value });
+    ? t("agentLayer:domain.unreviewedSubtree", { count: value })
+    : t("agentLayer:domain.unreviewed", { count: value });
   return (
     <span
       className="ml-auto shrink-0 rounded-md bg-sidebar-accent px-1.5 text-xs font-medium tabular-nums text-sidebar-accent-foreground"
@@ -245,10 +245,12 @@ function DomainNodeRows({
   // branch total. Expanded, the children draw their own badges and a parent
   // still holding the total would look like the same items counted twice.
   const collapsed = hasChildren && !expanded;
-  const pending = collapsed ? node.subtreeProposedCount : node.proposedCount;
+  const pending = collapsed
+    ? node.subtreeUnreviewedCount
+    : node.unreviewedCount;
   // Equal totals need no separate wording: nothing is hidden below.
   const rolledUp =
-    collapsed && node.subtreeProposedCount !== node.proposedCount;
+    collapsed && node.subtreeUnreviewedCount !== node.unreviewedCount;
 
   return (
     <>

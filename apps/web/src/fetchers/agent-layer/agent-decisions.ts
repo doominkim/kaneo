@@ -12,24 +12,36 @@ export type AgentDecisionDetail = InferResponseType<
   DecisionClient[":projectId"][":decisionId"]["$get"],
   200
 >;
+export type AgentDecisionDeleteResult = InferResponseType<
+  DecisionClient[":projectId"][":decisionId"]["$delete"],
+  200
+>;
 export type CreateDecisionBody = InferRequestType<
   DecisionClient["$post"]
 >["json"];
-export type UpdateDecisionBody = InferRequestType<
-  DecisionClient[":projectId"][":decisionId"]["$patch"]
->["json"];
+
+/** `deleted` lists only soft-deleted ADRs; every other value hides them. */
+export type AgentDecisionStatusFilter =
+  | "current"
+  | "all"
+  | "accepted"
+  | "superseded"
+  | "deleted";
+
+export type AgentDecisionTarget = { projectId: string; decisionId: string };
 
 export async function listAgentDecisions(input: {
   projectId: string;
   before?: string;
-  status?: "current" | "all" | "draft" | "accepted" | "superseded";
+  status?: AgentDecisionStatusFilter;
   q?: string;
   taskId?: string;
+  limit?: number;
 }) {
   const response = await client["agent-decision"][":projectId"].$get({
     param: { projectId: input.projectId },
     query: {
-      limit: "20",
+      limit: String(input.limit ?? 20),
       ...(input.before ? { before: input.before } : {}),
       ...(input.status ? { status: input.status } : {}),
       ...(input.q ? { q: input.q } : {}),
@@ -51,37 +63,33 @@ export async function createAgentDecision(body: CreateDecisionBody) {
   if (!response.ok) return throwAgentLayerError(response);
   return response.json();
 }
-export async function updateAgentDecision(input: {
-  projectId: string;
-  decisionId: string;
-  body: UpdateDecisionBody;
-}) {
+export async function reviewAgentDecision({
+  projectId,
+  decisionId,
+}: AgentDecisionTarget) {
   const response = await client["agent-decision"][":projectId"][
     ":decisionId"
-  ].$patch({
-    param: { projectId: input.projectId, decisionId: input.decisionId },
-    json: input.body,
-  });
+  ].review.$post({ param: { projectId, decisionId } });
   if (!response.ok) return throwAgentLayerError(response);
   return response.json();
 }
-export async function acceptAgentDecision(input: {
-  projectId: string;
-  decisionId: string;
-  expectedUpdatedAt: string;
-  supersedesDecisionId?: string;
-}) {
+export async function deleteAgentDecision({
+  projectId,
+  decisionId,
+}: AgentDecisionTarget): Promise<AgentDecisionDeleteResult> {
   const response = await client["agent-decision"][":projectId"][
     ":decisionId"
-  ].accept.$post({
-    param: { projectId: input.projectId, decisionId: input.decisionId },
-    json: {
-      expectedUpdatedAt: input.expectedUpdatedAt,
-      ...(input.supersedesDecisionId
-        ? { supersedesDecisionId: input.supersedesDecisionId }
-        : {}),
-    },
-  });
+  ].$delete({ param: { projectId, decisionId } });
+  if (!response.ok) return throwAgentLayerError(response);
+  return response.json();
+}
+export async function restoreAgentDecision({
+  projectId,
+  decisionId,
+}: AgentDecisionTarget) {
+  const response = await client["agent-decision"][":projectId"][
+    ":decisionId"
+  ].restore.$post({ param: { projectId, decisionId } });
   if (!response.ok) return throwAgentLayerError(response);
   return response.json();
 }

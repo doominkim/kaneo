@@ -15,27 +15,31 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import type { AgentDecisionDetail } from "@/fetchers/agent-layer/agent-decisions";
 import { isAgentLayerStatus } from "@/fetchers/agent-layer/api-error";
-import {
-  useCreateAgentDecision,
-  useUpdateAgentDecision,
-} from "@/hooks/mutations/agent-layer/use-agent-decisions";
+import { useCreateAgentDecision } from "@/hooks/mutations/agent-layer/use-agent-decisions";
 import { useGetTasks } from "@/hooks/queries/task/use-get-tasks";
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectId: string;
-  decision?: AgentDecisionDetail;
-  initial?: AgentDecisionDetail;
+  /**
+   * An accepted ADR the new one replaces. Its fields prefill the form, and
+   * creating the new ADR marks it superseded in the same transaction.
+   */
+  supersedes?: AgentDecisionDetail;
   preselectedTaskId?: string;
   onSaved: (decision: AgentDecisionDetail) => void;
 };
+
+/**
+ * "새 ADR" and "이 결정을 대체" (agent-autoapply). An ADR is accepted the
+ * moment it exists and is never edited, so this dialog only ever creates.
+ */
 export function AdrEditorDialog({
   open,
   onOpenChange,
   projectId,
-  decision,
-  initial,
+  supersedes,
   preselectedTaskId,
   onSaved,
 }: Props) {
@@ -48,12 +52,8 @@ export function AdrEditorDialog({
   const [reversible, setReversible] = useState<boolean | null>(null);
   const [taskIds, setTaskIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [baselineUpdatedAt, setBaselineUpdatedAt] = useState<string | null>(
-    null,
-  );
   const tasks = useGetTasks(open ? projectId : "");
   const create = useCreateAgentDecision();
-  const update = useUpdateAgentDecision();
   const projectTasks = tasks.data
     ? [
         ...tasks.data.columns.flatMap((column) => column.tasks),
@@ -61,23 +61,22 @@ export function AdrEditorDialog({
         ...tasks.data.plannedTasks,
       ]
     : [];
+  const number = supersedes ? String(supersedes.number).padStart(3, "0") : "";
   // biome-ignore lint/correctness/useExhaustiveDependencies: a background refetch must not replace a dirty dialog snapshot.
   useEffect(() => {
     if (!open) return;
-    const value = decision ?? initial;
-    setTitle(value?.title ?? "");
-    setContext(value?.context ?? "");
-    setWhat(value?.decision ?? "");
-    setAlternatives(value?.alternatives ?? "");
-    setConsequences(value?.consequences ?? "");
-    setReversible(value?.reversible ?? null);
+    setTitle(supersedes?.title ?? "");
+    setContext(supersedes?.context ?? "");
+    setWhat(supersedes?.decision ?? "");
+    setAlternatives(supersedes?.alternatives ?? "");
+    setConsequences(supersedes?.consequences ?? "");
+    setReversible(supersedes?.reversible ?? null);
     setTaskIds(
-      value?.tasks.map((task) => task.id) ??
+      supersedes?.tasks.map((task) => task.id) ??
         (preselectedTaskId ? [preselectedTaskId] : []),
     );
-    setBaselineUpdatedAt(decision?.updatedAt ?? null);
     setError(null);
-  }, [open, decision?.id, initial?.id, preselectedTaskId]);
+  }, [open, supersedes?.id, preselectedTaskId]);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!title.trim() || !context.trim() || !what.trim()) {
@@ -85,48 +84,31 @@ export function AdrEditorDialog({
       return;
     }
     try {
-      const data =
-        decision && baselineUpdatedAt
-          ? await update.mutateAsync({
-              projectId,
-              decisionId: decision.id,
-              body: {
-                expectedUpdatedAt: baselineUpdatedAt,
-                title: title.trim(),
-                context: context.trim(),
-                decision: what.trim(),
-                alternatives: alternatives.trim() || null,
-                consequences: consequences.trim() || null,
-                reversible,
-                refs: decision.refs,
-                taskIds,
-              },
-            })
-          : await create.mutateAsync({
-              projectId,
-              title: title.trim(),
-              context: context.trim(),
-              decision: what.trim(),
-              alternatives: alternatives.trim() || null,
-              consequences: consequences.trim() || null,
-              reversible,
-              refs: initial?.refs ?? null,
-              taskIds,
-            });
+      const data = await create.mutateAsync({
+        projectId,
+        title: title.trim(),
+        context: context.trim(),
+        decision: what.trim(),
+        alternatives: alternatives.trim() || null,
+        consequences: consequences.trim() || null,
+        reversible,
+        refs: supersedes?.refs ?? null,
+        taskIds,
+        ...(supersedes ? { supersedesDecisionId: supersedes.id } : {}),
+      });
       onSaved(data);
       onOpenChange(false);
     } catch (cause) {
       setError(
-        isAgentLayerStatus(cause, 409)
-          ? t("agentLayer:adr.conflict")
+        supersedes && isAgentLayerStatus(cause, 409)
+          ? t("agentLayer:adr.supersedeConflict", { number })
           : cause instanceof Error
             ? cause.message
             : t("agentLayer:adr.saveFailed"),
       );
     }
   };
-  const pending = create.isPending || update.isPending;
-  const sourceNote = decision?.sourceNote ?? initial?.sourceNote;
+  const pending = create.isPending;
   return (
     <Dialog
       open={open}
@@ -138,18 +120,26 @@ export function AdrEditorDialog({
         <form className="contents" onSubmit={submit}>
           <DialogHeader>
             <DialogTitle>
-              {decision
-                ? t("agentLayer:adr.edit")
-                : t("agentLayer:adr.createTitle")}
+              {supersedes
+                ? t("agentLayer:adr.supersedeTitle", { number })
+                : t("agentLayer:adr.newTitle")}
             </DialogTitle>
             <DialogDescription>
-              {t("agentLayer:adr.editorDescription")}
+              {t("agentLayer:adr.immutableHint")}
             </DialogDescription>
           </DialogHeader>
           <fieldset
             className="max-h-[60vh] space-y-4 overflow-y-auto px-6 pb-2"
             disabled={pending}
           >
+            {supersedes ? (
+              <p
+                className="rounded border bg-muted/30 p-2 text-sm"
+                data-testid="adr-supersede-hint"
+              >
+                {t("agentLayer:adr.supersedeHint", { number })}
+              </p>
+            ) : null}
             <div className="space-y-1">
               <Label htmlFor="adr-title">{t("agentLayer:adr.title")}</Label>
               <Input
@@ -231,11 +221,11 @@ export function AdrEditorDialog({
                 </div>
               ))}
             </fieldset>
-            {sourceNote ? (
+            {supersedes?.sourceNote ? (
               <div className="space-y-1">
                 <Label>{t("agentLayer:adr.sourceNote")}</Label>
                 <p className="rounded border bg-muted/30 p-2 text-sm whitespace-pre-wrap">
-                  {sourceNote}
+                  {supersedes.sourceNote}
                 </p>
               </div>
             ) : null}
@@ -257,7 +247,7 @@ export function AdrEditorDialog({
             <Button type="submit" disabled={pending}>
               {pending
                 ? t("agentLayer:adr.saving")
-                : t("agentLayer:adr.saveDraft")}
+                : t("agentLayer:adr.submit")}
             </Button>
           </DialogFooter>
         </form>

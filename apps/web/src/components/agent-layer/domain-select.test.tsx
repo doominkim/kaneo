@@ -15,7 +15,7 @@ function node(overrides: Partial<AgentDomainNode> & { id: string }) {
     slug: overrides.id,
     title: overrides.id,
     position: 0,
-    proposedCount: 0,
+    unreviewedCount: 0,
     createdAt: "2026-09-03T00:00:00.000Z",
     updatedAt: "2026-09-03T00:00:00.000Z",
     ...overrides,

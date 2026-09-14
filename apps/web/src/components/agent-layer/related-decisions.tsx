@@ -23,7 +23,6 @@ export function RelatedDecisions({
   const query = useAgentDecisions({ projectId, status: "all", taskId });
   const decisions = query.data?.pages.flatMap((page) => page.decisions) ?? [];
   const labels = {
-    draft: t("agentLayer:adr.statusDraft"),
     accepted: t("agentLayer:adr.statusAccepted"),
     superseded: t("agentLayer:adr.statusSuperseded"),
   };
@@ -74,11 +73,7 @@ export function RelatedDecisions({
                 <Badge
                   size="sm"
                   variant={
-                    decision.status === "accepted"
-                      ? "success"
-                      : decision.status === "superseded"
-                        ? "secondary"
-                        : "outline"
+                    decision.status === "accepted" ? "success" : "secondary"
                   }
                 >
                   {labels[decision.status]}

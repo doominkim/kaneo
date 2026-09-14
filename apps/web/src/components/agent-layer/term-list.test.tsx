@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   terms: vi.fn(),
   review: vi.fn(),
   remove: vi.fn(),
+  restore: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
 }));
@@ -51,6 +52,16 @@ vi.mock("@/hooks/mutations/agent-layer/use-confirm-agent-term", () => ({
 vi.mock("@/hooks/mutations/agent-layer/use-delete-agent-term", () => ({
   useDeleteAgentTerm: () => ({ mutateAsync: mocks.remove, isPending: false }),
 }));
+vi.mock("@/hooks/mutations/agent-layer/use-restore-agent-term", () => ({
+  useRestoreAgentTerm: () => ({
+    mutateAsync: mocks.restore,
+    isPending: false,
+    variables: undefined,
+  }),
+}));
+vi.mock("@/hooks/queries/agent-layer/use-member-names", () => ({
+  useMemberNames: () => new Map([["u2", "Mina"]]),
+}));
 vi.mock("@/hooks/queries/agent-layer/use-agent-domains", () => ({
   useAgentDomains: () => ({ data: { domains: [] }, isPending: false }),
 }));
@@ -84,6 +95,9 @@ function term(overrides: Partial<AgentTerm> & { id: string }): AgentTerm {
     reviewedAt: null,
     rejectReason: null,
     lastVerifiedAt: null,
+    reviewed: true,
+    deletedAt: null,
+    deletedBy: null,
     createdAt: "2026-09-03T00:00:00.000Z",
     ...overrides,
   };
@@ -137,6 +151,7 @@ beforeEach(() => {
   mocks.remove
     .mockReset()
     .mockResolvedValue({ id: "t1", canonical: "급여코드" });
+  mocks.restore.mockReset().mockResolvedValue(terms[0]);
   mocks.toastSuccess.mockReset();
   mocks.toastError.mockReset();
   mocks.terms.mockReset().mockReturnValue({
@@ -257,10 +272,11 @@ describe("TermList", () => {
     expect(screen.queryByTestId("confidence-filter")).not.toBeInTheDocument();
     expect(screen.queryByTestId("state-filter")).not.toBeInTheDocument();
 
-    // workspace:update is not enough to review here.
+    // workspace:update is not enough to review here, but a soft delete is
+    // reversible and offered on every surface (agent-autoapply).
     expect(screen.queryByTestId("confirm-term")).not.toBeInTheDocument();
     expect(screen.queryByTestId("dispute-term")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("delete-term")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("delete-term")).toHaveLength(3);
     expect(screen.queryByTestId("term-domain-select")).not.toBeInTheDocument();
   });
 
@@ -521,7 +537,7 @@ describe("TermList", () => {
     }
   });
 
-  it("deletes a term through the dialog and shows the 409 reason verbatim", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-18] deletes a term through the dialog and shows the 409 reason verbatim", async () => {
     render(<TermList workspaceId="ws" canReview />);
 
     fireEvent.click(
@@ -530,6 +546,9 @@ describe("TermList", () => {
     const dialog = await screen.findByTestId("delete-term-dialog");
     expect(dialog).toHaveTextContent(
       "agentLayer:knowledge.deleteTitle term=급여코드",
+    );
+    expect(dialog).toHaveTextContent(
+      "agentLayer:knowledge.softDeleteDescription",
     );
     expect(mocks.remove).not.toHaveBeenCalled();
 
@@ -566,6 +585,159 @@ describe("TermList", () => {
     );
     // The dialog stays open on failure so the user sees what was refused.
     expect(screen.getByTestId("delete-term-dialog")).toBeInTheDocument();
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-8] opening an unreviewed item's definition marks it reviewed once", () => {
+    mocks.terms.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: {
+        terms: [
+          term({
+            id: "u1",
+            canonical: "조제료",
+            confidence: "confirmed",
+            reviewed: false,
+            definition: "The dispensing fee.",
+          }),
+        ],
+      },
+      refetch: vi.fn(),
+    });
+    render(<TermList workspaceId="ws" canReview confirmedOnly />);
+    const row = screen.getByTestId("term-row");
+    expect(within(row).getByTestId("unreviewed-badge")).toBeInTheDocument();
+    // Listing an item is not reading it.
+    expect(mocks.review).not.toHaveBeenCalled();
+
+    const toggle = within(row).getByTestId("definition-toggle");
+    fireEvent.click(toggle);
+    expect(mocks.review).toHaveBeenCalledTimes(1);
+    expect(mocks.review).toHaveBeenCalledWith({
+      workspaceId: "ws",
+      termId: "u1",
+      confidence: "confirmed",
+    });
+
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    expect(mocks.review).toHaveBeenCalledTimes(1);
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-8] without workspace:update an opened definition is only read, because the review route needs it", () => {
+    mocks.terms.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: {
+        terms: [
+          term({
+            id: "u1",
+            confidence: "confirmed",
+            reviewed: false,
+            definition: "The dispensing fee.",
+          }),
+        ],
+      },
+      refetch: vi.fn(),
+    });
+    render(<TermList workspaceId="ws" canReview={false} confirmedOnly />);
+    fireEvent.click(screen.getByTestId("definition-toggle"));
+    expect(screen.getByTestId("definition")).toBeInTheDocument();
+    expect(screen.getByTestId("unreviewed-badge")).toBeInTheDocument();
+    expect(mocks.review).not.toHaveBeenCalled();
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-8] an unreviewed item can still be marked reviewed from the confirm action", async () => {
+    mocks.terms.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: {
+        terms: [term({ id: "u2", confidence: "confirmed", reviewed: false })],
+      },
+      refetch: vi.fn(),
+    });
+    render(<TermList workspaceId="ws" canReview />);
+    const confirm = screen.getByTestId("confirm-term");
+    expect(confirm).not.toBeDisabled();
+    fireEvent.click(confirm);
+    expect(await screen.findByTestId("review-dialog")).toHaveTextContent(
+      "agentLayer:knowledge.markReviewedDescription",
+    );
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-18] the Deleted filter lists deleted items with who deleted them, when, and a restore", async () => {
+    const removed = term({
+      id: "t9",
+      canonical: "구수가",
+      confidence: "confirmed",
+      deletedAt: "2026-09-14T01:00:00.000Z",
+      deletedBy: "u2",
+    });
+    mocks.terms.mockImplementation(
+      (_workspaceId: string, filters: { deleted?: boolean }) => ({
+        isPending: false,
+        isError: false,
+        data: { terms: filters.deleted ? [removed] : terms },
+        refetch: vi.fn(),
+      }),
+    );
+    render(<TermList workspaceId="ws" canReview domainId="d1" />);
+    fireEvent.click(
+      within(screen.getByTestId("deleted-filter")).getByText(
+        "agentLayer:common.filterDeleted",
+      ),
+    );
+    expect(mocks.terms).toHaveBeenLastCalledWith("ws", {
+      domainId: "d1",
+      deleted: true,
+    });
+    expect(screen.queryByTestId("confidence-filter")).toBeNull();
+
+    const [row] = screen.getAllByTestId("term-row");
+    const stamp = within(row).getByTestId("deleted-stamp");
+    expect(stamp).toHaveTextContent(
+      "agentLayer:common.deletedBy name=Mina when=2 hours ago",
+    );
+    expect(stamp).toHaveAttribute("title", "Sep 3, 2026");
+    for (const control of [
+      "confirm-term",
+      "dispute-term",
+      "delete-term",
+      "term-domain-select",
+    ]) {
+      expect(within(row).queryByTestId(control)).toBeNull();
+    }
+
+    fireEvent.click(within(row).getByTestId("restore-term"));
+    await waitFor(() =>
+      expect(mocks.restore).toHaveBeenCalledWith({
+        workspaceId: "ws",
+        termId: "t9",
+      }),
+    );
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      "agentLayer:knowledge.restored term=구수가",
+    );
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-18] a reader sees deleted items but cannot restore them", () => {
+    mocks.terms.mockReturnValue({
+      isPending: false,
+      isError: false,
+      data: {
+        terms: [
+          term({
+            id: "t9",
+            deletedAt: "2026-09-14T01:00:00.000Z",
+            deletedBy: "u2",
+          }),
+        ],
+      },
+      refetch: vi.fn(),
+    });
+    render(<TermList workspaceId="ws" canReview={false} />);
+    expect(screen.getByTestId("deleted-stamp")).toBeInTheDocument();
+    expect(screen.queryByTestId("restore-term")).toBeNull();
   });
 
   it("shows the empty state when no term matches", () => {

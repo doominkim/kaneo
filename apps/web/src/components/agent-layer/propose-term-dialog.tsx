@@ -111,7 +111,7 @@ export function ProposeTermDialog({
           <DialogHeader>
             <DialogTitle>{t("agentLayer:knowledge.proposeTitle")}</DialogTitle>
             <DialogDescription>
-              {t("agentLayer:knowledge.proposeDescription")}
+              {t("agentLayer:knowledge.proposeAppliedDescription")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 px-6 pb-2">

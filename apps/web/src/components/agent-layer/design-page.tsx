@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, Check, Pencil } from "lucide-react";
+import { ArrowLeft, Pencil } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/public-project/markdown-renderer";
@@ -10,18 +10,19 @@ import { Textarea } from "@/components/ui/textarea";
 import type { AgentDesign } from "@/fetchers/agent-layer/agent-designs";
 import type { AgentRequirementSet } from "@/fetchers/agent-layer/agent-requirements";
 import {
-  useApproveAgentDesign,
   usePutAgentDesign,
+  useReviewAgentSpec,
 } from "@/hooks/mutations/agent-layer/use-agent-spec";
-import { formatDateTime, formatRelativeTime } from "@/lib/format";
+import { useReviewOnOpen } from "@/hooks/use-review-on-open";
 import { toast } from "@/lib/toast";
 import { criterionNumbers } from "./requirement-doc";
 import {
   RequirementKeyChip,
-  SpecStatusBadge,
   StaleBadge,
   StaleCauses,
+  UnreviewedBadge,
 } from "./spec-badges";
+import { SpecLifecycleActions } from "./spec-lifecycle";
 
 type DesignPageProps = {
   design: AgentDesign;
@@ -31,6 +32,8 @@ type DesignPageProps = {
   projectId: string;
   projectSlug?: string;
   canEdit: boolean;
+  /** project:update: soft delete. */
+  canDelete?: boolean;
   startInEdit?: boolean;
   /** Mounted inside the feature page: the feature header already has the back link. */
   embedded?: boolean;
@@ -38,7 +41,7 @@ type DesignPageProps = {
 
 /**
  * The 설계 tab's detail (REQ-SPEC-TABS-12): body, the requirements it covers
- * with a per-key "changed since approval" mark, the stale verdict with its
+ * with a per-key "changed since the design's last revision" mark, the stale verdict with its
  * causes, and the tasks derived from it. Editing replaces the covered keys.
  */
 export function DesignPage({
@@ -48,6 +51,7 @@ export function DesignPage({
   projectId,
   projectSlug,
   canEdit,
+  canDelete = false,
   startInEdit = false,
   embedded = false,
 }: DesignPageProps) {
@@ -59,7 +63,17 @@ export function DesignPage({
     () => new Set(design.requirements.map((r) => r.key)),
   );
   const put = usePutAgentDesign();
-  const approve = useApproveAgentDesign();
+  const review = useReviewAgentSpec();
+  const showUnreviewed = useReviewOnOpen({
+    itemId: design.id,
+    reviewed: design.reviewed,
+    onReview: () =>
+      review.mutateAsync({
+        kind: "design",
+        projectId,
+        feature: design.feature,
+      }),
+  });
 
   useEffect(() => {
     if (!isEditing) {
@@ -117,17 +131,6 @@ export function DesignPage({
     }
   };
 
-  const handleApprove = async () => {
-    try {
-      await approve.mutateAsync({ projectId, feature: design.feature });
-      toast.success(t("agentLayer:spec.approved"));
-    } catch (cause) {
-      toast.error(t("agentLayer:spec.approveFailed"), {
-        description: cause instanceof Error ? cause.message : undefined,
-      });
-    }
-  };
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border/80 px-3 py-2.5 sm:px-4">
@@ -144,18 +147,8 @@ export function DesignPage({
         <span className="font-mono text-xs text-muted-foreground">
           {design.feature}
         </span>
-        <SpecStatusBadge status={design.status} />
+        {showUnreviewed ? <UnreviewedBadge /> : null}
         <StaleBadge stale={design.stale} />
-        {design.approvedAt ? (
-          <span
-            className="text-xs text-muted-foreground"
-            title={formatDateTime(design.approvedAt)}
-          >
-            {t("agentLayer:spec.approvedAt", {
-              when: formatRelativeTime(design.approvedAt),
-            })}
-          </span>
-        ) : null}
         <div className="ml-auto flex items-center gap-1.5">
           {isEditing ? (
             <>
@@ -177,19 +170,11 @@ export function DesignPage({
             </>
           ) : (
             <>
-              {canEdit &&
-              (design.status !== "approved" || design.stale.stale) ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={approve.isPending}
-                  onClick={handleApprove}
-                  data-testid="approve-design"
-                >
-                  <Check />
-                  {t("agentLayer:spec.approve")}
-                </Button>
-              ) : null}
+              <SpecLifecycleActions
+                target={{ kind: "design", projectId, feature: design.feature }}
+                canRevert={canEdit}
+                canDelete={canDelete}
+              />
               {canEdit ? (
                 <Button
                   size="sm"
@@ -312,18 +297,18 @@ export function DesignPage({
                       <RequirementKeyChip
                         requirementKey={requirement.key}
                         className={
-                          requirement.changedSinceApproval
+                          requirement.changedSinceRevision
                             ? "border-warning text-warning-foreground"
                             : undefined
                         }
                       />
                     </Link>
-                    {requirement.changedSinceApproval ? (
+                    {requirement.changedSinceRevision ? (
                       <span
                         className="text-[10px] text-warning-foreground"
-                        data-testid="changed-since-approval"
+                        data-testid="changed-since-revision"
                       >
-                        {t("agentLayer:spec.changedSinceApproval")}
+                        {t("agentLayer:spec.changedSinceRevision")}
                       </span>
                     ) : null}
                   </span>

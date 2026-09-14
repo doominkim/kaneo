@@ -4,20 +4,25 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import type { ComponentType, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentLayerApiError } from "@/fetchers/agent-layer/api-error";
 import { Route } from "./$decisionId";
 
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
-  accept: vi.fn(),
   decision: vi.fn(),
-  decisions: vi.fn(),
+  review: vi.fn(),
+  remove: vi.fn(),
+  restore: vi.fn(),
+  canUpdateProjects: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
   search: {
     origin: "knowledge",
     status: "current",
-    supersedes: "old",
   } as Record<string, unknown>,
 }));
 vi.mock("@tanstack/react-router", () => ({
@@ -29,14 +34,33 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => mocks.navigate,
 }));
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({
+    t: (key: string, options?: Record<string, unknown>) =>
+      options ? `${key}:${JSON.stringify(options)}` : key,
+  }),
+}));
+vi.mock("@/lib/format", () => ({
+  formatRelativeTime: () => "just now",
+  formatDateTime: () => "Sep 14, 2026",
+}));
+vi.mock("@/lib/toast", () => ({
+  toast: { success: mocks.toastSuccess, error: mocks.toastError },
 }));
 vi.mock("@/components/common/project-layout", () => ({
   default: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("@/components/page-title", () => ({ default: () => null }));
 vi.mock("@/components/agent-layer/adr-editor-dialog", () => ({
-  AdrEditorDialog: () => null,
+  AdrEditorDialog: ({
+    open,
+    supersedes,
+  }: {
+    open: boolean;
+    supersedes?: { id: string };
+  }) =>
+    open ? (
+      <div data-testid="adr-editor" data-supersedes={supersedes?.id} />
+    ) : null,
 }));
 vi.mock("@/components/agent-layer/agent-author-badge", () => ({
   AgentAuthorBadge: ({
@@ -50,18 +74,32 @@ vi.mock("@/components/agent-layer/agent-author-badge", () => ({
 vi.mock("@/hooks/use-workspace-permission", () => ({
   useWorkspacePermission: () => ({
     canUpdateTasks: () => true,
-    canUpdateProjects: () => true,
+    canUpdateProjects: mocks.canUpdateProjects,
   }),
 }));
 vi.mock("@/hooks/mutations/agent-layer/use-agent-decisions", () => ({
-  useAcceptAgentDecision: () => ({
-    mutateAsync: mocks.accept,
+  useReviewAgentDecision: () => ({
+    mutateAsync: mocks.review,
+    isPending: false,
+  }),
+  useDeleteAgentDecision: () => ({
+    mutateAsync: mocks.remove,
+    isPending: false,
+  }),
+  useRestoreAgentDecision: () => ({
+    mutateAsync: mocks.restore,
     isPending: false,
   }),
 }));
 vi.mock("@/hooks/queries/agent-layer/use-agent-decisions", () => ({
   useAgentDecision: mocks.decision,
-  useAgentDecisions: mocks.decisions,
+}));
+vi.mock("@/hooks/queries/agent-layer/use-member-names", () => ({
+  useMemberNames: () =>
+    new Map([
+      ["u", "Dominic"],
+      ["u2", "Mina"],
+    ]),
 }));
 
 const current = {
@@ -70,7 +108,7 @@ const current = {
   projectId: "p",
   number: 3,
   title: "Current",
-  status: "draft",
+  status: "accepted",
   context: "Context",
   decision: "Decision",
   alternatives: null,
@@ -78,8 +116,8 @@ const current = {
   sourceNote: "Source note",
   reversible: null,
   sourceEntryId: null,
-  supersedesDecisionId: null,
-  supersedes: null,
+  supersedesDecisionId: "old",
+  supersedes: { id: "old", number: 1, title: "Old", status: "superseded" },
   supersededBy: null,
   refs: {
     repo: "kaneo",
@@ -97,74 +135,182 @@ const current = {
   updatedActor: null,
   acceptedBy: null,
   acceptor: null,
-  acceptedAt: null,
+  acceptedAt: "2026-09-11T00:00:00.000Z",
+  reviewed: true,
+  reviewedAt: "2026-09-12T00:00:00.000Z",
+  reviewedBy: "u2",
+  deletedAt: null,
+  deletedBy: null,
   createdAt: "2026-09-11T00:00:00.000Z",
   updatedAt: "2026-09-11T00:00:00.000Z",
 };
-const old = {
-  ...current,
-  id: "old",
-  number: 1,
-  title: "Old",
-  status: "accepted",
-};
+const loaded = (data: unknown) => ({
+  data,
+  isPending: false,
+  isError: false,
+  error: null,
+});
 const Detail = (Route as unknown as { component: ComponentType }).component;
 
 beforeEach(() => {
   mocks.navigate.mockReset();
-  mocks.accept.mockReset().mockResolvedValue(current);
-  mocks.search = { origin: "knowledge", status: "current", supersedes: "old" };
-  mocks.decision
-    .mockReset()
-    .mockImplementation((_projectId: string, id?: string) => ({
-      data: id === "old" ? old : id === "d1" ? current : undefined,
-      isPending: false,
-      isError: false,
-    }));
-  mocks.decisions.mockReset().mockReturnValue({
-    data: { pages: [{ decisions: [old] }] },
-    isError: false,
-    hasNextPage: false,
-  });
-  vi.spyOn(window, "confirm").mockReturnValue(true);
+  mocks.review.mockReset().mockResolvedValue(current);
+  mocks.remove.mockReset();
+  mocks.restore.mockReset().mockResolvedValue(current);
+  mocks.canUpdateProjects.mockReset().mockReturnValue(true);
+  mocks.toastSuccess.mockReset();
+  mocks.toastError.mockReset();
+  mocks.search = { origin: "knowledge", status: "current" };
+  mocks.decision.mockReset().mockReturnValue(loaded(current));
 });
-afterEach(() => {
-  cleanup();
-  vi.restoreAllMocks();
-});
+afterEach(() => cleanup());
 
 describe("ADR 상세", () => {
-  it("URL의 대체 대상을 명시적으로 비운 뒤 대체 없이 채택한다", async () => {
-    render(<Detail />);
-    fireEvent.change(screen.getByTestId("adr-supersedes-select"), {
-      target: { value: "" },
-    });
-    fireEvent.click(screen.getByTestId("accept-adr"));
-    await waitFor(() => expect(mocks.accept).toHaveBeenCalled());
-    expect(mocks.accept.mock.calls[0]?.[0]).toEqual({
+  it("[REQ-AGENT-AUTOAPPLY-8] 미확인 ADR 상세를 열면 한 번만 확인 처리하고 이번 방문 동안 표시를 남긴다", () => {
+    mocks.decision.mockReturnValue(
+      loaded({
+        ...current,
+        reviewed: false,
+        reviewedAt: null,
+        reviewedBy: null,
+      }),
+    );
+    const { rerender } = render(<Detail />);
+    expect(mocks.review).toHaveBeenCalledTimes(1);
+    expect(mocks.review).toHaveBeenCalledWith({
       projectId: "p",
       decisionId: "d1",
-      expectedUpdatedAt: current.updatedAt,
     });
-    expect(window.confirm).not.toHaveBeenCalled();
+    expect(screen.getByTestId("unreviewed-badge")).toBeInTheDocument();
+
+    mocks.decision.mockReturnValue(loaded(current));
+    rerender(<Detail />);
+    expect(mocks.review).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("unreviewed-badge")).toBeInTheDocument();
+    expect(screen.getByTestId("adr-reviewer")).toHaveTextContent("Mina");
   });
 
-  it("채택 목록 오류를 다시 시도하고 다음 페이지를 불러오며 참조를 모두 표시한다", () => {
-    const refetch = vi.fn();
-    const fetchNextPage = vi.fn();
-    mocks.decisions.mockReturnValue({
-      data: { pages: [{ decisions: [old] }] },
-      isError: true,
-      refetch,
-      hasNextPage: true,
-      fetchNextPage,
-      isFetchingNextPage: false,
+  it("확인된 ADR은 다시 확인하지 않고, 채택·편집·초안 흐름 대신 대체만 준다", () => {
+    render(<Detail />);
+    expect(mocks.review).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("unreviewed-badge")).toBeNull();
+    expect(screen.queryByTestId("accept-adr")).toBeNull();
+    expect(screen.queryByTestId("adr-supersedes-select")).toBeNull();
+    expect(screen.getByTestId("adr-status")).toHaveTextContent(
+      "agentLayer:adr.statusAccepted",
+    );
+
+    fireEvent.click(screen.getByTestId("supersede-adr"));
+    expect(screen.getByTestId("adr-editor")).toHaveAttribute(
+      "data-supersedes",
+      "d1",
+    );
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-18] 삭제는 확인 대화상자를 거치고, 삭제 뒤 삭제자·시각과 복구 버튼을 보여준다", async () => {
+    mocks.remove.mockResolvedValue({
+      id: "d1",
+      deletedAt: "2026-09-14T02:00:00.000Z",
+      deletedBy: "u2",
+      restoredDecisionId: "old",
     });
     render(<Detail />);
-    fireEvent.click(screen.getByText("agentLayer:adr.retry"));
-    fireEvent.click(screen.getByText("agentLayer:adr.loadMoreAccepted"));
-    expect(refetch).toHaveBeenCalledOnce();
-    expect(fetchNextPage).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByTestId("delete-adr"));
+    const dialog = await screen.findByTestId("delete-adr-dialog");
+    expect(dialog).toHaveTextContent(
+      'agentLayer:adr.deleteTitle:{"number":"003"}',
+    );
+    expect(dialog).toHaveTextContent(
+      'agentLayer:adr.deleteRestoresPrevious:{"number":"001"}',
+    );
+    expect(mocks.remove).not.toHaveBeenCalled();
+
+    // The refetch after the delete no longer finds the ADR.
+    mocks.decision.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      error: new AgentLayerApiError(404, "ADR not found"),
+    });
+    fireEvent.click(within(dialog).getByTestId("delete-adr-submit"));
+    await waitFor(() =>
+      expect(mocks.remove).toHaveBeenCalledWith({
+        projectId: "p",
+        decisionId: "d1",
+      }),
+    );
+
+    const banner = await screen.findByTestId("adr-deleted-banner");
+    expect(within(banner).getByTestId("deleted-stamp")).toHaveTextContent(
+      'agentLayer:common.deletedBy:{"name":"Mina","when":"just now"}',
+    );
+    expect(banner).toHaveTextContent(
+      'agentLayer:adr.restoredPrevious:{"number":"001"}',
+    );
+    expect(screen.getByTestId("adr-deleted")).toBeInTheDocument();
+    expect(screen.queryByTestId("delete-adr")).toBeNull();
+    expect(screen.queryByTestId("supersede-adr")).toBeNull();
+
+    fireEvent.click(within(banner).getByTestId("restore-adr"));
+    await waitFor(() =>
+      expect(mocks.restore).toHaveBeenCalledWith({
+        projectId: "p",
+        decisionId: "d1",
+      }),
+    );
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-18] project:update가 없으면 삭제 버튼이 없다", () => {
+    mocks.canUpdateProjects.mockReturnValue(false);
+    render(<Detail />);
+    expect(screen.queryByTestId("delete-adr")).toBeNull();
+  });
+
+  it("대체된 ADR은 대체한 ADR로 가는 안내를 먼저 보여주고 다시 대체하게 하지 않는다", () => {
+    mocks.decision.mockReturnValue(
+      loaded({
+        ...current,
+        status: "superseded",
+        supersededBy: {
+          id: "new",
+          number: 4,
+          title: "Newer",
+          status: "accepted",
+        },
+      }),
+    );
+    render(<Detail />);
+    const banner = screen.getByTestId("adr-superseded-banner");
+    expect(banner).toHaveTextContent(
+      'agentLayer:adr.supersededByRecord:{"number":"004","title":"Newer"}',
+    );
+    expect(screen.getByTestId("adr-status")).toHaveTextContent(
+      "agentLayer:adr.statusSuperseded",
+    );
+    expect(screen.queryByTestId("supersede-adr")).toBeNull();
+
+    fireEvent.click(within(banner).getByText("agentLayer:adr.openRecord"));
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: { workspaceId: "w", projectId: "p", decisionId: "new" },
+      }),
+    );
+  });
+
+  it("없거나 삭제된 ADR은 삭제됨 필터를 안내한다", () => {
+    mocks.decision.mockReturnValue({
+      data: undefined,
+      isPending: false,
+      isError: true,
+      error: new AgentLayerApiError(404, "ADR not found"),
+    });
+    render(<Detail />);
+    expect(screen.getByText("agentLayer:adr.notFound")).toBeInTheDocument();
+  });
+
+  it("참조를 모두 표시하고, 태스크에서 연 상세는 원래 태스크로 돌아간다", () => {
+    mocks.search = { origin: "task", taskId: "task-7", status: "current" };
+    render(<Detail />);
     for (const value of [
       "kaneo",
       "main",
@@ -175,11 +321,6 @@ describe("ADR 상세", () => {
     ]) {
       expect(screen.getByText(value)).toBeInTheDocument();
     }
-  });
-
-  it("태스크에서 연 상세는 원래 태스크로 돌아간다", () => {
-    mocks.search = { origin: "task", taskId: "task-7", status: "current" };
-    render(<Detail />);
     fireEvent.click(screen.getByText("agentLayer:adr.back"));
     expect(mocks.navigate).toHaveBeenCalledWith(
       expect.objectContaining({

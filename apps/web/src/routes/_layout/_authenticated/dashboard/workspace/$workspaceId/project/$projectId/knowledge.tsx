@@ -7,6 +7,7 @@ import { AdrList } from "@/components/agent-layer/adr-list";
 import { DecisionList } from "@/components/agent-layer/decision-list";
 import { EntryDetailSheet } from "@/components/agent-layer/entry-detail-sheet";
 import { ProposeTermDialog } from "@/components/agent-layer/propose-term-dialog";
+import { UnreviewedCount } from "@/components/agent-layer/spec-badges";
 import { TermList } from "@/components/agent-layer/term-list";
 import { TermResolve } from "@/components/agent-layer/term-resolve";
 import ProjectLayout from "@/components/common/project-layout";
@@ -14,6 +15,7 @@ import PageTitle from "@/components/page-title";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAgentTaskIndex } from "@/hooks/queries/agent-layer/use-agent-task-index";
+import { useAgentUnreviewedCounts } from "@/hooks/queries/agent-layer/use-agent-unreviewed-counts";
 import useGetProject from "@/hooks/queries/project/use-get-project";
 import { useWorkspacePermission } from "@/hooks/use-workspace-permission";
 
@@ -26,7 +28,7 @@ export const Route = createFileRoute(
       .catch("knowledge")
       .default("knowledge"),
     status: z
-      .enum(["current", "all", "draft", "accepted", "superseded"])
+      .enum(["current", "all", "accepted", "superseded", "deleted"])
       .catch("current")
       .default("current"),
     q: z.string().max(200).optional(),
@@ -42,7 +44,9 @@ function RouteComponent() {
   const navigate = useNavigate();
   const { data: project } = useGetProject({ id: projectId, workspaceId });
   const { taskNumberById } = useAgentTaskIndex(projectId);
-  const { canUpdateTasks } = useWorkspacePermission();
+  const { canUpdateTasks, canUpdateWorkspace, canUpdateProjects } =
+    useWorkspacePermission();
+  const unreviewed = useAgentUnreviewedCounts(projectId, workspaceId);
   const [proposeOpen, setProposeOpen] = useState(false);
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
 
@@ -69,11 +73,13 @@ function RouteComponent() {
             }
           >
             <TabsList aria-label={t("agentLayer:knowledge.title")}>
-              <TabsTrigger value="knowledge">
+              <TabsTrigger value="knowledge" data-testid="knowledge-items-tab">
                 {t("agentLayer:adr.tabKnowledge")}
+                <UnreviewedCount count={unreviewed.terms} />
               </TabsTrigger>
               <TabsTrigger value="decisions" data-testid="adr-tab">
                 {t("agentLayer:adr.tabDecisions")}
+                <UnreviewedCount count={unreviewed.decisions} />
               </TabsTrigger>
             </TabsList>
             <TabsContent value="knowledge" className="space-y-8 pt-3">
@@ -81,10 +87,10 @@ function RouteComponent() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h1 className="text-sm font-semibold text-foreground">
-                      {t("agentLayer:knowledge.glossaryTitle")}
+                      {t("agentLayer:knowledge.glossaryLiveTitle")}
                     </h1>
                     <p className="text-xs text-muted-foreground">
-                      {t("agentLayer:knowledge.glossaryHint")}
+                      {t("agentLayer:knowledge.glossaryLiveHint")}
                     </p>
                   </div>
                   {canUpdateTasks() ? (
@@ -101,9 +107,10 @@ function RouteComponent() {
                 </div>
                 <TermResolve workspaceId={workspaceId} />
                 {/*
-              Read-only on purpose (KAN-16): review moved to the domain page
-              each item is filed under, where the reviewer has the context the
-              decision needs. This tab shows what agents can actually read.
+              Confirm, dispute and filing stay on the domain page each item is
+              filed under (KAN-16), where the reviewer has the context. This
+              tab shows what agents read; delete, restore and the review mark
+              on opening a definition work here too (agent-autoapply).
             */}
                 <p
                   className="text-xs text-muted-foreground"
@@ -113,7 +120,7 @@ function RouteComponent() {
                 </p>
                 <TermList
                   workspaceId={workspaceId}
-                  canReview={false}
+                  canReview={canUpdateWorkspace()}
                   confirmedOnly
                 />
               </section>
@@ -126,13 +133,14 @@ function RouteComponent() {
                     {t("agentLayer:adr.tabDecisions")}
                   </h2>
                   <p className="text-xs text-muted-foreground">
-                    {t("agentLayer:adr.editorDescription")}
+                    {t("agentLayer:adr.immutableHint")}
                   </p>
                 </div>
                 <AdrList
                   projectId={projectId}
                   workspaceId={workspaceId}
                   canWrite={canUpdateTasks()}
+                  canManage={canUpdateProjects()}
                   initialStatus={search.status}
                   initialSearch={search.q ?? ""}
                   onFiltersChange={({ status, q }) =>

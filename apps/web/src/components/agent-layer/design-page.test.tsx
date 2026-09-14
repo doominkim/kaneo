@@ -1,10 +1,11 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDesign } from "@/fetchers/agent-layer/agent-designs";
+import type { SpecTarget } from "@/fetchers/agent-layer/agent-spec-lifecycle";
 import { DesignPage } from "./design-page";
 
-const mocks = vi.hoisted(() => ({ put: vi.fn(), approve: vi.fn() }));
+const mocks = vi.hoisted(() => ({ put: vi.fn(), review: vi.fn() }));
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a href="/">{children}</a>,
@@ -26,10 +27,22 @@ vi.mock("@/components/public-project/markdown-renderer", () => ({
 }));
 vi.mock("@/hooks/mutations/agent-layer/use-agent-spec", () => ({
   usePutAgentDesign: () => ({ mutateAsync: mocks.put, isPending: false }),
-  useApproveAgentDesign: () => ({
-    mutateAsync: mocks.approve,
-    isPending: false,
-  }),
+  useReviewAgentSpec: () => ({ mutateAsync: mocks.review, isPending: false }),
+}));
+vi.mock("./spec-lifecycle", () => ({
+  SpecLifecycleActions: ({
+    target,
+    canDelete,
+  }: {
+    target: SpecTarget;
+    canDelete: boolean;
+  }) => (
+    <div
+      data-testid="spec-lifecycle"
+      data-kind={target.kind}
+      data-can-delete={String(canDelete)}
+    />
+  ),
 }));
 
 function makeDesign(overrides: Partial<AgentDesign> = {}): AgentDesign {
@@ -43,6 +56,10 @@ function makeDesign(overrides: Partial<AgentDesign> = {}): AgentDesign {
     status: "approved",
     approvedAt: "2026-09-13T00:00:00.000Z",
     approvedBy: "u1",
+    reviewed: true,
+    reviewedAt: "2026-09-13T00:00:00.000Z",
+    reviewedBy: "u1",
+    revisedAt: "2026-09-13T00:00:00.000Z",
     sourceSlug: null,
     updatedBy: "u1",
     actorId: null,
@@ -66,7 +83,7 @@ function makeDesign(overrides: Partial<AgentDesign> = {}): AgentDesign {
         text: "a",
         status: "active",
         updatedAt: "2026-09-12T00:00:00.000Z",
-        changedSinceApproval: false,
+        changedSinceRevision: false,
       },
       {
         itemId: "i2",
@@ -74,7 +91,7 @@ function makeDesign(overrides: Partial<AgentDesign> = {}): AgentDesign {
         text: "b",
         status: "active",
         updatedAt: "2026-09-13T02:00:00.000Z",
-        changedSinceApproval: true,
+        changedSinceRevision: true,
       },
     ],
     tasks: [{ id: "t1", number: 19, title: "KAN-19", status: "in-progress" }],
@@ -84,7 +101,7 @@ function makeDesign(overrides: Partial<AgentDesign> = {}): AgentDesign {
 
 beforeEach(() => {
   mocks.put.mockReset().mockResolvedValue({});
-  mocks.approve.mockReset().mockResolvedValue({});
+  mocks.review.mockReset().mockResolvedValue({});
 });
 afterEach(() => cleanup());
 
@@ -104,13 +121,13 @@ describe("설계 페이지", () => {
     expect(screen.getByTestId("stale-causes").textContent).toContain(
       "REQ-SPEC-TABS-2",
     );
-    expect(screen.getAllByTestId("changed-since-approval")).toHaveLength(1);
+    expect(screen.getAllByTestId("changed-since-revision")).toHaveLength(1);
     expect(screen.getByTestId("derived-tasks").textContent).toContain(
       "KAN-19 KAN-19",
     );
   });
 
-  it("[REQ-SPEC-TABS-10] a stale approved design can be re-approved, which is the human way to clear stale", () => {
+  it("[REQ-AGENT-AUTOAPPLY-5] a stale design offers no approve button and shows no draft or approved status", () => {
     render(
       <DesignPage
         design={makeDesign()}
@@ -118,16 +135,61 @@ describe("설계 페이지", () => {
         workspaceId="ws"
         projectId="p1"
         canEdit
+        canDelete
       />,
     );
-    fireEvent.click(screen.getByTestId("approve-design"));
-    expect(mocks.approve).toHaveBeenCalledWith({
+    expect(screen.queryByTestId("approve-design")).toBeNull();
+    expect(screen.queryByTestId("spec-status")).toBeNull();
+    const text = document.body.textContent ?? "";
+    for (const gone of [
+      "agentLayer:spec.approve",
+      "agentLayer:spec.statusDraft",
+      "agentLayer:spec.statusApproved",
+    ]) {
+      expect(text).not.toContain(gone);
+    }
+    expect(screen.getByTestId("spec-lifecycle")).toHaveAttribute(
+      "data-can-delete",
+      "true",
+    );
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-8] opening an unreviewed design marks it reviewed once", () => {
+    const design = makeDesign({
+      reviewed: false,
+      reviewedAt: null,
+      reviewedBy: null,
+    });
+    const { rerender } = render(
+      <DesignPage
+        design={design}
+        requirementSet={null}
+        workspaceId="ws"
+        projectId="p1"
+        canEdit={false}
+      />,
+    );
+    expect(mocks.review).toHaveBeenCalledTimes(1);
+    expect(mocks.review).toHaveBeenCalledWith({
+      kind: "design",
       projectId: "p1",
       feature: "spec-tabs",
     });
+    expect(screen.getByTestId("unreviewed-badge")).toBeInTheDocument();
+
+    rerender(
+      <DesignPage
+        design={{ ...design, reviewed: true }}
+        requirementSet={null}
+        workspaceId="ws"
+        projectId="p1"
+        canEdit={false}
+      />,
+    );
+    expect(mocks.review).toHaveBeenCalledTimes(1);
   });
 
-  it("[REQ-SPEC-TABS-12] a fresh approved design shows no stale mark and no approve button", () => {
+  it("[REQ-SPEC-TABS-12] a fresh reviewed design shows no stale mark and is not reviewed again", () => {
     render(
       <DesignPage
         design={makeDesign({
@@ -141,7 +203,8 @@ describe("설계 페이지", () => {
       />,
     );
     expect(screen.queryByTestId("stale-badge")).toBeNull();
-    expect(screen.queryByTestId("approve-design")).toBeNull();
+    expect(screen.queryByTestId("unreviewed-badge")).toBeNull();
+    expect(mocks.review).not.toHaveBeenCalled();
   });
 });
 

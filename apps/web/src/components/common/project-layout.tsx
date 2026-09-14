@@ -29,6 +29,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { shortcuts } from "@/constants/shortcuts";
+import { useAgentUnreviewedCounts } from "@/hooks/queries/agent-layer/use-agent-unreviewed-counts";
 import useGetProject from "@/hooks/queries/project/use-get-project";
 import { useProjectWebSocket } from "@/hooks/use-project-websocket";
 import { cn } from "@/lib/cn";
@@ -58,6 +59,12 @@ export default function ProjectLayout({
     useState(false);
 
   useProjectWebSocket(projectId);
+  // Unreviewed agent writes (agent-autoapply) on the tabs that hold them.
+  const unreviewed = useAgentUnreviewedCounts(projectId, workspaceId);
+  const sectionBadges = {
+    feature: unreviewed.feature,
+    knowledge: unreviewed.knowledge,
+  };
 
   const resolvedView = resolveProjectView(location.pathname, activeView);
   const isTaskSection = sectionOfView(resolvedView) === "tasks";
@@ -150,6 +157,7 @@ export default function ProjectLayout({
                 workspaceId={workspaceId}
                 projectId={projectId}
                 activeView={resolvedView}
+                sectionBadges={sectionBadges}
                 onSelectView={handleNavigateToView}
                 onSelectBacklog={handleNavigateToBacklog}
                 onSelectBoard={handleNavigateToBoard}
@@ -163,6 +171,7 @@ export default function ProjectLayout({
             <ProjectSectionTabs
               activeView={resolvedView}
               onSelectView={handleNavigateToView}
+              badges={sectionBadges}
             />
 
             {showViewSwitcher && isTaskSection && (

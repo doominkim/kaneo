@@ -1,9 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  acceptAgentDecision,
+  type AgentDecisionTarget,
   createAgentDecision,
+  deleteAgentDecision,
   promoteAgentDecisionEntry,
-  updateAgentDecision,
+  restoreAgentDecision,
+  reviewAgentDecision,
 } from "@/fetchers/agent-layer/agent-decisions";
 import { agentLayerKeys } from "@/hooks/queries/agent-layer/keys";
 
@@ -31,18 +33,34 @@ export function useCreateAgentDecision() {
     onSuccess: (value) => invalidate(queryClient, value.projectId),
   });
 }
-export function useUpdateAgentDecision() {
+/** Writes no timeline entry, so only the ADR reads are refreshed. */
+export function useReviewAgentDecision() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: updateAgentDecision,
-    onSuccess: (value) => invalidate(queryClient, value.projectId),
+    mutationFn: (target: AgentDecisionTarget) => reviewAgentDecision(target),
+    onSuccess: (_value, { projectId, decisionId }) => {
+      void queryClient.invalidateQueries({
+        queryKey: ["agent-decisions", projectId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: agentLayerKeys.decision(projectId, decisionId),
+      });
+    },
   });
 }
-export function useAcceptAgentDecision() {
+/** A delete can return the ADR it superseded to `accepted`, so every ADR read is refreshed. */
+export function useDeleteAgentDecision() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: acceptAgentDecision,
-    onSuccess: (value) => invalidate(queryClient, value.projectId),
+    mutationFn: (target: AgentDecisionTarget) => deleteAgentDecision(target),
+    onSuccess: (_value, { projectId }) => invalidate(queryClient, projectId),
+  });
+}
+export function useRestoreAgentDecision() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (target: AgentDecisionTarget) => restoreAgentDecision(target),
+    onSuccess: (_value, { projectId }) => invalidate(queryClient, projectId),
   });
 }
 export function usePromoteAgentDecision() {

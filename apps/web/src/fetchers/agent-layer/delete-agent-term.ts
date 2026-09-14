@@ -8,8 +8,9 @@ export type DeletedAgentTerm = InferResponseType<
 >;
 
 /**
- * Hard delete, `proposed` terms only. A reviewed term answers 409 with a
- * plain-text reason the UI shows as-is.
+ * Soft delete, whatever the term's confidence or state; `restoreAgentTerm`
+ * undoes it. The one refusal is a 409 when a live term supersedes to this one,
+ * with a plain-text reason the UI shows as-is.
  */
 async function deleteAgentTerm(
   workspaceId: string,

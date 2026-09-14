@@ -9,6 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { UnreviewedCount } from "./spec-badges";
 
 /**
  * Every project-level view. The four task views keep their existing URLs; the
@@ -114,9 +115,13 @@ export const SECTIONS: Array<{
   },
 ];
 
+/** Unreviewed agent writes per section (agent-autoapply); zero draws nothing. */
+export type SectionBadges = Partial<Record<ProjectSection, number>>;
+
 type ProjectSectionTabsProps = {
   activeView: ProjectView;
   onSelectView: (view: ProjectView) => void;
+  badges?: SectionBadges;
   className?: string;
 };
 
@@ -124,6 +129,7 @@ type ProjectSectionTabsProps = {
 export function ProjectSectionTabs({
   activeView,
   onSelectView,
+  badges,
   className,
 }: ProjectSectionTabsProps) {
   const { t } = useTranslation();
@@ -156,6 +162,7 @@ export function ProjectSectionTabs({
           >
             <Icon className="size-3.5" />
             {t(labelKey)}
+            <UnreviewedCount count={badges?.[section] ?? 0} />
           </Button>
         );
       })}
@@ -166,12 +173,14 @@ export function ProjectSectionTabs({
 type MobileProjectSectionsProps = {
   activeView: ProjectView;
   onSelectView: (view: ProjectView) => void;
+  badges?: SectionBadges;
 };
 
 /** Mobile popover: the same six sections as a compact grid. */
 export function MobileProjectSections({
   activeView,
   onSelectView,
+  badges,
 }: MobileProjectSectionsProps) {
   const { t } = useTranslation();
   const activeSection = sectionOfView(activeView);
@@ -199,7 +208,10 @@ export function MobileProjectSections({
               )}
             >
               <Icon className="size-3.5" />
-              <span className="truncate">{t(labelKey)}</span>
+              <span className="flex max-w-full items-center gap-1">
+                <span className="truncate">{t(labelKey)}</span>
+                <UnreviewedCount count={badges?.[section] ?? 0} />
+              </span>
             </button>
           );
         })}

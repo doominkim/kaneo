@@ -6,14 +6,16 @@ export function useAgentTerms(
   workspaceId: string,
   filters: AgentTermFilters = {},
 ) {
-  const { confidence, state, domainId } = filters;
+  const { confidence, state, domainId, deleted } = filters;
   return useQuery({
     queryKey: agentLayerKeys.terms(workspaceId, {
       confidence,
       state,
       domainId,
+      deleted,
     }),
-    queryFn: () => getAgentTerms({ workspaceId, confidence, state, domainId }),
+    queryFn: () =>
+      getAgentTerms({ workspaceId, confidence, state, domainId, deleted }),
     enabled: Boolean(workspaceId),
   });
 }

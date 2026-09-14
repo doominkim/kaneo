@@ -53,7 +53,7 @@ function node(
   id: string,
   parentId: string | null,
   title: string,
-  proposedCount = 0,
+  unreviewedCount = 0,
 ): AgentDomainNode {
   return {
     id,
@@ -63,7 +63,7 @@ function node(
     position: 0,
     updatedAt: "2026-09-03T00:00:00.000Z",
     childCount: 0,
-    proposedCount,
+    unreviewedCount,
     confirmedCount: 0,
     disputedCount: 0,
   };
@@ -77,7 +77,7 @@ const domains = [
   node("billing", null, "청구"),
 ];
 
-const unfiled = { proposedCount: 2, confirmedCount: 5, disputedCount: 1 };
+const unfiled = { unreviewedCount: 2, confirmedCount: 5, disputedCount: 1 };
 
 function renderNav() {
   // The sidebar provider reads the mobile media query.
@@ -205,13 +205,13 @@ describe("NavDomains", () => {
     expect(screen.queryAllByTestId("add-child-domain")).toHaveLength(0);
   });
 
-  it("badges a collapsed branch with everything waiting under it", () => {
+  it("[REQ-AGENT-AUTOAPPLY-10] badges a collapsed branch with every unreviewed item under it", () => {
     renderNav();
     // 3 on the page itself, 1 on `inbound`, 2 on the grandchild `lot`: the
     // whole branch is hidden while collapsed, so the row has to carry it.
     expect(rowBadge("약국")).toEqual({
       number: "6",
-      label: "agentLayer:domain.pendingReviewSubtree",
+      label: "agentLayer:domain.unreviewedSubtree",
     });
 
     // A page with nothing pending anywhere carries no number at all: a zero
@@ -219,39 +219,39 @@ describe("NavDomains", () => {
     expect(rowBadge("청구")).toBeNull();
   });
 
-  it("drops back to the page's own count once the branch is open", () => {
+  it("[REQ-AGENT-AUTOAPPLY-10] drops back to the page's own unreviewed count once the branch is open", () => {
     renderNav();
     fireEvent.click(screen.getAllByTestId("domain-toggle")[0]);
     // The children now draw their own badges, so a parent still showing the
     // total would look like the same items counted twice.
     expect(rowBadge("약국")).toEqual({
       number: "3",
-      label: "agentLayer:domain.pendingReview",
+      label: "agentLayer:domain.unreviewed",
     });
     // `inbound` is itself collapsed and hides `lot`'s two.
     expect(rowBadge("입고내역")).toEqual({
       number: "3",
-      label: "agentLayer:domain.pendingReviewSubtree",
+      label: "agentLayer:domain.unreviewedSubtree",
     });
     expect(rowBadge("약사")).toBeNull();
 
     fireEvent.click(screen.getAllByTestId("domain-toggle")[1]);
     expect(rowBadge("입고내역")).toEqual({
       number: "1",
-      label: "agentLayer:domain.pendingReview",
+      label: "agentLayer:domain.unreviewed",
     });
     // A leaf has no rollup of its own to announce.
     expect(rowBadge("로트")).toEqual({
       number: "2",
-      label: "agentLayer:domain.pendingReview",
+      label: "agentLayer:domain.unreviewed",
     });
   });
 
-  it("badges nothing when the whole tree is clear", () => {
+  it("[REQ-AGENT-AUTOAPPLY-10] badges nothing when every item is reviewed", () => {
     mocks.domains.mockReturnValue({
       data: {
-        domains: domains.map((d) => ({ ...d, proposedCount: 0 })),
-        unfiled: { ...unfiled, proposedCount: 0 },
+        domains: domains.map((d) => ({ ...d, unreviewedCount: 0 })),
+        unfiled: { ...unfiled, unreviewedCount: 0 },
       },
       isPending: false,
     });
@@ -259,7 +259,7 @@ describe("NavDomains", () => {
     expect(screen.queryAllByTestId("domain-pending")).toHaveLength(0);
   });
 
-  it("keeps the unfiled bucket last, counted from the workspace total", () => {
+  it("[REQ-AGENT-AUTOAPPLY-10] keeps the unfiled bucket last, counted from the workspace total", () => {
     renderNav();
     const rows = screen.getAllByTestId(/^domain-(node|unfiled)$/);
     expect(rows.at(-1)).toHaveAttribute("data-testid", "domain-unfiled");
@@ -269,7 +269,7 @@ describe("NavDomains", () => {
     // The bucket has no sub-tree, so the rollup never applies to it.
     expect(badge(unfiledRow)).toEqual({
       number: "2",
-      label: "agentLayer:domain.pendingReview",
+      label: "agentLayer:domain.unreviewed",
     });
 
     fireEvent.click(screen.getByText("agentLayer:domain.unfiled"));
@@ -284,7 +284,7 @@ describe("NavDomains", () => {
       pathname: "/dashboard/workspace/ws/domain/unfiled",
     });
     mocks.domains.mockReturnValue({
-      data: { domains, unfiled: { ...unfiled, proposedCount: 0 } },
+      data: { domains, unfiled: { ...unfiled, unreviewedCount: 0 } },
       isPending: false,
     });
     renderNav();
@@ -298,7 +298,7 @@ describe("NavDomains", () => {
 
   it("says so when the workspace has no pages", () => {
     mocks.domains.mockReturnValue({
-      data: { domains: [], unfiled: { ...unfiled, proposedCount: 0 } },
+      data: { domains: [], unfiled: { ...unfiled, unreviewedCount: 0 } },
       isPending: false,
     });
     renderNav();

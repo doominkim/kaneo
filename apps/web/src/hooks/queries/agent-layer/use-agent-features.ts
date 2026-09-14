@@ -5,11 +5,17 @@ import {
 } from "@/fetchers/agent-layer/agent-features";
 import { agentLayerKeys } from "./keys";
 
-export function useAgentFeatures(projectId: string) {
+export function useAgentFeatures(
+  projectId: string,
+  {
+    deleted = false,
+    enabled = true,
+  }: { deleted?: boolean; enabled?: boolean } = {},
+) {
   return useQuery({
-    queryKey: agentLayerKeys.features(projectId),
-    queryFn: () => getAgentFeatures(projectId),
-    enabled: Boolean(projectId),
+    queryKey: agentLayerKeys.features(projectId, deleted),
+    queryFn: () => getAgentFeatures(projectId, { deleted }),
+    enabled: Boolean(projectId) && enabled,
   });
 }
 

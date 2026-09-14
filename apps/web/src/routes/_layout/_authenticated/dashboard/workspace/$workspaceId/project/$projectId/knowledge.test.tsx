@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import type { ComponentType, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTerm } from "@/fetchers/agent-layer/get-agent-terms";
@@ -6,8 +12,11 @@ import { Route } from "./knowledge";
 
 const mocks = vi.hoisted(() => ({
   terms: vi.fn(),
+  counts: vi.fn(),
+  adrList: vi.fn(),
   canUpdateWorkspace: vi.fn(),
   canUpdateTasks: vi.fn(),
+  canUpdateProjects: vi.fn(),
   navigate: vi.fn(),
   search: {
     tab: "knowledge",
@@ -47,7 +56,10 @@ vi.mock("@/components/agent-layer/decision-list", () => ({
   DecisionList: () => <div data-testid="decision-list" />,
 }));
 vi.mock("@/components/agent-layer/adr-list", () => ({
-  AdrList: () => <div data-testid="adr-list" />,
+  AdrList: (props: { canManage?: boolean }) => {
+    mocks.adrList(props);
+    return <div data-testid="adr-list" />;
+  },
 }));
 vi.mock("@/components/agent-layer/entry-detail-sheet", () => ({
   EntryDetailSheet: () => null,
@@ -71,16 +83,26 @@ vi.mock("@/hooks/use-workspace-permission", () => ({
   useWorkspacePermission: () => ({
     canUpdateWorkspace: mocks.canUpdateWorkspace,
     canUpdateTasks: mocks.canUpdateTasks,
+    canUpdateProjects: mocks.canUpdateProjects,
   }),
 }));
 vi.mock("@/hooks/queries/agent-layer/use-agent-terms", () => ({
   useAgentTerms: mocks.terms,
+}));
+vi.mock("@/hooks/queries/agent-layer/use-agent-unreviewed-counts", () => ({
+  useAgentUnreviewedCounts: mocks.counts,
+}));
+vi.mock("@/hooks/queries/agent-layer/use-member-names", () => ({
+  useMemberNames: () => new Map(),
 }));
 vi.mock("@/hooks/mutations/agent-layer/use-confirm-agent-term", () => ({
   useConfirmAgentTerm: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("@/hooks/mutations/agent-layer/use-delete-agent-term", () => ({
   useDeleteAgentTerm: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+vi.mock("@/hooks/mutations/agent-layer/use-restore-agent-term", () => ({
+  useRestoreAgentTerm: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("@/hooks/mutations/agent-layer/use-set-agent-term-domain", () => ({
   useSetAgentTermDomain: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -108,16 +130,29 @@ const term: AgentTerm = {
   reviewerId: null,
   reviewer: null,
   reviewedAt: null,
+  reviewed: true,
   rejectReason: null,
   lastVerifiedAt: null,
+  deletedAt: null,
+  deletedBy: null,
   createdAt: "2026-09-03T00:00:00.000Z",
 };
+
+const countOn = (tab: HTMLElement) =>
+  within(tab)
+    .queryByTestId("unreviewed-count")
+    ?.querySelector('[aria-hidden="true"]')?.textContent ?? null;
 
 beforeEach(() => {
   mocks.search = { tab: "knowledge", status: "current", q: undefined };
   mocks.navigate.mockReset();
+  mocks.adrList.mockReset();
   mocks.canUpdateWorkspace.mockReturnValue(true);
   mocks.canUpdateTasks.mockReturnValue(true);
+  mocks.canUpdateProjects.mockReturnValue(true);
+  mocks.counts
+    .mockReset()
+    .mockReturnValue({ feature: 0, terms: 0, decisions: 0, knowledge: 0 });
   mocks.terms.mockReset().mockReturnValue({
     isPending: false,
     isError: false,
@@ -129,7 +164,7 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("지식 탭", () => {
-  it("확정 항목만 읽기 전용으로 표시하고 검토는 도메인 페이지에 둔다", () => {
+  it("에이전트가 읽는 확정 항목을 보여주고, 확정·이의는 도메인 페이지에 두되 삭제는 여기서도 준다", () => {
     render(<KnowledgeTab />);
 
     // Confirmed only, and still the whole workspace: narrowing this tab to the
@@ -140,16 +175,51 @@ describe("지식 탭", () => {
       domainId: undefined,
     });
 
-    // workspace:update no longer buys review controls here.
+    // Confirm and dispute still live on the domain page.
     expect(screen.queryByTestId("confirm-term")).not.toBeInTheDocument();
     expect(screen.queryByTestId("dispute-term")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("delete-term")).not.toBeInTheDocument();
     expect(screen.queryByTestId("confidence-filter")).not.toBeInTheDocument();
+    // A soft delete is reversible, so workspace:update gets it here too.
+    expect(screen.getByTestId("delete-term")).toBeInTheDocument();
 
-    // And it says where review does happen.
     expect(screen.getByTestId("review-elsewhere")).toHaveTextContent(
       "agentLayer:knowledge.reviewElsewhere",
     );
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-18] 지식 항목 목록의 삭제됨 필터는 삭제된 항목을 조회한다", () => {
+    render(<KnowledgeTab />);
+    fireEvent.click(
+      within(screen.getByTestId("deleted-filter")).getByText(
+        "agentLayer:common.filterDeleted",
+      ),
+    );
+    expect(mocks.terms).toHaveBeenLastCalledWith("ws", {
+      domainId: undefined,
+      deleted: true,
+    });
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-10] 지식 항목·결정 기록 탭에 삭제되지 않은 미확인 수를 보여주고 0이면 숨긴다", () => {
+    mocks.counts.mockReturnValue({
+      feature: 1,
+      terms: 2,
+      decisions: 3,
+      knowledge: 5,
+    });
+    const { rerender } = render(<KnowledgeTab />);
+    expect(mocks.counts).toHaveBeenCalledWith("p1", "ws");
+    expect(countOn(screen.getByTestId("knowledge-items-tab"))).toBe("2");
+    expect(countOn(screen.getByTestId("adr-tab"))).toBe("3");
+
+    mocks.counts.mockReturnValue({
+      feature: 0,
+      terms: 0,
+      decisions: 3,
+      knowledge: 3,
+    });
+    rerender(<KnowledgeTab />);
+    expect(countOn(screen.getByTestId("knowledge-items-tab"))).toBeNull();
   });
 
   it("지식 제안 기능과 결정 기록 하위 탭을 함께 제공한다", () => {
@@ -165,5 +235,8 @@ describe("지식 탭", () => {
     mocks.search = { tab: "decisions", status: "current", q: undefined };
     rerender(<KnowledgeTab />);
     expect(screen.getByTestId("decision-list")).toBeInTheDocument();
+    expect(mocks.adrList).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canManage: true }),
+    );
   });
 });

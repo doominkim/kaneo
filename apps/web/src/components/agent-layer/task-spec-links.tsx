@@ -16,6 +16,7 @@ import { featureOfKey } from "@/fetchers/agent-layer/agent-requirements";
 import {
   useAcknowledgeAgentTaskLinks,
   usePutAgentTaskLinks,
+  useReviewAgentTaskLinks,
 } from "@/hooks/mutations/agent-layer/use-agent-spec";
 import { useAgentDesigns } from "@/hooks/queries/agent-layer/use-agent-designs";
 import {
@@ -26,6 +27,7 @@ import {
   useAgentTaskLinkBadges,
   useAgentTaskLinks,
 } from "@/hooks/queries/agent-layer/use-agent-task-links";
+import { useReviewOnOpen } from "@/hooks/use-review-on-open";
 import { featuresOfBadge } from "@/lib/feature-filter";
 import { toast } from "@/lib/toast";
 import { RequirementKeyChip, StaleBadge, StaleCauses } from "./spec-badges";
@@ -60,6 +62,26 @@ export function TaskSpecBadges({
       ))}
       <StaleBadge stale={badge.stale} />
     </div>
+  );
+}
+
+const requirementLinkKey = (key: string) => `requirement:${key}`;
+const designLinkKey = (designId: string) => `design:${designId}`;
+
+/**
+ * An agent acknowledged the upstream change on this link and no person has
+ * looked since (agent-autoapply). Opening the task is that look.
+ */
+function AgentAckMark() {
+  const { t } = useTranslation();
+  return (
+    <span
+      className="rounded border border-info/40 bg-info/8 px-1 text-[10px] text-info-foreground"
+      title={t("agentLayer:spec.agentAckUnreviewedHint")}
+      data-testid="agent-ack-unreviewed"
+    >
+      {t("agentLayer:spec.agentAckUnreviewed")}
+    </span>
   );
 }
 
@@ -99,6 +121,37 @@ export function TaskSpecLinks({
   const data = links.data;
   const isEmpty =
     !data || (data.requirements.length === 0 && data.designs.length === 0);
+
+  const reviewLinks = useReviewAgentTaskLinks();
+  // The agent-acknowledged links as they were when the task opened: the
+  // review's refetch clears the flags, and the mark stays for this visit.
+  const [openedUnreviewed, setOpenedUnreviewed] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const loaded = data?.taskId === taskId ? data : undefined;
+  const agentAckedKeys = loaded
+    ? [
+        ...loaded.requirements
+          .filter((link) => link.acknowledgedByAgent && !link.reviewed)
+          .map((link) => requirementLinkKey(link.key)),
+        ...loaded.designs
+          .filter((link) => link.acknowledgedByAgent && !link.reviewed)
+          .map((link) => designLinkKey(link.designId)),
+      ]
+    : [];
+  useReviewOnOpen({
+    itemId: loaded ? taskId : undefined,
+    reviewed: loaded ? agentAckedKeys.length === 0 : undefined,
+    onReview: () => {
+      setOpenedUnreviewed(new Set(agentAckedKeys));
+      return reviewLinks.mutateAsync({ projectId, taskId });
+    },
+  });
+  const showAgentAck = (
+    key: string,
+    link: { acknowledgedByAgent: boolean; reviewed: boolean },
+  ) =>
+    (link.acknowledgedByAgent && !link.reviewed) || openedUnreviewed.has(key);
 
   return (
     <div className="flex flex-col gap-1" data-testid="task-spec-links">
@@ -150,34 +203,51 @@ export function TaskSpecLinks({
             </div>
             <div className="flex flex-wrap gap-1">
               {data.requirements.map((requirement) => (
-                <Link
+                <span
                   key={requirement.key}
-                  to="/dashboard/workspace/$workspaceId/project/$projectId/feature/$feature"
-                  params={{
-                    workspaceId,
-                    projectId,
-                    feature: requirement.feature,
-                  }}
-                  search={{ tab: "requirements" }}
-                  title={requirement.text}
+                  className="inline-flex items-center gap-1"
                 >
-                  <RequirementKeyChip
-                    requirementKey={requirement.key}
-                    className="text-[10px]"
-                  />
-                </Link>
+                  <Link
+                    to="/dashboard/workspace/$workspaceId/project/$projectId/feature/$feature"
+                    params={{
+                      workspaceId,
+                      projectId,
+                      feature: requirement.feature,
+                    }}
+                    search={{ tab: "requirements" }}
+                    title={requirement.text}
+                  >
+                    <RequirementKeyChip
+                      requirementKey={requirement.key}
+                      className="text-[10px]"
+                    />
+                  </Link>
+                  {showAgentAck(
+                    requirementLinkKey(requirement.key),
+                    requirement,
+                  ) ? (
+                    <AgentAckMark />
+                  ) : null}
+                </span>
               ))}
               {data.designs.map((design) => (
-                <Link
+                <span
                   key={design.designId}
-                  to="/dashboard/workspace/$workspaceId/project/$projectId/feature/$feature"
-                  params={{ workspaceId, projectId, feature: design.feature }}
-                  search={{ tab: "design" }}
-                  className="rounded border border-border/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-                  title={design.title}
+                  className="inline-flex items-center gap-1"
                 >
-                  design:{design.feature}
-                </Link>
+                  <Link
+                    to="/dashboard/workspace/$workspaceId/project/$projectId/feature/$feature"
+                    params={{ workspaceId, projectId, feature: design.feature }}
+                    search={{ tab: "design" }}
+                    className="rounded border border-border/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+                    title={design.title}
+                  >
+                    design:{design.feature}
+                  </Link>
+                  {showAgentAck(designLinkKey(design.designId), design) ? (
+                    <AgentAckMark />
+                  ) : null}
+                </span>
               ))}
             </div>
             {data.stale.stale ? (

@@ -113,6 +113,12 @@ vi.mock("@/hooks/mutations/agent-layer/use-confirm-agent-term", () => ({
 vi.mock("@/hooks/mutations/agent-layer/use-delete-agent-term", () => ({
   useDeleteAgentTerm: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
+vi.mock("@/hooks/mutations/agent-layer/use-restore-agent-term", () => ({
+  useRestoreAgentTerm: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+vi.mock("@/hooks/queries/agent-layer/use-member-names", () => ({
+  useMemberNames: () => new Map(),
+}));
 vi.mock("@/hooks/mutations/agent-layer/use-set-agent-term-domain", () => ({
   useSetAgentTermDomain: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
@@ -141,6 +147,9 @@ function listedTerm(overrides: Partial<AgentTerm> & { id: string }): AgentTerm {
     reviewedAt: null,
     rejectReason: null,
     lastVerifiedAt: null,
+    reviewed: true,
+    deletedAt: null,
+    deletedBy: null,
     createdAt: "2026-09-03T00:00:00.000Z",
     ...overrides,
   };

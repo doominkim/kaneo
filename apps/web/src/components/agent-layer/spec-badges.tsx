@@ -1,30 +1,78 @@
-import { AlertTriangle, CheckCircle2, CircleDashed } from "lucide-react";
+import { AlertTriangle, EyeOff } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import type { AgentStaleVerdict } from "@/fetchers/agent-layer/agent-designs";
 import { cn } from "@/lib/cn";
-import { formatRelativeTime } from "@/lib/format";
+import { formatDateTime, formatRelativeTime } from "@/lib/format";
 
-/** draft / approved, the only two states a requirement set or design has. */
-export function SpecStatusBadge({ status }: { status: string }) {
+/**
+ * An agent's write that no person has opened yet (agent-autoapply). It is
+ * already in effect; the mark only says nobody has looked.
+ */
+export function UnreviewedBadge({ className }: { className?: string }) {
   const { t } = useTranslation();
-  const approved = status === "approved";
   return (
     <Badge
-      variant={approved ? "success" : "secondary"}
+      variant="info"
       size="sm"
-      data-testid="spec-status"
-      data-status={status}
+      className={cn(className)}
+      data-testid="unreviewed-badge"
     >
-      {approved ? (
-        <CheckCircle2 className="size-3" />
-      ) : (
-        <CircleDashed className="size-3" />
-      )}
-      {approved
-        ? t("agentLayer:spec.statusApproved")
-        : t("agentLayer:spec.statusDraft")}
+      <EyeOff className="size-3" />
+      {t("agentLayer:common.unreviewed")}
     </Badge>
+  );
+}
+
+/** Tab and sidebar count of unreviewed items; nothing at zero. */
+export function UnreviewedCount({
+  count,
+  className,
+}: {
+  count: number;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  if (count <= 0) return null;
+  const label = t("agentLayer:common.unreviewedCount", { count });
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-sm bg-info/12 px-1 text-[10px] font-medium tabular-nums text-info-foreground",
+        className,
+      )}
+      title={label}
+      data-testid="unreviewed-count"
+    >
+      {/* A bare number next to a tab label says nothing on its own. */}
+      <span className="sr-only">{label}</span>
+      <span aria-hidden="true">{count}</span>
+    </span>
+  );
+}
+
+/** Who deleted an item and when, for the rows of a deleted filter. */
+export function DeletedStamp({
+  deletedAt,
+  deletedByName,
+  className,
+}: {
+  deletedAt: string;
+  deletedByName: string | null | undefined;
+  className?: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <span
+      className={cn("text-xs text-muted-foreground", className)}
+      title={formatDateTime(deletedAt)}
+      data-testid="deleted-stamp"
+    >
+      {t("agentLayer:common.deletedBy", {
+        name: deletedByName || t("agentLayer:common.unknownAuthor"),
+        when: formatRelativeTime(deletedAt),
+      })}
+    </span>
   );
 }
 
@@ -61,7 +109,7 @@ export function StaleCauses({ stale }: { stale: AgentStaleVerdict }) {
       data-testid="stale-causes"
     >
       <p className="font-medium text-warning-foreground">
-        {t("agentLayer:spec.staleHint")}
+        {t("agentLayer:spec.staleSinceRevision")}
       </p>
       <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
         {stale.causes.map((cause) => (
@@ -71,7 +119,7 @@ export function StaleCauses({ stale }: { stale: AgentStaleVerdict }) {
                   key: cause.key,
                   when: formatRelativeTime(cause.changedAt),
                 })
-              : t("agentLayer:spec.staleDesign", {
+              : t("agentLayer:spec.staleDesignRevised", {
                   key: cause.key,
                   when: formatRelativeTime(cause.changedAt),
                 })}
