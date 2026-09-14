@@ -1,6 +1,5 @@
 import {
   and,
-  count,
   desc,
   eq,
   exists,
@@ -34,6 +33,7 @@ type ListInput = {
   before?: string;
   status: "current" | "all" | "accepted" | "superseded" | "deleted";
   taskId?: string;
+  number?: number;
   q?: string;
 };
 
@@ -69,6 +69,9 @@ async function listDecisions(input: ListInput) {
       conditions.push(eq(agentDecisionTable.status, "superseded"));
     }
   }
+  if (input.number !== undefined) {
+    conditions.push(eq(agentDecisionTable.number, input.number));
+  }
   if (input.taskId) {
     conditions.push(
       exists(
@@ -102,7 +105,7 @@ async function listDecisions(input: ListInput) {
     );
   }
 
-  const [rows, [unreviewed]] = await Promise.all([
+  const [rows, [totals]] = await Promise.all([
     db
       .select({
         decision: {
@@ -153,15 +156,23 @@ async function listDecisions(input: ListInput) {
       .where(and(...conditions))
       .orderBy(desc(agentDecisionTable.number))
       .limit(input.limit),
-    // Project-wide on purpose: the "unreviewed" badge must not shrink because
-    // the reader filtered or paged.
+    // Project-wide on purpose: the "unreviewed" badge and the accepted count
+    // must not shrink because the reader filtered or paged.
     db
-      .select({ total: count() })
+      .select({
+        unreviewed:
+          sql<number>`count(*) filter (where ${agentDecisionTable.reviewedAt} is null)`.mapWith(
+            Number,
+          ),
+        accepted:
+          sql<number>`count(*) filter (where ${agentDecisionTable.status} = 'accepted')`.mapWith(
+            Number,
+          ),
+      })
       .from(agentDecisionTable)
       .where(
         and(
           eq(agentDecisionTable.projectId, input.projectId),
-          isNull(agentDecisionTable.reviewedAt),
           isNull(agentDecisionTable.deletedAt),
         ),
       ),
@@ -182,7 +193,8 @@ async function listDecisions(input: ListInput) {
   return {
     decisions,
     nextBefore: decisions.length === input.limit && last ? last.id : null,
-    unreviewedTotal: unreviewed?.total ?? 0,
+    unreviewedTotal: totals?.unreviewed ?? 0,
+    acceptedTotal: totals?.accepted ?? 0,
   };
 }
 

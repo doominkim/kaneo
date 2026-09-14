@@ -1489,38 +1489,40 @@ describe("agent_decision_get", () => {
     });
   });
 
-  it("[REQ-AGENT-AUTOAPPLY-33] finds an ADR by number by paging the listing newest first, superseded ones included", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-33] finds an ADR by number with one number-filtered list request, superseded ones included, then reads it", async () => {
     apiFetch.mockImplementation(async (input: RequestInfo | URL) => {
       const url = new URL(String(input));
-      if (url.pathname.endsWith("/adr-42")) {
-        return Response.json(decisionDetail({ id: "adr-42", number: 42 }));
+      if (url.pathname.endsWith("/adr-4200")) {
+        return Response.json(decisionDetail({ id: "adr-4200", number: 4200 }));
       }
-      return Response.json(
-        url.searchParams.get("before") === "adr-71"
-          ? decisionPage(70, 21, "adr-21")
-          : decisionPage(120, 71, "adr-71"),
-      );
+      return Response.json({
+        decisions: [decisionRow(4200, { status: "superseded" })],
+        nextBefore: "adr-4200",
+        unreviewedTotal: 0,
+        acceptedTotal: 0,
+      });
     });
 
     const result = await call("agent_decision_get", {
       projectId: "p1",
-      number: 42,
+      number: 4200,
     });
 
+    // No paging and no cap: an old number costs the same as a new one.
     expect(apiFetch.mock.calls.map((c) => String(c[0]))).toEqual([
-      "http://api.test/api/agent-decision/p1?limit=50&status=all",
-      "http://api.test/api/agent-decision/p1?limit=50&status=all&before=adr-71",
-      "http://api.test/api/agent-decision/p1/adr-42",
+      "http://api.test/api/agent-decision/p1?number=4200&status=all&limit=1",
+      "http://api.test/api/agent-decision/p1/adr-4200",
     ]);
-    expect(result).toMatchObject({ id: "adr-42", number: 42 });
+    expect(result).toMatchObject({ id: "adr-4200", number: 4200 });
   });
 
-  it("[REQ-AGENT-AUTOAPPLY-33] a number that is not listed, like a deleted ADR's, and a deleted id are 404s", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-33] a number the filtered listing does not return, like a deleted ADR's, and a deleted id are 404s", async () => {
     apiFetch.mockImplementation(async () =>
       Response.json({
-        decisions: [decisionRow(10), decisionRow(9), decisionRow(7)],
+        decisions: [],
         nextBefore: null,
         unreviewedTotal: 0,
+        acceptedTotal: 0,
       }),
     );
     const gap = await callRaw("agent_decision_get", {
@@ -1530,18 +1532,6 @@ describe("agent_decision_get", () => {
     expect(JSON.parse(gap.content[0].text)).toEqual({
       error: "404 ADR 8 not found",
     });
-    expect(apiFetch).toHaveBeenCalledTimes(1);
-
-    // A page that already reaches below the number rules out the older pages.
-    apiFetch.mockReset();
-    apiFetch.mockImplementation(async () =>
-      Response.json(decisionPage(60, 11, "adr-11")),
-    );
-    const above = await callRaw("agent_decision_get", {
-      projectId: "p1",
-      number: 99,
-    });
-    expect(above.isError).toBe(true);
     expect(apiFetch).toHaveBeenCalledTimes(1);
 
     apiFetch.mockImplementation(
@@ -1765,37 +1755,40 @@ describe("agent_term_resolve review marks", () => {
 });
 
 describe("agent_brief decisions", () => {
-  it("[REQ-AGENT-AUTOAPPLY-37] counts accepted ADRs across pages and takes unreviewed from unreviewedTotal", async () => {
+  it("[REQ-AGENT-AUTOAPPLY-37] takes accepted from acceptedTotal and unreviewed from unreviewedTotal in one list request", async () => {
     apiFetch.mockImplementation(async (input: RequestInfo | URL) => {
       const url = new URL(String(input));
       if (!url.pathname.startsWith("/api/agent-decision/")) {
         return Response.json({});
       }
-      return Response.json(
-        url.searchParams.get("before") === "adr-51"
-          ? decisionPage(50, 48, null, 7)
-          : decisionPage(100, 51, "adr-51", 7),
-      );
+      return Response.json({
+        decisions: [decisionRow(1500)],
+        nextBefore: "adr-1500",
+        unreviewedTotal: 7,
+        acceptedTotal: 1234,
+      });
     });
 
     const brief = await call("agent_brief", { projectId: "p1" });
 
-    expect(brief.decisions).toEqual({ accepted: 53, unreviewed: 7 });
-    // The API's default status: accepted and not deleted.
+    // Totals, not the page: no truncation however many ADRs there are.
+    expect(brief.decisions).toEqual({ accepted: 1234, unreviewed: 7 });
     expect(
       apiFetch.mock.calls
         .map((c) => String(c[0]))
         .filter((url) => url.includes("/api/agent-decision/")),
-    ).toEqual([
-      "http://api.test/api/agent-decision/p1?limit=50",
-      "http://api.test/api/agent-decision/p1?limit=50&before=adr-51",
-    ]);
+    ).toEqual(["http://api.test/api/agent-decision/p1?limit=1"]);
   });
 
   it("[REQ-AGENT-AUTOAPPLY-37] reports zeros for a project without ADRs and null when the listing fails", async () => {
     apiFetch.mockImplementation(async (input: RequestInfo | URL) =>
       String(input).includes("/api/agent-decision/")
-        ? Response.json({ decisions: [], nextBefore: null, unreviewedTotal: 0 })
+        ? Response.json({
+            decisions: [],
+            nextBefore: null,
+            unreviewedTotal: 0,
+            acceptedTotal: 0,
+          })
         : Response.json({}),
     );
     expect((await call("agent_brief", { projectId: "p1" })).decisions).toEqual({

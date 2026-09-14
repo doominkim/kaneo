@@ -62,6 +62,7 @@ type DecisionList = {
   decisions: Decision[];
   nextBefore: string | null;
   unreviewedTotal: number;
+  acceptedTotal: number;
 };
 
 const agent = { provider: "anthropic", model: "claude-opus-5" };
@@ -1082,6 +1083,106 @@ describe("API integration: ADR", () => {
       (await createDecision(app, project.id, { supersedesDecisionId: lone.id }))
         .status,
     ).toBe(409);
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-33] 목록의 number 필터는 그 번호의 ADR 하나만 돌려주고 status·삭제 필터를 그대로 따른다", async () => {
+    const member = await createWorkspaceMember({ role: "admin" });
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    const first = await jsonDecision(
+      await createDecision(app, project.id, { title: "First" }),
+    );
+    const second = await jsonDecision(
+      await createDecision(app, project.id, {
+        title: "Second",
+        supersedesDecisionId: first.id,
+      }),
+    );
+    const third = await jsonDecision(
+      await createDecision(app, project.id, { title: "Third" }),
+    );
+    expect((await lifecycle(app, project.id, third.id, "delete")).status).toBe(
+      200,
+    );
+    const ids = async (query: string) =>
+      (await listDecisions(app, project.id, query)).decisions.map((d) => d.id);
+
+    expect(await ids("number=2")).toEqual([second.id]);
+    // Superseded: left out by the default status, found with status=all.
+    expect(await ids("number=1")).toEqual([]);
+    expect(await ids("number=1&status=all")).toEqual([first.id]);
+    // Deleted: left out unless status=deleted.
+    expect(await ids("number=3&status=all")).toEqual([]);
+    expect(await ids("number=3&status=deleted")).toEqual([third.id]);
+    expect(await ids("number=99&status=all")).toEqual([]);
+
+    for (const bad of ["number=0", "number=-1", "number=1.5", "number=abc"]) {
+      const response = await app.request(
+        `/api/agent-decision/${project.id}?${bad}`,
+      );
+      expect(response.status, bad).toBe(400);
+    }
+  });
+
+  it("[REQ-AGENT-AUTOAPPLY-37] 목록의 acceptedTotal 은 필터·페이지와 무관하게 삭제되지 않은 accepted ADR 수를 센다", async () => {
+    const member = await createWorkspaceMember({ role: "admin" });
+    const { project } = await createProjectFixture({
+      workspaceId: member.workspace.id,
+    });
+    mockAuthenticatedSession(member.user);
+    const { app } = createApp();
+
+    const one = await jsonDecision(
+      await createDecision(app, project.id, { title: "One" }),
+    );
+    const two = await jsonDecision(
+      await createDecision(app, project.id, { title: "Two" }),
+    );
+    const three = await jsonDecision(
+      await createDecision(app, project.id, { title: "Three", ...agent }),
+    );
+    await jsonDecision(
+      await createDecision(app, project.id, {
+        title: "Four",
+        ...agent,
+        supersedesDecisionId: two.id,
+      }),
+    );
+    const five = await jsonDecision(
+      await createDecision(app, project.id, { title: "Five" }),
+    );
+    expect((await lifecycle(app, project.id, five.id, "delete")).status).toBe(
+      200,
+    );
+
+    // Accepted and not deleted: One, Three, Four. Unreviewed: Three, Four.
+    for (const query of [
+      "",
+      "limit=1",
+      "status=all",
+      "status=superseded",
+      "status=deleted",
+      "number=1",
+      "q=nothing-matches-this",
+      `before=${one.id}`,
+    ]) {
+      expect(
+        await listDecisions(app, project.id, query),
+        query || "(no query)",
+      ).toMatchObject({ acceptedTotal: 3, unreviewedTotal: 2 });
+    }
+
+    expect((await lifecycle(app, project.id, three.id, "delete")).status).toBe(
+      200,
+    );
+    expect(await listDecisions(app, project.id)).toMatchObject({
+      acceptedTotal: 2,
+      unreviewedTotal: 1,
+    });
   });
 
   it("목록은 상태·검색·작업·커서로 제한하고 일반 구성원은 ADR 을 삭제·복구하지 못한다", async () => {

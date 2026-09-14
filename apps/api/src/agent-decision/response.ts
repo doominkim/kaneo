@@ -66,6 +66,10 @@ export const decisionListSchema = z
       description:
         "Unreviewed, non-deleted ADRs in the whole project, independent of the filters and the page.",
     }),
+    acceptedTotal: z.number().int().openapi({
+      description:
+        "Accepted, non-deleted ADRs in the whole project, independent of the filters and the page.",
+    }),
   })
   .openapi("AgentDecisionList");
 

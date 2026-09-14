@@ -108,5 +108,9 @@ export const listDecisionsQuery = z.object({
         "`current` (default) is accepted ADRs, `all` adds superseded ones, `deleted` lists soft-deleted ADRs of any status. Every value but `deleted` hides deleted ADRs.",
     }),
   taskId: z.string().optional(),
+  number: z.coerce.number().int().positive().optional().openapi({
+    description:
+      "Only the ADR with this project-local number, still subject to `status`: at most one row.",
+  }),
   q: z.string().trim().min(1).max(200).optional(),
 });

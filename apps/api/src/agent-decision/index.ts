@@ -41,7 +41,7 @@ const listRoute = createRoute({
   tags: ["Agent Layer"],
   summary: "List architecture decision records",
   description:
-    "Project-local ADRs, newest number first. The default `status=current` returns accepted ADRs; `all` adds superseded ones; `deleted` lists only soft-deleted ADRs. Every row carries `reviewed`, and `unreviewedTotal` counts the project's unreviewed, non-deleted ADRs whatever the filters. Responses carry a 240-character context preview rather than the full ADR body. Filter by one linked task or search title, context and decision text. Page with the opaque `nextBefore` id.",
+    "Project-local ADRs, newest number first. The default `status=current` returns accepted ADRs; `all` adds superseded ones; `deleted` lists only soft-deleted ADRs. Every row carries `reviewed`; whatever the filters, `unreviewedTotal` counts the project's unreviewed, non-deleted ADRs and `acceptedTotal` its accepted, non-deleted ones. Responses carry a 240-character context preview rather than the full ADR body. Filter by one linked task or by project-local `number` (at most one row), or search title, context and decision text. Page with the opaque `nextBefore` id.",
   middleware: [workspaceAccess.fromProject("projectId")] as const,
   request: { params: projectIdParam, query: listDecisionsQuery },
   responses: {

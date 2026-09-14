@@ -330,6 +330,7 @@ type DecisionListOut = {
   decisions: DecisionSummaryOut[];
   nextBefore: string | null;
   unreviewedTotal: number;
+  acceptedTotal: number;
 };
 type DecisionDetailOut = Omit<DecisionSummaryOut, "contextPreview"> & {
   context: string;
@@ -346,74 +347,33 @@ const decisionAuthor = (d: DecisionAuthorOut) =>
   d.createdAuthor?.name ?? d.createdActor?.model ?? null;
 
 /**
- * The HTTP listing has neither a total nor a by-number lookup, only
- * newest-first pages of at most 50. Both callers scan those pages and stop at
- * this many, so a pathological project costs a bounded number of requests.
+ * Both project-wide totals ride on every list response, so one row is enough:
+ * accepted = accepted, non-deleted ADRs; unreviewed = unreviewed, non-deleted.
  */
-const DECISION_PAGE_SIZE = 50;
-const DECISION_SCAN_PAGES = 20;
-
-function listDecisionPage(
-  api: Api,
-  projectId: string,
-  params: Record<string, string>,
-) {
-  const q = new URLSearchParams({
-    limit: String(DECISION_PAGE_SIZE),
-    ...params,
-  });
-  return api.json<DecisionListOut>(
-    `/api/agent-decision/${encodeURIComponent(projectId)}?${q}`,
-  );
-}
-
-/** accepted = non-deleted accepted ADRs; unreviewed is the API's project-wide total. */
 async function countDecisions(api: Api, projectId: string) {
-  let accepted = 0;
-  let before: string | null = null;
-  for (let page = 0; page < DECISION_SCAN_PAGES; page += 1) {
-    const list: DecisionListOut = await listDecisionPage(
-      api,
-      projectId,
-      before ? { before } : {},
-    );
-    accepted += list.decisions.length;
-    if (!list.nextBefore) {
-      return { accepted, unreviewed: list.unreviewedTotal };
-    }
-    before = list.nextBefore;
-    if (page === DECISION_SCAN_PAGES - 1) {
-      // Past 1,000 accepted ADRs `accepted` is a lower bound, and says so.
-      return { accepted, unreviewed: list.unreviewedTotal, truncated: true };
-    }
-  }
-  return null;
+  const list = await api.json<DecisionListOut>(
+    `/api/agent-decision/${encodeURIComponent(projectId)}?limit=1`,
+  );
+  return { accepted: list.acceptedTotal, unreviewed: list.unreviewedTotal };
 }
 
-/** Deleted ADRs are not in `status=all`, so their numbers are not found. */
+/** `status=all` still hides deleted ADRs, so a deleted ADR's number is not found. */
 async function findDecisionIdByNumber(
   api: Api,
   projectId: string,
   number: number,
 ) {
-  let before: string | null = null;
-  for (let page = 0; page < DECISION_SCAN_PAGES; page += 1) {
-    const list: DecisionListOut = await listDecisionPage(api, projectId, {
-      status: "all",
-      ...(before ? { before } : {}),
-    });
-    const hit = list.decisions.find((d) => d.number === number);
-    if (hit) return hit.id;
-    const oldest = list.decisions.at(-1);
-    // Newest first: a page that already reaches below the number rules it out.
-    if (!list.nextBefore || !oldest || oldest.number < number) {
-      throw new Error(`404 ADR ${number} not found`);
-    }
-    before = list.nextBefore;
-  }
-  throw new Error(
-    `404 ADR ${number} is not among the newest ${DECISION_PAGE_SIZE * DECISION_SCAN_PAGES} ADRs; pass decisionId`,
+  const q = new URLSearchParams({
+    number: String(number),
+    status: "all",
+    limit: "1",
+  });
+  const { decisions } = await api.json<DecisionListOut>(
+    `/api/agent-decision/${encodeURIComponent(projectId)}?${q}`,
   );
+  const hit = decisions[0];
+  if (!hit) throw new Error(`404 ADR ${number} not found`);
+  return hit.id;
 }
 
 /* -------------------------------------------------------------------------- */
